@@ -174,8 +174,8 @@ One row per release folder (FD-16: effort = release). Status is "planned" for al
 
 | Version | Codename | Spec | Implementation plan | Status | Gate summary | Tracking issue |
 |---|---|---|---|---|---|---|
-| v0.1.0 | spine | [spec](releases/v0.1.0-spine/spec.md) | [plan](releases/v0.1.0-spine/implementation-plan.md) | planned | Tracer slice end-to-end on Windows; CI matrix green; core-purity passes | - |
-| v0.2.0 | understanding | [spec](releases/v0.2.0-understanding/spec.md) | [plan](releases/v0.2.0-understanding/implementation-plan.md) | planned | Fixture classifies + parses to golden; strippers idempotent; real scan < 60 s | - |
+| v0.1.0 | spine | [spec](releases/v0.1.0-spine/spec.md) | [plan](releases/v0.1.0-spine/implementation-plan.md) | built (gate walked 2026-07-04; tag awaiting jp per D-10) | Tracer slice end-to-end on Windows; CI matrix green; core-purity passes | PR #2 |
+| v0.2.0 | understanding | [spec](releases/v0.2.0-understanding/spec.md) | [plan](releases/v0.2.0-understanding/implementation-plan.md) | built (gate walked 2026-07-04; tag awaiting jp per D-10) | Fixture classifies + parses to golden; strippers idempotent; real scan < 60 s | PRs #6, #7, #9, #10, #11, #13 |
 | v0.3.0 | planning | [spec](releases/v0.3.0-planning/spec.md) | [plan](releases/v0.3.0-planning/implementation-plan.md) | planned | Deterministic validated plan; HTML report passes non-engineer read test | - |
 | v0.4.0 | seeing | [spec](releases/v0.4.0-seeing/spec.md) | [plan](releases/v0.4.0-seeing/implementation-plan.md) | planned | Human approves real-library plan in app; preview responsive over 718 folders | - |
 | v0.5.0 | acting | [spec](releases/v0.5.0-acting/spec.md) | [plan](releases/v0.5.0-acting/implementation-plan.md) | planned | Rollback round-trip byte-identical on fixtures AND real-data copy | - |
