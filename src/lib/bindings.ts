@@ -84,7 +84,7 @@ export type AppError =
  */
 ({ "db-migration-failed": {
 	detail: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The existing database was unreadable and was reset. The corrupt file was
  *  preserved (moved aside, never deleted) at `backup_path`, and a fresh,
@@ -93,15 +93,15 @@ export type AppError =
  */
 ({ "db-corrupt-recovered": {
 	backup_path: string,
-} }) & { "csv-parse"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root does not exist. Return before any DB row is written. */
 ({ "root-not-found": {
 	path: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root exists but is not a directory (e.g. a file was chosen). */
 ({ "root-not-directory": {
 	path: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A single entry could not be read because the OS denied access. Defined
  *  and ready for v0.2.0: the v0.1.0 walk records such entries and counts
@@ -113,7 +113,7 @@ export type AppError =
  */
 ({ "permission-denied": {
 	path: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A junction or reparse point was recorded but deliberately not followed
  *  (D-09), so the walk cannot loop through a link back into the tree.
@@ -124,7 +124,7 @@ export type AppError =
  */
 ({ "junction-skipped": {
 	path: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An internal failure while writing the snapshot (a SQLite/transaction
  *  error during the scans/entries write path). The walk itself never fails
@@ -132,7 +132,7 @@ export type AppError =
  */
 ({ "scan-failed": {
 	detail: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "snapshot-stale"?: never } | 
 /**
  *  A WizTree CSV import (F-102) could not fully parse. `row` is the 1-based
  *  index of the offending data row (the row after the header, preamble
@@ -149,7 +149,7 @@ export type AppError =
  */
 ({ "csv-parse": {
 	row: number,
-} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A ruleset's JSON body could not be accepted: it is not valid JSON, is
  *  missing a required field, has a field of the wrong type, carries a
@@ -161,7 +161,78 @@ export type AppError =
  */
 ({ "ruleset-invalid": {
 	detail: string,
-} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never };
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A source path recorded at plan time no longer exists at validation time
+ *  (the snapshot went stale). The operation cannot run against a vanished
+ *  source.
+ */
+({ "snapshot-stale": {
+	path: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never } | 
+/**
+ *  Two operations in the same plan produce the same target path (compared
+ *  case-insensitively for NTFS), so one would clobber the other.
+ */
+({ "collision-in-plan": {
+	path: string,
+} }) & { "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  An operation's target path already exists on disk (compared
+ *  case-insensitively for NTFS) and is not being vacated by the plan.
+ */
+({ "collision-on-disk": {
+	path: string,
+} }) & { "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A target path exceeds the maximum length even with the Windows
+ *  extended-length (`\\?\`) allowance. `length` is the measured character
+ *  count.
+ */
+({ "path-too-long": {
+	path: string,
+	length: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A path component is not a legal filesystem name (an illegal character, or
+ *  a trailing dot/space). This is the backstop to the F-304 name normalizer.
+ */
+({ "illegal-component": {
+	path: string,
+	component: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A path component is (or begins with) a reserved Windows device name
+ *  (CON, PRN, AUX, NUL, COM1-9, LPT1-9). Backstop to F-304.
+ */
+({ "reserved-name": {
+	path: string,
+	component: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  The cross-volume operations targeting `volume` sum to more bytes
+ *  (`needed`) than the volume has free (`available`), so the
+ *  copy+verify+delete moves cannot all complete.
+ */
+({ "cross-volume-space-insufficient": {
+	volume: string,
+	needed: number,
+	available: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  An operation would move a source into its own subtree (target lies inside
+ *  source), which is a cycle no filesystem can perform.
+ */
+({ "cycle-detected": {
+	source_path: string,
+	target_path: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A proceed/apply was requested but no operation is in the `approved`
+ *  state, so there is nothing to do. Defined for the v0.5.0 apply path;
+ *  v0.3.0 only plans and validates.
+ */
+"nothing-approved";
 
 /**
  *  Returned by the `db_status` command: the wire form of the startup
