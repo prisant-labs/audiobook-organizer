@@ -86,15 +86,25 @@ use crate::parse::normalize::normalize_component;
 use crate::parse::ParsedFields;
 
 /// The default [`SeriesIndex`](TemplateFields::series_index) zero-pad width
-/// when a caller does not choose one explicitly. `2` matches the common
-/// ABS-native "Book 01" two-digit convention; F-401 ships `1`/`2`/`3` as
-/// configurable widths (spec: "width-configurable 1/01/001"), this is simply
-/// which one applies when nothing overrides it.
-pub const DEFAULT_SERIES_INDEX_WIDTH: usize = 2;
+/// when a caller does not choose one explicitly. `1` (no zero-padding) is the
+/// width the ratified GUI prototypes render: both `_local/gui/06-dryrun-report.html`
+/// and `_local/gui/05-review.html` show the `after` book folders as `Book 1`,
+/// `Book 5`, `Book 14`, `Book 17` (never `Book 01`/`Book 05`), so a width of
+/// `1` is the shipped default that matches what the prototypes committed to.
+/// F-401 ships `1`/`2`/`3` as configurable widths (spec: "width-configurable
+/// 1/01/001"); this is simply which one applies when nothing overrides it, and
+/// the F-801 default ruleset ([`crate::ruleset::default_ruleset`]) carries the
+/// same value so the two never drift.
+pub const DEFAULT_SERIES_INDEX_WIDTH: usize = 1;
 
 /// One of the three shipped F-401 presets. [`Preset::AbsAuthorFirst`] is the
 /// default (D-02, closing the strategy brief's open question 1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// Serializes as its spec-native kebab-case name (`abs-author-first`,
+/// `title-first`, `hybrid-genre`) so an F-801 ruleset body (see
+/// [`crate::ruleset`]) reads exactly as the spec's F-401 preset strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Preset {
     /// `{Author}/{Series}/Book {SeriesIndex} - {Year} - {Title}/` (default).
     #[default]
@@ -339,7 +349,7 @@ mod tests {
                 &[
                     "N.K. Jemisin",
                     "The Broken Earth",
-                    "Book 01 - 2016 - The Fifth Season",
+                    "Book 1 - 2016 - The Fifth Season",
                 ],
             ),
             (
@@ -353,7 +363,7 @@ mod tests {
                 &[
                     "Charles Stross",
                     "Freyaverse",
-                    "Book 02 - 2014 - Neptune's Brood",
+                    "Book 2 - 2014 - Neptune's Brood",
                 ],
             ),
             (
@@ -444,7 +454,7 @@ mod tests {
                 "Science Fiction".to_string(),
                 "N.K. Jemisin".to_string(),
                 "The Broken Earth".to_string(),
-                "Book 01 - 2016 - The Fifth Season".to_string(),
+                "Book 1 - 2016 - The Fifth Season".to_string(),
             ]
         );
     }
@@ -497,7 +507,7 @@ mod tests {
             &[
                 "N.K. Jemisin",
                 "The Broken Earth",
-                "Book 01 - The Fifth Season",
+                "Book 1 - The Fifth Season",
             ],
         );
 
@@ -520,7 +530,7 @@ mod tests {
             &[
                 "N.K. Jemisin",
                 "The Broken Earth",
-                "Book 01 - 2016 - The Fifth Season",
+                "Book 1 - 2016 - The Fifth Season",
             ],
         );
 
@@ -533,7 +543,7 @@ mod tests {
             &[
                 "N.K. Jemisin",
                 "The Broken Earth",
-                "Book 01 - 2016 - The Fifth Season",
+                "Book 1 - 2016 - The Fifth Season",
             ],
         );
 
