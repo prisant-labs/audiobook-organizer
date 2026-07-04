@@ -12,10 +12,13 @@
 //! merged fields + a ruleset and emits the campaign-grouped operation list.
 //! v0.3.0 Phase 5 adds [`validate`] (F-404): the per-operation validation
 //! backstop (verdicts + machine codes), the validate-before-insert persistence
-//! path, and the F-405 approval state machine. Later v0.3.0 phases add the rest
-//! of this module: `disc`/`dupes::detect` (F-204/F-205/F-701, Phase 6), and
-//! `export`/`report` (F-505/F-506, Phases 7-8).
+//! path, and the F-405 approval state machine. v0.3.0 Phase 6 adds [`disc`]
+//! (F-204 disc-structure detection, feeding the builder's `normalize-series`
+//! pass) and `provenance` (the F-507 provenance report generator, exported
+//! beside the plan); F-701 duplicate detection lands in `crate::dupes`. Later
+//! v0.3.0 phases add `export`/`report` (F-505/F-506, Phases 7-8).
 
 pub mod builder;
+pub mod disc;
 pub mod templates;
 pub mod validate;

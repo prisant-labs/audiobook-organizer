@@ -211,6 +211,52 @@ fn loose_root_books_move_the_clean_loose_audio() {
     );
 }
 
+/// F-204 (AC-32): the Verbal Advantage disc folders are normalized. The
+/// conformant `Disc 1`/`Disc 2` are left untouched; the nonconforming `CD3` and
+/// `Disk_04` produce rename ops to `CD 3` and `Disk 04` in the normalize-series
+/// pass (which folds into the "messy names" user-facing group, FD-26).
+#[test]
+fn nonconforming_disc_folders_are_normalized() {
+    let nodes = nodes_from_manifest();
+    let (cs, merged) = analyze(&nodes);
+    let plan = build_plan(&nodes, &cs, &merged, &default_ruleset(), ROOT);
+
+    let disc_renames: Vec<_> = plan
+        .ops
+        .iter()
+        .filter(|o| o.op_group == "normalize-series" && o.kind == "rename")
+        .collect();
+    assert_eq!(
+        disc_renames.len(),
+        2,
+        "exactly the two nonconforming disc folders are renamed: {disc_renames:?}"
+    );
+    // The conformant disc folders are never a rename source.
+    for op in &disc_renames {
+        assert!(
+            !op.source_path.ends_with("/Disc 1") && !op.source_path.ends_with("/Disc 2"),
+            "a conformant disc folder must not be renamed: {}",
+            op.source_path
+        );
+    }
+    let targets: Vec<&str> = disc_renames.iter().map(|o| o.target_path.as_str()).collect();
+    assert!(
+        targets.iter().any(|t| t.ends_with("/CD 3")),
+        "CD3 -> CD 3 expected, got {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|t| t.ends_with("/Disk 04")),
+        "Disk_04 -> Disk 04 expected, got {targets:?}"
+    );
+    // Every normalize-series op folds into the "messy names" group.
+    for op in &disc_renames {
+        assert_eq!(
+            group_for_op_group(&op.op_group).map(|g| g.label()),
+            Some("messy names")
+        );
+    }
+}
+
 /// F-507: every flatten-packs member move records pack provenance, and the Hugo
 /// award-marked member records the caret.
 #[test]

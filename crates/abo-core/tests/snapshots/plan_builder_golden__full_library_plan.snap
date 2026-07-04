@@ -1,6 +1,6 @@
 ---
 source: crates/abo-core/tests/plan_builder_golden.rs
-assertion_line: 113
+assertion_line: 118
 expression: plan.to_canonical_json()
 ---
 {
@@ -639,6 +639,26 @@ expression: plan.to_canonical_json()
       "byte_size": 0
     },
     {
+      "op_group": "normalize-series",
+      "kind": "rename",
+      "source_path": "library/Genre - Non-Fiction/Verbal Advantage/CD3",
+      "target_path": "library/Genre - Non-Fiction/Verbal Advantage/CD 3",
+      "rationale": "Rename this disc folder to the standard \"CD 3\" shape so it is recognized as a disc of one book.",
+      "rule_id": "normalize-series-disc",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "normalize-series",
+      "kind": "rename",
+      "source_path": "library/Genre - Non-Fiction/Verbal Advantage/Disk_04",
+      "target_path": "library/Genre - Non-Fiction/Verbal Advantage/Disk 04",
+      "rationale": "Rename this disc folder to the standard \"Disk 04\" shape so it is recognized as a disc of one book.",
+      "rule_id": "normalize-series-disc",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
       "op_group": "empty-cleanup",
       "kind": "mkdir",
       "source_path": "",
@@ -680,7 +700,7 @@ expression: plan.to_canonical_json()
     }
   ],
   "stats": {
-    "total_ops": 64,
+    "total_ops": 66,
     "manual_review_ops": 21,
     "per_group": [
       {
@@ -693,7 +713,7 @@ expression: plan.to_canonical_json()
       },
       {
         "group": "messy names",
-        "ops": 0
+        "ops": 2
       },
       {
         "group": "box sets",

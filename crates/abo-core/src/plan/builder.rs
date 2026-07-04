@@ -25,15 +25,31 @@
 //! (F-505) and report (F-506) apply. [`CampaignGroup::ALL`] is the canonical
 //! seven-label set the review UI and report agree on.
 //!
-//! v0.3.0 Phase 4 (this module) builds the passes whose behavior is fully
-//! grounded in the classifications: `loose-root-books`, `strip-noise`,
-//! `split-multi-book`, `flatten-packs` (with F-507 provenance capture), and
-//! `empty-cleanup`. `staging-separation` emits a documented no-op per staging
-//! area (contents are separated by a later, interactive step). Two passes are
-//! wired but intentionally empty in this phase, per the implementation plan:
-//! `normalize-series` is fed by F-204 disc detection (Phase 6), and
-//! `dedupe-quarantine` is fed by F-701 duplicate detection (Phase 6). Both
-//! still participate in the group fold so the seven-group contract holds now.
+//! v0.3.0 Phase 4 built the passes whose behavior is fully grounded in the
+//! classifications: `loose-root-books`, `strip-noise`, `split-multi-book`,
+//! `flatten-packs` (with F-507 provenance capture), and `empty-cleanup`.
+//! `staging-separation` emits a documented no-op per staging area (contents are
+//! separated by a later, interactive step).
+//!
+//! v0.3.0 Phase 6 fills in the two passes Phase 4 left wired-but-empty, plus the
+//! F-402 clutter and F-205 parallel-format policy ops:
+//!   - `normalize-series` now emits F-204 disc renames: a nonconforming
+//!     disc-part folder name (`CD3`, `Disk_04`, `Disc1`) is renamed to the
+//!     conformant `CD 3` / `Disk 04` / `Disc 1` shape (see [`crate::plan::disc`],
+//!     AC-32); conformant disc folders are left untouched.
+//!   - `empty-cleanup` now also sets aside the F-205 parallel-format loser (the
+//!     non-preferred-format copy when a book holds both, default keep m4b,
+//!     AC-33) and the F-402 non-audio clutter the ruleset quarantines
+//!     (nfo/sfv/playlist/weblink; ebook/cover are kept, AC-6). These are
+//!     quarantine ops, so they live in `empty-cleanup` (strictly after all
+//!     moves) with the pack-shell quarantines and empty-folder removals.
+//!
+//! `dedupe-quarantine` remains empty in the PLAN: F-701 duplicate detection is
+//! candidate-only this release (flag-only, no auto-quarantine until later hash
+//! verification), so it writes the `duplicate_groups`/`duplicate_members` tables
+//! (see [`crate::dupes`]) and the report counts groups from there, but emits no
+//! plan op. Every pass still participates in the group fold so the seven-group
+//! contract (AC-11) holds.
 //!
 //! # Ordering (AC-10)
 //!
@@ -64,6 +80,7 @@ use serde::Serialize;
 use crate::classify::engine::{ClassifyInput, FolderClass, FolderClassification};
 use crate::parse::extract::{Confidence, FieldSource, MergedEntry, NodeKind};
 use crate::parse::strip::{strip, StripOptions};
+use crate::plan::disc::conformant_disc_rename;
 use crate::plan::templates::{render_path, ManualReviewReason, RenderOutcome, TemplateFields};
 use crate::ruleset::{pack_shell_disposition, PackShellOutcome, Ruleset};
 use crate::scan::typing::FileClass;
@@ -538,6 +555,26 @@ impl<'a> Builder<'a> {
         false
     }
 
+    /// Whether any ancestor of `id` has been claimed (moved/renamed) by an
+    /// earlier pass. Used by `normalize-series` to skip a disc folder whose
+    /// disc-split book was already relocated (renaming a child at its stale
+    /// pre-move path would be wrong).
+    fn ancestor_handled(&self, id: usize) -> bool {
+        let mut cur = self.node(id).parent;
+        let mut steps = 0;
+        while let Some(p) = cur {
+            if steps > self.nodes.len() {
+                break;
+            }
+            steps += 1;
+            if self.handled.contains(&p) {
+                return true;
+            }
+            cur = self.node(p).parent;
+        }
+        false
+    }
+
     fn node(&self, id: usize) -> &PlanNode {
         &self.nodes[self.index_of[&id]]
     }
@@ -653,8 +690,10 @@ pub fn build_plan(
             InternalPass::StripNoise => pass_strip_noise(&mut b),
             InternalPass::SplitMultiBook => pass_split_multibook(&mut b),
             InternalPass::FlattenPacks => pass_flatten_packs(&mut b),
-            InternalPass::NormalizeSeries => { /* fed by F-204 in Phase 6 */ }
-            InternalPass::DedupeQuarantine => { /* fed by F-701 in Phase 6 */ }
+            InternalPass::NormalizeSeries => pass_normalize_series(&mut b),
+            // F-701 duplicate detection is candidate-only this release (writes
+            // duplicate_groups/duplicate_members via crate::dupes, no plan op).
+            InternalPass::DedupeQuarantine => { /* flag-only: no plan op in v0.3.0 */ }
             InternalPass::EmptyCleanup => pass_empty_cleanup(&mut b),
         }
     }
@@ -1066,6 +1105,55 @@ fn pack_provenance_json(pack_path: &str, pack_name: &str, award: Option<char>) -
         }),
     };
     serde_json::to_string(&value).expect("provenance JSON always serializes")
+}
+
+// ---- pass: normalize-series (F-204 disc renames) ----
+
+fn pass_normalize_series(b: &mut Builder) {
+    let pass = InternalPass::NormalizeSeries;
+    // Every folder the classifier marked a disc part (`detected == "disc-part"`,
+    // set on a single-book audio-leaf folder whose name is a disc name). A
+    // disc-split single book itself is `detected == "disc-split"` and is NOT a
+    // disc part, so it is not touched here.
+    let mut discs: Vec<usize> = b
+        .nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Folder)
+        .filter(|n| {
+            b.class_by_id
+                .get(&n.id)
+                .and_then(|c| c.evidence.detected)
+                == Some("disc-part")
+        })
+        .map(|n| n.id)
+        .filter(|&id| !b.handled.contains(&id) && !b.ancestor_handled(id))
+        .collect();
+    discs.sort_by(|&a, &c| b.node(a).path.cmp(&b.node(c).path));
+
+    for id in discs {
+        let name = b.node(id).name.clone();
+        let Some(target_name) = conformant_disc_rename(&name) else {
+            continue; // already conformant: leave untouched (AC-32)
+        };
+        b.handled.insert(id);
+        let src = b.node(id).path.clone();
+        let parent = parent_dir(&src, b.sep).to_string();
+        let target = join_path(&parent, b.sep, &[target_name.as_str()]);
+        b.ops.push(PlannedOp {
+            op_group: pass.as_str().to_string(),
+            kind: "rename".to_string(),
+            kind_reason: None,
+            source_path: src,
+            target_path: target,
+            rationale: format!(
+                "Rename this disc folder to the standard \"{target_name}\" shape so it is recognized as a disc of one book."
+            ),
+            rule_id: "normalize-series-disc".to_string(),
+            confidence: "high".to_string(),
+            byte_size: 0,
+            provenance_json: None,
+        });
+    }
 }
 
 // ---- pass: empty-cleanup ----
