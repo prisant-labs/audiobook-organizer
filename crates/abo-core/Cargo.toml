@@ -10,12 +10,30 @@ license.workspace = true
 # transitively. `cargo tree -p abo-core -e normal | grep -i tauri` must stay
 # empty (AC-3).
 #
-# Phase 1 (v0.1.0 spine workspace scaffold) adds only what the stub modules
-# need now: serde (payload derives land in Phase 4), thiserror (AppError
-# lands in Phase 4), specta (IPC type derives land in Phase 4/5). specta
-# itself pulls no tauri dependency (verified by `cargo tree`); only
-# tauri-specta, the glue crate, lives in src-tauri.
+# Phase 1 added serde, thiserror, and specta for the stub derives. Phase 2
+# (database) adds sqlx (runtime query API only), tracing, and the AppError
+# Storage family. specta and sqlx pull no tauri dependency (verified by
+# `cargo tree -p abo-core -e normal | grep -i tauri`, which must stay empty,
+# AC-3); only tauri-specta, the glue crate, lives in src-tauri.
+#
+# sqlx uses the RUNTIME query API (sqlx::query / query_as / bind), NEVER the
+# compile-time-checked query! macros, so the build needs no DATABASE_URL and no
+# offline query cache. The `macros` feature is enabled solely for
+# sqlx::migrate! (which lives in sqlx-macros); it does not force use of query!.
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
 specta = { workspace = true, features = ["derive"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+tracing = { workspace = true }
+
+# tokio is a TEST-ONLY dependency: the library's async fns run on whatever
+# runtime the caller (the shell) provides, and sqlx's runtime integration is
+# pulled via its `runtime-tokio` feature. Tests need the `#[tokio::test]` macro
+# (the `macros` + `rt` features) and a runtime; it inherits the workspace
+# `full` feature set, which is a superset of those. tempfile backs the temp-dir
+# tests. serde_json backs the error-taxonomy serialization tests only.
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"
+serde_json = { workspace = true }
