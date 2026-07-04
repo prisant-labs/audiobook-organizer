@@ -27,6 +27,16 @@ specta = { workspace = true, features = ["derive"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
 tracing = { workspace = true }
 
+# Phase 3 (scanner) adds walkdir for the recursive traversal (F-101). walkdir
+# pulls only same-file + winapi-util (no tauri, no network), so the core-purity
+# gate (`cargo tree -p abo-core -e normal | grep -i tauri`) stays empty. Windows
+# extended-length (`\\?\`) semantics and the reparse-point check are handled with
+# std (`std::fs::canonicalize`, `std::os::windows::fs::MetadataExt`) plus two
+# documented `FILE_ATTRIBUTE_*` constants, so no winapi/windows-sys direct dep is
+# added. ISO-8601 timestamps are hand-formatted (Hinnant civil-from-days), so the
+# core still carries no chrono/time dependency (migration 0001 comment).
+walkdir = "2"
+
 # tokio is a TEST-ONLY dependency: the library's async fns run on whatever
 # runtime the caller (the shell) provides, and sqlx's runtime integration is
 # pulled via its `runtime-tokio` feature. Tests need the `#[tokio::test]` macro
@@ -37,3 +47,8 @@ tracing = { workspace = true }
 tokio = { workspace = true }
 tempfile = "3"
 serde_json = { workspace = true }
+# The scanner integration tests (tests/scan.rs) hold the SqlitePool returned by
+# open_db and query the scans table directly to prove snapshot immutability
+# (AC-13). Integration tests are separate crates and do not inherit the library's
+# normal dependencies, so sqlx is restated here (feature set matches the lib).
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
