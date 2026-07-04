@@ -20,11 +20,18 @@
 //! `fixtures` module docs). It is test-only surface (`cfg(any(test, feature
 //! = "fixtures"))`), so it never touches the production build or the public
 //! API the shell depends on.
+//!
+//! v0.2.0 Phase 4a adds `parse`: the F-301 pattern matcher set and F-302
+//! noise strippers, pure string logic with no cfg-gating of any kind (see
+//! `parse` module docs). Phase 4b (a later dispatch on the same branch)
+//! fills in `parse::extract` (F-303 confidence merge) and `parse::normalize`
+//! (F-304 filesystem-safe names) on top of it.
 
 pub mod db;
 pub mod error;
 pub mod ipc;
 pub mod job;
+pub mod parse;
 pub mod paths;
 pub mod scan;
 
