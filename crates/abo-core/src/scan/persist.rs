@@ -121,7 +121,7 @@ pub async fn run_scan_with_job(
     tracing::info!(root = %stored_root, "scan: started");
 
     // ---- Record the running snapshot ----
-    let scan_id = insert_running_scan(pool, &stored_root, &started_at).await?;
+    let scan_id = insert_running_scan(pool, "live", &stored_root, &started_at).await?;
 
     // ---- Walk (never aborts on per-entry errors; may stop early on cancel) ----
     let WalkOutcome {
@@ -146,8 +146,17 @@ pub async fn run_scan_with_job(
     // From here on, the `scans` row exists. Any failure below must not leave it
     // stranded as status='running' forever (a phantom snapshot): on error, mark
     // it 'failed' (best-effort) before propagating the original error.
+    // Native `Path::parent()` is correct here because every walked path was
+    // built by walkdir on THIS host using this host's own separator
+    // conventions (backslash on Windows, `/` elsewhere) - unlike a CSV import,
+    // whose paths are always Windows-backslash text regardless of host OS (see
+    // `crate::scan::csv_import`, which supplies its own parent function).
     let (entry_count, total_bytes, completed_at) =
-        match persist_entries_and_finalize(pool, scan_id, &entries).await {
+        match persist_entries_and_finalize(pool, scan_id, &entries, |path| {
+            path.parent().map(PathBuf::from)
+        })
+        .await
+        {
             Ok(v) => v,
             Err(e) => {
                 mark_scan_failed(pool, scan_id).await;
@@ -194,13 +203,26 @@ pub async fn run_scan_with_job(
 /// then finalize the `scans` row (running -> completed). Returns
 /// `(entry_count, total_bytes, completed_at)` on success.
 ///
+/// `parent_of` derives an entry's parent path (the lookup key into the
+/// already-inserted map below) from its stored `path`. This is parameterized,
+/// rather than hardcoding `Path::parent()`, because that method is correct
+/// only when `path` was built using the CURRENT host's native separator
+/// convention (true for a live walk, since walkdir builds paths on this host);
+/// a WizTree CSV import's paths are always Windows-backslash text regardless
+/// of the host the import runs on, so it supplies its own backslash-aware
+/// `parent_of` (see `crate::scan::csv_import`). Both callers share this one
+/// INSERT statement and transaction, which is how a CSV-imported snapshot
+/// stays schema-identical to a live one (F-102's "indistinguishable
+/// downstream" contract).
+///
 /// Every fallible step here (the transaction, its commit, and the finalize
 /// UPDATE) runs after the `scans` row already exists; the caller is
 /// responsible for marking that row 'failed' if this returns `Err`.
-async fn persist_entries_and_finalize(
+pub(crate) async fn persist_entries_and_finalize(
     pool: &SqlitePool,
     scan_id: i64,
     entries: &[WalkedEntry],
+    parent_of: impl Fn(&Path) -> Option<PathBuf>,
 ) -> Result<(i64, i64, String), AppError> {
     // ---- Bulk-insert entries in one transaction, linking parents ----
     let entry_count = entries.len() as i64;
@@ -211,7 +233,7 @@ async fn persist_entries_and_finalize(
     for e in entries {
         // The parent path is a key already inserted (sorted parent-before-child);
         // absent for the root, whose parent lies outside the scanned tree.
-        let parent_id = e.path.parent().and_then(|parent| ids.get(parent).copied());
+        let parent_id = parent_of(&e.path).and_then(|parent| ids.get(&parent).copied());
 
         let path_str = e.path.to_string_lossy().into_owned();
         let result = sqlx::query(
@@ -276,15 +298,20 @@ pub async fn get_scan_entries(pool: &SqlitePool, scan_id: i64) -> Result<Vec<Ent
 }
 
 /// Insert the initial `running` `scans` row and return its assigned id.
-async fn insert_running_scan(
+/// `source` is `"live"` for [`run_scan_with_job`] or `"csv"` for a WizTree
+/// import (`crate::scan::csv_import::run_csv_import`); both values are the
+/// only two the `scans.source` CHECK constraint (migration 0001) allows.
+pub(crate) async fn insert_running_scan(
     pool: &SqlitePool,
+    source: &str,
     stored_root: &str,
     started_at: &str,
 ) -> Result<i64, AppError> {
     let result = sqlx::query(
         "INSERT INTO scans (source, root_path, started_at, status) \
-         VALUES ('live', ?, ?, 'running')",
+         VALUES (?, ?, ?, 'running')",
     )
+    .bind(source)
     .bind(stored_root)
     .bind(started_at)
     .execute(pool)
@@ -303,7 +330,7 @@ async fn insert_running_scan(
 /// already about to return the original error, so a secondary failure here
 /// must never replace or mask it. On failure to mark, log via `tracing` and
 /// move on.
-async fn mark_scan_failed(pool: &SqlitePool, scan_id: i64) {
+pub(crate) async fn mark_scan_failed(pool: &SqlitePool, scan_id: i64) {
     let result = sqlx::query("UPDATE scans SET status = 'failed' WHERE id = ?")
         .bind(scan_id)
         .execute(pool)
@@ -375,7 +402,7 @@ mod tests {
     #[tokio::test]
     async fn mark_scan_failed_flips_running_row_to_failed() {
         let (_dir, pool) = fresh_pool().await;
-        let scan_id = insert_running_scan(&pool, "C:\\some\\root", "2026-01-01T00:00:00Z")
+        let scan_id = insert_running_scan(&pool, "live", "C:\\some\\root", "2026-01-01T00:00:00Z")
             .await
             .expect("insert running scan");
         assert_eq!(scan_status(&pool, scan_id).await, "running");
