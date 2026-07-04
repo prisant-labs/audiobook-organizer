@@ -451,6 +451,30 @@ async fn scan_over_260_char_path() {
         !deep_entry.path.starts_with(r"\\?\"),
         "stored path must not carry the verbatim prefix"
     );
+
+    // AC-101.4: with a genuinely >260-char recorded path, a LongPathsDisabled
+    // warning is recorded exactly when this host has long-path support disabled
+    // (a how-to link accompanies it). When it is enabled, the path scanned fine
+    // and draws no long-path warning. This ties the pure warning logic to a real
+    // over-limit tree on whichever setting the host actually has.
+    use abo_core::ipc::ScanWarningKind;
+    let disabled_warning = summary
+        .warnings
+        .iter()
+        .find(|w| w.kind == ScanWarningKind::LongPathsDisabled);
+    if abo_core::scan::longpath::long_paths_enabled() {
+        assert!(
+            disabled_warning.is_none(),
+            "no long-paths-disabled warning when the host has long paths enabled"
+        );
+    } else {
+        let w = disabled_warning
+            .expect("a >260-char path on a long-paths-disabled host must record the warning");
+        assert!(
+            w.how_to.is_some(),
+            "the long-paths-disabled warning must carry a how-to link"
+        );
+    }
 }
 
 /// AC-11 (permission-denied): a subdir whose read is denied is recorded, the
