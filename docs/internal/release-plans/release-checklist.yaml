@@ -1,0 +1,65 @@
+# Doc-update items to work through at Audiobook Organizer release time.
+#
+# This is the project's source list of docs that must be updated before a tag.
+# The cut runbook (runbook_cut-tag-release.md) draws on it at G2 and G4. It is a
+# plain convention worked through by hand, seeded per release, and not tied to
+# any skill. The /jp-release-plan skill can extend this list via its own
+# checklist-extension mechanism if invoked (see README.md in this folder for
+# how that skill relates to this project's release folders).
+#
+# Audiobook Organizer is a desktop app, not an agent plugin, so plugin-only
+# items (plugin.json, SKILL.md, HISTORY.md, skills README) intentionally do
+# NOT appear.
+
+template:
+  # One block per release. Copy this template, fill in "version" and
+  # "codename", and check items off as they are done for that release. This
+  # file is instantiated by hand; no automation currently writes to it.
+  version: "vX.Y.Z"
+  codename: "codename"
+  spec_path: "docs/internal/releases/vX.Y.Z-codename/spec.md"
+  docs:
+    - doc: "scripts/bump-version.mjs (or the FD-25 hygiene-set equivalent scaffolded at v0.1.0)"
+      update: "Run it so workspace Cargo.toml, src-tauri/Cargo.toml, package.json, and tauri.conf.json all carry the release version"
+      status: pending
+    - doc: "CHANGELOG.md"
+      update: "Move [Unreleased] into a vX.Y.Z section with the date; open a fresh [Unreleased]"
+      status: pending
+    - doc: "README.md (repo root)"
+      update: "Bump version references; confirm install instructions for the Windows installer match the current unsigned posture (FD-22)"
+      status: pending
+    - doc: "docs/internal/architecture.md"
+      update: "Reflect the shipped state for this release; remove not-built-yet hedges that no longer hold"
+      status: pending
+    - doc: "docs/internal/product-requirements.md"
+      update: "Confirm feature status matches what shipped; note any FD-nn or D-nn content decision that changed scope mid-release"
+      status: pending
+    - doc: "docs/internal/program-roadmap.md"
+      update: "Flip this release's row in Section 8 (effort tracking table) from planned to shipped; record any Section 5 descope-trigger outcomes that fired"
+      status: pending
+    - doc: "docs/internal/releases/<version>-<codename>/spec.md"
+      update: "Set frontmatter status: released; confirm every AC is checked with evidence, not just claimed"
+      status: pending
+    - doc: "GitHub Release"
+      update: "Draft from the CHANGELOG section; attach the Windows installer plus SHA256SUMS; state the unsigned-installer posture (FD-22) [HUMAN publish, D-10]"
+      status: pending
+
+# Release-specific notes (non-generic items that apply only at certain rungs
+# of the ladder; add the relevant ones into a release's copy of the template
+# above rather than tracking every release against every note).
+release_specific_notes:
+  v0.1.0-spine:
+    - "Confirm the FD-25 hygiene set landed with the live CI workflows (FD-24 CI fixes says CI does not land on the docs-only branch; it lands here)."
+    - "Record the FD-15 OSS-landscape timeboxed check outcome in EXECUTION.md before this release is considered started (program-roadmap.md Section 9 pre-v0.1.0 checklist)."
+  v0.3.0-planning:
+    - "Confirm the F-506 (dry-run HTML report) passes the non-engineer read test; this is the release gate, not just a nice-to-have (D-04, milestone posture: dry run plus report before anything executes)."
+    - "Confirm the FD-11 zero-network grep gate covers the exported report template, not only the app."
+  v0.5.0-acting:
+    - "Confirm the rollback round-trip signature gate (see runbook G1) is green on a real-data copy, not fixtures only."
+  v0.6.0-hardening:
+    - "Confirm kill-during-apply reconciliation is tested in both directions (resume and rollback)."
+  M-1-campaign:
+    - "This is an operational milestone, not a software version: no tag is cut. The runbook's G2/G3 (version bump, tag, push) do not apply. Confirm the backup decision (D-17) is recorded before any Real apply; confirm ABS import correctness; confirm health metrics near zero for the target campaign groups."
+  v0.9.0-packaged:
+    - "Confirm the fresh-machine install path runs a full pipeline on a sample tree before this release is considered ready."
+    - "License and public-flip posture (D-13) is decided at this boundary; confirm it is recorded, whichever way it goes, before publishing."
