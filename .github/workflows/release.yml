@@ -40,6 +40,15 @@ jobs:
       - name: Build release bundles
         run: pnpm tauri build --profile dist
 
+      # Reality fix (Phase 7, same root cause as ci.yml's build job): this repo's
+      # Cargo.toml is a virtual workspace manifest (members = ["crates/abo-core",
+      # "src-tauri"]), so Cargo puts the bundle under the WORKSPACE ROOT's `target/`
+      # (here `target/dist/bundle/`, since `--profile dist` names the target subdir
+      # after the profile), never under `src-tauri/target/`. ci-plan.md's original
+      # `src-tauri/target/dist/bundle` path was copied from a reference project where
+      # the Tauri crate was not a workspace member; confirmed against this repo's
+      # actual `ci.yml` build-job log (Phase 7) before this path was authored here.
+      #
       # SHA256SUMS over every produced bundle so the family install doc can verify the
       # download. bash is available on both runners in Actions.
       - name: Generate SHA256SUMS
@@ -47,7 +56,7 @@ jobs:
         run: |
           set -eu
           out="SHA256SUMS-${{ matrix.os }}.txt"
-          find src-tauri/target/dist/bundle -type f \
+          find target/dist/bundle -type f \
             \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.app.tar.gz' \) \
             -print0 | xargs -0 sha256sum > "$out" || true
           cat "$out"
@@ -58,9 +67,9 @@ jobs:
           draft: true                        # publishing is human-only (D-11)
           prerelease: true
           files: |
-            src-tauri/target/dist/bundle/**/*.msi
-            src-tauri/target/dist/bundle/**/*.exe
-            src-tauri/target/dist/bundle/**/*.dmg
+            target/dist/bundle/**/*.msi
+            target/dist/bundle/**/*.exe
+            target/dist/bundle/**/*.dmg
             SHA256SUMS-${{ matrix.os }}.txt
           body: |
             See CHANGELOG.md for this version's notes.

@@ -267,9 +267,18 @@ jobs:
       - name: Build and bundle
         run: pnpm tauri build --debug
 
+      # Reality fix (Phase 7, found reviewing this run's own log): ci-plan.md's path
+      # was `src-tauri/target/debug/bundle/`, copied from a reference project where the
+      # Tauri crate was not a workspace member. This repo's Cargo.toml is a virtual
+      # workspace manifest (members = ["crates/abo-core", "src-tauri"]), so Cargo puts
+      # ALL build output, including the bundle, under the WORKSPACE ROOT's `target/`,
+      # never under `src-tauri/target/`. With the old path the upload step silently
+      # matched zero files (`if-no-files-found: warn` reports success, not failure) and
+      # no artifact was ever produced. Confirmed from the "Build and bundle" step's own
+      # log, which shows the bundle at `<repo-root>\target\debug\bundle\nsis\...`.
       - name: Upload Windows bundle (inspection only)
         if: matrix.ga
         uses: actions/upload-artifact@v4
         with:
           name: windows-debug-bundle
-          path: src-tauri/target/debug/bundle/
+          path: target/debug/bundle/
