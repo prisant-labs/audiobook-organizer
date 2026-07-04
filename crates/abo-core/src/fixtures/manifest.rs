@@ -23,8 +23,8 @@
 //!
 //! Names are validated at generation time, not here:
 //! [`crate::fixtures::generate::generate`] rejects any component containing a
-//! path separator or a `.`/`..` traversal segment, so a manifest typo cannot
-//! escape the generator's temp root.
+//! path separator, a `:`, or a `.`/`..` traversal segment, so a manifest typo
+//! cannot escape the generator's temp root.
 
 use crate::fixtures::families::FixtureFamily;
 
@@ -223,6 +223,29 @@ fn reserved_name_examples() -> Vec<FixtureNode> {
     ]
 }
 
+/// Build the trailing-dot and trailing-space near-miss fixtures (F-304's
+/// normalizer backstop): a folder whose name literally ends in `.` and a
+/// file whose name literally ends in a space. Windows silently strips a
+/// trailing dot or space from a component name unless the generator uses
+/// extended-length (`\\?\`) semantics, the same seam
+/// [`reserved_name_examples`] relies on; the generator attempts both
+/// through that seam and records a skip-with-note if the host still
+/// refuses (test-strategy.md Section 3 edge case).
+fn trailing_dot_or_space_examples() -> Vec<FixtureNode> {
+    vec![
+        folder_fam(
+            "Some Book.",
+            &[FixtureFamily::TrailingDotOrSpaceNearMiss],
+            vec![file("inside.mp3", 512)],
+        ),
+        file_fam(
+            "Some Book ",
+            512,
+            &[FixtureFamily::TrailingDotOrSpaceNearMiss],
+        ),
+    ]
+}
+
 /// The standard fixture library manifest (v0.2.0 Phase 1). Covers every
 /// family in [`FixtureFamily::REQUIRED`] at least once, using real example
 /// strings lifted from
@@ -260,19 +283,29 @@ pub fn standard_library_manifest() -> FixtureManifest {
                 2_700,
                 &[FixtureFamily::Pattern1NonCleanOutlier],
             ),
-            // Exact-duplicate pair, loose root (basename + size, identical
-            // content via the shared dup_group seed).
+            // Exact-duplicate pair: the family is defined as same basename
+            // AND same size, so the canonical pair must share one literal
+            // filename. The second copy lives in a different folder (a
+            // genre subfolder below) rather than the same one, but keeps
+            // the identical `dup_group` content seed so the pair is exact
+            // all the way down (byte-identical), not merely same-name.
             file_dup(
                 "Island by Aldous Huxley.m4b",
                 120_000,
                 &[FixtureFamily::ExactDuplicatePair],
                 "island-huxley",
             ),
-            file_dup(
+            // A same-folder OS-style incremented-suffix copy (the `" (1)"`
+            // case): visually the same book but a DIFFERENT basename, so it
+            // is deliberately NOT part of the exact-duplicate-pair family
+            // (that family requires basename equality). Tagged instead as
+            // its own suffixed-copy-duplicate family, and given no
+            // dup_group of its own (its content is the ordinary path-seeded
+            // placeholder, not a claim of byte-identity with anything).
+            file_fam(
                 "Island by Aldous Huxley (1).m4b",
                 120_000,
-                &[FixtureFamily::ExactDuplicatePair],
-                "island-huxley",
+                &[FixtureFamily::SuffixedCopyDuplicate],
             ),
             // ---- Genre - SciFI ----
             folder(
@@ -394,6 +427,21 @@ pub fn standard_library_manifest() -> FixtureManifest {
                                 vec![file("Parallel Format Example.m4b", 80_000)],
                             ),
                         ],
+                    ),
+                    // The exact-duplicate pair's second copy (same basename
+                    // AND size as the loose-root copy above, plus the same
+                    // `dup_group` seed for byte-identical content), placed
+                    // in a different folder so the pair is a genuine
+                    // cross-folder duplicate, not a same-folder rename.
+                    folder_fam(
+                        "Backup Copy",
+                        &[],
+                        vec![file_dup(
+                            "Island by Aldous Huxley.m4b",
+                            120_000,
+                            &[FixtureFamily::ExactDuplicatePair],
+                            "island-huxley",
+                        )],
                     ),
                     // Mixed folder: direct audio plus a child folder.
                     folder_fam(
@@ -517,10 +565,34 @@ pub fn standard_library_manifest() -> FixtureManifest {
                     ),
                 ],
             ),
+            // ---- Unicode NFC/NFD twins sharing ONE parent directory, in
+            // addition to the separate-folder pair above: same visual name,
+            // two distinct Unicode normalization forms, both siblings under
+            // this folder. The generator verifies post-write that both
+            // materialize as distinct directory entries and demotes both to
+            // skipped-with-note if this host's filesystem folds them
+            // together.
+            folder(
+                "Unicode Twins Same Dir",
+                vec![
+                    file_fam(
+                        "Caf\u{00e9} Society.m4b",
+                        100_000,
+                        &[FixtureFamily::UnicodeNfcNfdTwinSameDir],
+                    ),
+                    file_fam(
+                        "Cafe\u{0301} Society.m4b",
+                        100_000,
+                        &[FixtureFamily::UnicodeNfcNfdTwinSameDir],
+                    ),
+                ],
+            ),
             // ---- Near-limit path (runtime-generated only, AC-F2) ----
             folder("Near Limit", vec![near_limit_chain()]),
             // ---- Reserved-name near-misses (AC-F2) ----
             folder("Reserved Names", reserved_name_examples()),
+            // ---- Trailing-dot / trailing-space near-misses (F-304) ----
+            folder("Trailing Dot Or Space", trailing_dot_or_space_examples()),
             // ---- Zero-byte samples (AC-F2) ----
             folder(
                 "Zero Byte Samples",
@@ -586,10 +658,13 @@ mod tests {
     fn duplicate_pair_files_share_size_and_dup_group() {
         // The exact-duplicate-pair family (AC-F2) requires same basename+size;
         // this generator additionally gives them identical content via the
-        // shared dup_group seed. Assert the manifest actually wires that up.
+        // shared dup_group seed. Assert the manifest actually wires that up,
+        // including basename equality for groups whose members are all
+        // tagged ExactDuplicatePair (a non-exact dup_group use, if one is
+        // ever added, would not be held to the basename rule).
         let manifest = standard_library_manifest();
-        let mut dup_sizes = Vec::new();
-        fn walk(node: &FixtureNode, out: &mut Vec<(DupGroup, u64)>) {
+        let mut records = Vec::new();
+        fn walk(node: &FixtureNode, out: &mut Vec<(DupGroup, u64, String, Vec<FixtureFamily>)>) {
             match node {
                 FixtureNode::Folder(f) => {
                     for c in &f.children {
@@ -598,30 +673,74 @@ mod tests {
                 }
                 FixtureNode::File(file) => {
                     if let Some(g) = file.dup_group {
-                        out.push((g, file.size));
+                        out.push((g, file.size, file.name.clone(), file.families.clone()));
                     }
                 }
             }
         }
         for node in &manifest.top_level {
-            walk(node, &mut dup_sizes);
+            walk(node, &mut records);
         }
-        assert!(
-            !dup_sizes.is_empty(),
-            "expected at least one dup_group pair"
-        );
+        assert!(!records.is_empty(), "expected at least one dup_group pair");
+
         // group by key and assert every group has >= 2 members, all same size
         use std::collections::HashMap;
-        let mut groups: HashMap<DupGroup, Vec<u64>> = HashMap::new();
-        for (g, size) in dup_sizes {
-            groups.entry(g).or_default().push(size);
+        let mut groups: HashMap<DupGroup, Vec<(u64, String, Vec<FixtureFamily>)>> = HashMap::new();
+        for (g, size, name, families) in records {
+            groups.entry(g).or_default().push((size, name, families));
         }
-        for (g, sizes) in groups {
-            assert!(sizes.len() >= 2, "dup group {g} has fewer than 2 members");
+        for (g, members) in groups {
+            assert!(members.len() >= 2, "dup group {g} has fewer than 2 members");
             assert!(
-                sizes.windows(2).all(|w| w[0] == w[1]),
+                members.windows(2).all(|w| w[0].0 == w[1].0),
                 "dup group {g} members must share the same declared size"
             );
+            let is_exact_pair = members
+                .iter()
+                .all(|(_, _, fams)| fams.contains(&FixtureFamily::ExactDuplicatePair));
+            if is_exact_pair {
+                assert!(
+                    members.windows(2).all(|w| w[0].1 == w[1].1),
+                    "exact-duplicate-pair dup group {g} members must share the same basename"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn suffixed_copy_is_not_tagged_as_the_exact_pair() {
+        // FIX 1 regression guard: the " (1)" same-folder copy must be a
+        // distinct family from ExactDuplicatePair, since it deliberately has
+        // a DIFFERENT basename than its source.
+        let manifest = standard_library_manifest();
+        fn walk(node: &FixtureNode, out: &mut Vec<FileNode>) {
+            match node {
+                FixtureNode::Folder(f) => {
+                    for c in &f.children {
+                        walk(c, out);
+                    }
+                }
+                FixtureNode::File(file) => out.push(file.clone()),
+            }
+        }
+        let mut files = Vec::new();
+        for node in &manifest.top_level {
+            walk(node, &mut files);
+        }
+        let suffixed = files
+            .iter()
+            .find(|f| f.families.contains(&FixtureFamily::SuffixedCopyDuplicate))
+            .expect("expected a SuffixedCopyDuplicate fixture");
+        assert!(
+            !suffixed
+                .families
+                .contains(&FixtureFamily::ExactDuplicatePair),
+            "the suffixed-copy fixture must not also claim to be the exact pair"
+        );
+        assert!(
+            suffixed.name.ends_with(" (1).m4b"),
+            "expected the suffixed-copy fixture to be the \" (1)\" case, got {:?}",
+            suffixed.name
+        );
     }
 }

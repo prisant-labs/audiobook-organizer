@@ -70,6 +70,21 @@ pub enum FixtureFamily {
     /// One half of an exact-duplicate pair (same basename + size, and in
     /// this generator, identical content).
     ExactDuplicatePair,
+    /// An OS-style incremented-suffix copy of a file (the `" (1)"` case):
+    /// same visual content as its source but a different basename, so it is
+    /// a near-miss for duplicate detection rather than an exact pair.
+    SuffixedCopyDuplicate,
+    /// A trailing-dot or trailing-space near-miss: a folder or file whose
+    /// name literally ends in `.` or a space, only creatable via
+    /// extended-length semantics (FD-19), exercising the same normalizer
+    /// backstop as [`FixtureFamily::ReservedNameNearMiss`] (F-304).
+    TrailingDotOrSpaceNearMiss,
+    /// One half of an NFC/NFD Unicode twin pair sharing the SAME parent
+    /// directory (as opposed to [`FixtureFamily::UnicodeNfcNfdTwin`], whose
+    /// pair lives in separate folders): proves distinct byte-level
+    /// normalization forms materialize as distinct directory entries even
+    /// when they are siblings.
+    UnicodeNfcNfdTwinSameDir,
     /// FD-17 video/course cluster: an mp4 "course" (the Zig Ziglar 52 Sales
     /// Lessons case).
     VideoCourseMp4,
@@ -111,6 +126,9 @@ impl FixtureFamily {
             FixtureFamily::ReservedNameNearMiss => "reserved-name-near-miss",
             FixtureFamily::ZeroByteSample => "zero-byte-sample",
             FixtureFamily::ExactDuplicatePair => "exact-duplicate-pair",
+            FixtureFamily::SuffixedCopyDuplicate => "suffixed-copy-duplicate",
+            FixtureFamily::TrailingDotOrSpaceNearMiss => "trailing-dot-or-space-near-miss",
+            FixtureFamily::UnicodeNfcNfdTwinSameDir => "unicode-nfc-nfd-twin-same-dir",
             FixtureFamily::VideoCourseMp4 => "video-course-mp4",
             FixtureFamily::VideoCourseComic => "video-course-comic",
             FixtureFamily::VideoCourseRadioPlay => "video-course-radio-play",
@@ -145,6 +163,9 @@ impl FixtureFamily {
         FixtureFamily::ReservedNameNearMiss,
         FixtureFamily::ZeroByteSample,
         FixtureFamily::ExactDuplicatePair,
+        FixtureFamily::SuffixedCopyDuplicate,
+        FixtureFamily::TrailingDotOrSpaceNearMiss,
+        FixtureFamily::UnicodeNfcNfdTwinSameDir,
         FixtureFamily::VideoCourseMp4,
         FixtureFamily::VideoCourseComic,
         FixtureFamily::VideoCourseRadioPlay,
