@@ -94,6 +94,7 @@ use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
+use crate::db::activity::{append_activity, json_object, ActivityOutcome};
 use crate::error::AppError;
 use crate::ipc::ScanSummary;
 use crate::scan::persist::{insert_running_scan, mark_scan_failed, persist_entries_and_finalize};
@@ -408,7 +409,24 @@ pub(crate) fn parse_wiztree_csv(csv_path: &Path) -> Result<CsvParseOutcome, AppE
 /// A wholly invalid file fails cleanly with `AppError::CsvParse { row: 0 }`
 /// before any `scans` row is written, the same before-any-write posture
 /// `run_scan` uses for a bad root.
+///
+/// F-1001 (v0.2.0 Phase 6): after [`run_csv_import_impl`] returns, this
+/// wrapper appends exactly one `activity_records` row for the run - action
+/// `"csv-import"`, succeeded or failed (with the [`AppError::code`]) -
+/// regardless of which return point inside the impl produced it.
 pub async fn run_csv_import(pool: &SqlitePool, csv_path: &Path) -> Result<ScanSummary, AppError> {
+    let result = run_csv_import_impl(pool, csv_path).await;
+
+    let params = json_object(&[("csv_path", &csv_path.display().to_string())]);
+    let outcome = ActivityOutcome::from_result(&result);
+    append_activity(pool, "csv-import", &params, &outcome).await;
+
+    result
+}
+
+/// The CSV import implementation [`run_csv_import`] wraps with the F-1001
+/// activity-log append. See that function's doc for the full contract.
+async fn run_csv_import_impl(pool: &SqlitePool, csv_path: &Path) -> Result<ScanSummary, AppError> {
     let parsed = parse_wiztree_csv(csv_path)?;
 
     for skipped in &parsed.skipped_rows {

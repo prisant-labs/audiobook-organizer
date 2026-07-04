@@ -9,7 +9,7 @@
 //! CFG RULE) - consuming the F-303 merge ([`crate::parse::extract`]) and the
 //! F-103 file typing ([`crate::scan::typing`]).
 //!
-//! Three submodules:
+//! Four submodules:
 //!   - [`engine`] - F-201: the deterministic bottom-up rules and the nine
 //!     classes; also the shelf-inheritance suppression and the pattern-2 vs
 //!     pattern-9 content resolution the brief calls out.
@@ -17,11 +17,17 @@
 //!     track / bonus false-positive guards.
 //!   - [`metrics`] - F-202: per-class and per-problem counts and byte totals,
 //!     every metric declaring its unit (FD-08).
+//!   - [`run`] - v0.2.0 Phase 6, F-1001: the one I/O-touching function in this
+//!     module. [`run::run_classify`] wraps the pure [`engine::classify`] with
+//!     an activity-log append; `engine`, `metrics`, and `multibook` themselves
+//!     stay pure, exactly as documented above.
 
 pub mod engine;
 pub mod metrics;
 pub mod multibook;
+pub mod run;
 
 pub use engine::{classify, ClassifyInput, Evidence, FolderClass, FolderClassification};
 pub use metrics::{health_metrics, ClassMetric, HealthMetrics, MetricUnit, ProblemMetric};
 pub use multibook::{detect_multibook, BookFile, MultiBookVerdict};
+pub use run::run_classify;
