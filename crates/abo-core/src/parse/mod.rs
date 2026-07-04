@@ -9,11 +9,11 @@
 //!
 //! Module boundary (v0.2.0 implementation plan, Phase 4): P4a landed
 //! [`matchers`] (F-301) and [`strip`] (F-302) plus the parser-coverage
-//! metric ([`coverage`]) called for by Phase 4 step 5. P4b adds [`normalize`]
-//! (F-304, filesystem-safe output components) and, in the following commit,
-//! `extract` (F-303, the confidence merge across the folder tree); both
-//! consume [`ParsedFields`] and [`matchers::MatchOutcome`] as their input
-//! shape and, like the rest of this module, are pure and ungated.
+//! metric ([`coverage`]) called for by Phase 4 step 5. P4b adds [`extract`]
+//! (F-303, the confidence merge across the folder tree) and [`normalize`]
+//! (F-304, filesystem-safe output components); both consume [`ParsedFields`]
+//! and [`matchers::MatchOutcome`] as their input shape and, like the rest of
+//! this module, are pure and ungated.
 //!
 //! [`parse_preview`] is a small compositional helper (strip general noise,
 //! then run the matchers) used by this module's own tests and by the
@@ -25,6 +25,7 @@
 //! not capture their own year/rank); `parse_preview` exists only to prove
 //! the two P4a modules compose correctly and to feed the coverage metric.
 
+pub mod extract;
 pub mod matchers;
 pub mod normalize;
 pub mod strip;
