@@ -1,0 +1,50 @@
+---
+source: crates/abo-core/tests/classification_golden.rs
+expression: "lines.join(\"\\n\")"
+---
+Genre - Business => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":2,"book_children":2,"distinct_child_authors":["Chris Dixon","Michael Easter"],"own_author":"Genre"}
+Genre - Business/Chris_Dixon_-_Read_Write_Own => book [book-audio-leaf] {"audio_files":1,"clean_author":"Chris Dixon"}
+Genre - Business/Michael_Easter_-_Scarcity_Brain => book [book-audio-leaf] {"audio_files":1,"clean_author":"Michael Easter"}
+Genre - Children => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":3,"book_children":3,"distinct_child_authors":["Roald Dahl"],"own_author":"Genre"}
+Genre - Children/Chronicles of Narnia => multi-book-suspect [multibook-distinct-titles] {"audio_files":7,"distinct_titles":["prince caspian","the horse and his boy","the last battle","the lion, the witch and the wardrobe","the magician's nephew","the silver chair","the voyage of the dawn treader"]}
+Genre - Children/Harry Potter => multi-book-suspect [multibook-distinct-titles] {"audio_files":11,"distinct_titles":["harry potter and the chamber of secrets","harry potter and the deathly hallows","harry potter and the goblet of fire","harry potter and the half-blood prince","harry potter and the order of the phoenix","harry potter and the philosopher's stone","harry potter and the prisoner of azkaban"]}
+Genre - Children/Roald Dahl - Charlie and the Chocolate Factory => book [book-audio-leaf] {"audio_files":1,"clean_author":"Roald Dahl"}
+Genre - Non-Fiction => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":4,"book_children":4,"distinct_child_authors":["Adam Savage","Richard Susskind"],"own_author":"Genre"}
+Genre - Non-Fiction/Every Tool's a Hammer - Life Is What You Make It by Adam Savage => book [book-audio-leaf] {"audio_files":1,"clean_author":"Adam Savage"}
+Genre - Non-Fiction/How to Think About AI - A Guide for the Perplexe by Richard Susskind => book [book-audio-leaf] {"audio_files":1,"clean_author":"Richard Susskind"}
+Genre - Non-Fiction/Rework => book [book-audio-leaf] {"audio_files":1}
+Genre - Non-Fiction/Verbal Advantage => book [disc-split-single-book] {"detected":"disc-split","child_folders":4}
+Genre - Non-Fiction/Verbal Advantage/CD3 => book [disc-part] {"detected":"disc-part","audio_files":1}
+Genre - Non-Fiction/Verbal Advantage/Disc 1 => book [disc-part] {"detected":"disc-part","audio_files":2}
+Genre - Non-Fiction/Verbal Advantage/Disc 2 => book [disc-part] {"detected":"disc-part","audio_files":1}
+Genre - Non-Fiction/Verbal Advantage/Disk_04 => book [disc-part] {"detected":"disc-part","audio_files":1}
+Genre - SciFI => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":9,"book_children":9,"series_signal":1,"distinct_child_authors":["Andy Weir","Frank Herbert","Jim Butcher"],"own_author":"Genre"}
+Genre - SciFI/Andy Weir - Project Hail Mary => book [book-audio-leaf] {"audio_files":1,"clean_author":"Andy Weir"}
+Genre - SciFI/Backup Copy => book [book-audio-leaf] {"audio_files":1}
+Genre - SciFI/Frank Herbert-Dune-#1-Chronicles[1-8} => multi-book-suspect [multibook-distinct-titles] {"audio_files":2,"distinct_titles":["dune","dune messiah"],"clean_author":"Frank Herbert","clean_series":"Dune"}
+Genre - SciFI/Hugo Collection => pack-container [pack-container-collection] {"child_folders":3,"book_children":3,"series_signal":2,"distinct_child_authors":["Charles Stross","N.K. Jemisin"]}
+Genre - SciFI/Hugo Collection/0 Series Books => pack-container [pack-container-collection] {"child_folders":2,"book_children":2,"distinct_child_authors":["Jim Butcher","Robert Jordan"]}
+Genre - SciFI/Hugo Collection/0 Series Books/Jim Butcher - Dresden Files 22GB => series-container [series-container-indexed] {"child_folders":2,"book_children":2,"series_signal":2,"own_author":"Jim Butcher"}
+Genre - SciFI/Hugo Collection/0 Series Books/Jim Butcher - Dresden Files 22GB/08.0 - Proven Guilty [320k 16;15;24 2.19GB] => book [book-audio-leaf] {"audio_files":1,"clean_author":"Jim Butcher"}
+Genre - SciFI/Hugo Collection/0 Series Books/Jim Butcher - Dresden Files 22GB/14.0 - Cold Days [320k 18;48;03 2.52GB] => book [book-audio-leaf] {"audio_files":1,"clean_author":"Jim Butcher"}
+Genre - SciFI/Hugo Collection/0 Series Books/Robert Jordan - Wheel of Time => series-container [series-container-indexed] {"child_folders":1,"book_children":1,"series_signal":1,"own_author":"Robert Jordan"}
+Genre - SciFI/Hugo Collection/0 Series Books/Robert Jordan - Wheel of Time/(1) The Eye of the World [64k 29;57;14 826MB] => book [book-audio-leaf] {"audio_files":1,"clean_author":"Robert Jordan"}
+Genre - SciFI/Hugo Collection/2014 - Charles Stross - Neptune's Brood (Freyaverse #2) [64k 12;00;34 660MB] => book [book-audio-leaf] {"audio_files":1,"clean_author":"Charles Stross","clean_series":"Freyaverse"}
+Genre - SciFI/Hugo Collection/2016^ - N.K. Jemisin - The Fifth Season (The Broken Earth Book 1) [64k 15;27;29 426MB] => book [book-audio-leaf] {"audio_files":1,"clean_author":"N.K. Jemisin","clean_series":"The Broken Earth"}
+Genre - SciFI/Jim Butcher - Dresden Files 22GB => book [book-audio-leaf] {"audio_files":1,"clean_author":"Jim Butcher"}
+Genre - SciFI/Mixed Example Folder => mixed [mixed-audio-and-folders] {"audio_files":1,"child_folders":1}
+Genre - SciFI/Mixed Example Folder/Nested Book => book [book-audio-leaf] {"audio_files":1}
+Genre - SciFI/Out of the Silent Planet => book [book-audio-leaf] {"audio_files":1}
+Genre - SciFI/Parallel Format Example => mixed [mixed-audio-and-folders] {"audio_files":2,"child_folders":1}
+Genre - SciFI/Parallel Format Example/0 M4B => book [book-audio-leaf] {"audio_files":1}
+Genre - SciFI/Top 100 Sci-Fi Books => pack-container [pack-container-collection] {"child_folders":2,"book_children":2,"distinct_child_authors":["Aldous Huxley","Orson Scott Card"]}
+Genre - SciFI/Top 100 Sci-Fi Books/1 - Ender's Game - Orson Scott Card - 1985 => book [book-audio-leaf] {"audio_files":1,"clean_author":"Orson Scott Card"}
+Genre - SciFI/Top 100 Sci-Fi Books/16 - Brave New World - Aldous Huxley - 1932 => book [book-audio-leaf] {"audio_files":1,"clean_author":"Aldous Huxley"}
+Unicode Twins => pack-container [pack-container-collection] {"child_folders":2,"book_children":2}
+Unicode Twins/Café Society (NFD) => book [book-audio-leaf] {"audio_files":1}
+Unicode Twins/Café Society (NFC) => book [book-audio-leaf] {"audio_files":1}
+Video Course Cluster => manual-review [manual-review-cluster] {"detected":"non-book-cluster","child_folders":3}
+Video Course Cluster/52 Sales Lessons => manual-review [fd17-video-course] {"detected":"video-course","video_files":5}
+Video Course Cluster/Comics => manual-review [fd17-comic] {"detected":"comic","comic_files":2}
+Video Course Cluster/Radio Play => manual-review [fd17-radio-play] {"detected":"radio-play","audio_files":2}
+Zero Byte Samples => book [book-audio-leaf] {"audio_files":2}
