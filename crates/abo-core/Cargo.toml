@@ -33,6 +33,18 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "migrate", "ma
 # facade crate: no tauri, no network, so the core-purity gate stays green.
 tracing = { workspace = true, features = ["log"] }
 
+# v0.3.0 Phase 3 (F-801 ruleset model): a ruleset is persisted as a
+# schema-versioned JSON body, and AC-29 requires parsing that body, validating
+# it against the versioned shape, and rejecting a malformed/invalid body on
+# save with a machine code. serde is already a normal dependency; serde_json
+# gives the ruleset a real JSON (de)serializer for that round-trip and
+# validation instead of hand-rolling a parser. It is a pure crate (itoa + ryu +
+# memchr, plus serde), so the core-purity gate (`cargo tree -p abo-core -e
+# normal | grep -i tauri`) and the zero-network gate (tests/no_network.rs) both
+# stay green. Promoted from a dev-dependency (where the error-taxonomy tests
+# already used it) to a normal one.
+serde_json = { workspace = true }
+
 # Phase 3 (scanner) adds walkdir for the recursive traversal (F-101). walkdir
 # pulls only same-file + winapi-util (no tauri, no network), so the core-purity
 # gate (`cargo tree -p abo-core -e normal | grep -i tauri`) stays empty. Windows
@@ -147,7 +159,9 @@ probe = ["dep:lofty"]
 abo-core = { path = ".", features = ["fixtures"] }
 tokio = { workspace = true }
 tempfile = "3"
-serde_json = { workspace = true }
+# serde_json is now a NORMAL dependency (see above, F-801 ruleset JSON), so it
+# no longer needs restating here; the error-taxonomy tests that first used it
+# inherit it from the normal dependency graph.
 # tests/tracing_log_bridge.rs drives the tracing -> log facade bridge directly,
 # so the integration-test crate names both crates. Integration tests do not
 # inherit the library's normal dependencies (see sqlx below), so they are

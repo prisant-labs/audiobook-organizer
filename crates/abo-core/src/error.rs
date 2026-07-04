@@ -95,6 +95,17 @@ pub enum AppError {
     /// [`AppError::RootNotFound`]'s before-any-write posture.
     #[error("CSV row {row} could not be parsed")]
     CsvParse { row: usize },
+
+    // ---- Ruleset family (v0.3.0 Phase 3: F-801 ruleset model) ----
+    /// A ruleset's JSON body could not be accepted: it is not valid JSON, is
+    /// missing a required field, has a field of the wrong type, carries a
+    /// `schema_version` this build does not support, or holds an out-of-range
+    /// value (for example a series-index width below 1). Returned by
+    /// [`crate::ruleset::parse_and_validate`] BEFORE any row is written, so a
+    /// bad body is never persisted half-valid (AC-29). `detail` is a
+    /// developer-facing explanation; the remediation is the user-facing one.
+    #[error("ruleset body is invalid: {detail}")]
+    RulesetInvalid { detail: String },
 }
 
 impl AppError {
@@ -112,6 +123,8 @@ impl AppError {
             AppError::JunctionSkipped { .. } => "junction-skipped",
             AppError::ScanFailed { .. } => "scan-failed",
             AppError::CsvParse { .. } => "csv-parse",
+            // Ruleset family
+            AppError::RulesetInvalid { .. } => "ruleset-invalid",
         }
     }
 
@@ -157,6 +170,12 @@ impl AppError {
                  read were imported; check that the file is an unmodified WizTree export and try \
                  again if entries are missing."
             }
+            // Ruleset family
+            AppError::RulesetInvalid { .. } => {
+                "This ruleset could not be saved because its settings were not valid. This is \
+                 usually an out-of-date or hand-edited ruleset file; reset it to the defaults or \
+                 re-create it, then save again."
+            }
         }
     }
 }
@@ -191,6 +210,9 @@ mod tests {
                 detail: "database is locked".into(),
             },
             AppError::CsvParse { row: 42 },
+            AppError::RulesetInvalid {
+                detail: "missing field `naming`".into(),
+            },
         ]
     }
 

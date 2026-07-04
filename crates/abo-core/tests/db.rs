@@ -62,6 +62,22 @@ async fn migrate_idempotent() {
         DbOpenOutcome::Normal,
         "first open is a normal create"
     );
+    // The migration ledger's row count after the first open: whatever the
+    // CURRENT embedded migration set applies to a fresh db (one row per
+    // migration file - two as of v0.3.0 Phase 1's 0002_plan_and_rulesets.sql,
+    // more as later releases add their own). Read dynamically rather than a
+    // hardcoded literal, so this test does not need editing every time an
+    // additive migration lands; what AC-6 actually asserts is idempotency
+    // (the count below must not grow), not a fixed migration count.
+    let count_after_first: i64 = sqlx::query("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&pool1)
+        .await
+        .expect("count applied migrations after first open")
+        .get(0);
+    assert!(
+        count_after_first >= 1,
+        "at least one migration must be recorded after the first open"
+    );
     pool1.close().await;
 
     // Reopen the same dir: the migration is already applied, so this must be a
@@ -80,16 +96,17 @@ async fn migrate_idempotent() {
         );
     }
 
-    // The migration ledger records exactly one applied migration: proof the
-    // migration did not double-apply.
-    let count: i64 = sqlx::query("SELECT COUNT(*) FROM _sqlx_migrations")
+    // The migration ledger's row count is UNCHANGED after the second open:
+    // proof the already-applied migrations did not re-apply (double-insert
+    // their ledger row, or double-run their DDL).
+    let count_after_second: i64 = sqlx::query("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(&pool2)
         .await
-        .expect("count applied migrations")
+        .expect("count applied migrations after second open")
         .get(0);
     assert_eq!(
-        count, 1,
-        "exactly one migration must be recorded, not re-applied"
+        count_after_second, count_after_first,
+        "the migration ledger must not grow on a no-op reopen: not re-applied"
     );
 
     pool2.close().await;
