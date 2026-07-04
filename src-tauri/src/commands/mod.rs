@@ -10,6 +10,7 @@
 //! return its `job_id`), [`scan_entries`] (read a snapshot back for the tracer),
 //! and [`db_status`] (report whether startup recovered a corrupt database).
 
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
 
 use abo_core::db::DbOpenOutcome;
@@ -18,6 +19,7 @@ use abo_core::db::DbOpenOutcome;
 // return because `AppError` derives `specta::Type` in the core.
 use abo_core::ipc::{AppError, DbStatus, EntryRow, JobStarted};
 use abo_core::scan::walk::now_iso8601_utc;
+use futures::FutureExt;
 use sqlx::SqlitePool;
 
 use crate::events::{emit_job_completed, emit_job_failed};
@@ -57,17 +59,26 @@ pub async fn scan_start(
     let pool = state.pool.clone();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Clone the pool once for the scan work itself; the terminal-state wrapper
+        // takes ownership of the outer clone so it can still write the `jobs` row
+        // even if the scan future is dropped or unwinds.
+        let scan_pool = pool.clone();
         let root_path = PathBuf::from(&root);
-        match abo_core::scan::run_scan(&pool, &root_path).await {
-            Ok(summary) => {
-                mark_job_completed(&pool, job_id).await;
-                emit_job_completed(&handle, job_id, summary.scan_id);
-            }
-            Err(err) => {
-                mark_job_failed(&pool, job_id, err.code()).await;
-                emit_job_failed(&handle, job_id, err.code());
-            }
-        }
+        // `job_id` is Copy; `handle` is cloned so the completed and failed emit
+        // closures each own one (only one of the two ever runs).
+        let handle_completed = handle.clone();
+        run_job_to_terminal(
+            pool,
+            job_id,
+            async move {
+                abo_core::scan::run_scan(&scan_pool, &root_path)
+                    .await
+                    .map(|summary| summary.scan_id)
+            },
+            move |scan_id| emit_job_completed(&handle_completed, job_id, scan_id),
+            move |code| emit_job_failed(&handle, job_id, code),
+        )
+        .await;
     });
 
     Ok(JobStarted { job_id })
@@ -103,6 +114,56 @@ pub fn db_status(state: tauri::State<'_, AppState>) -> DbStatus {
             recovered: true,
             backup_path: Some(backup_path.display().to_string()),
         },
+    }
+}
+
+/// Drive a spawned job's `work` future to a terminal `jobs`-row state,
+/// panic-safely.
+///
+/// This is the single wrapper [`scan_start`]'s spawned task uses (there is no
+/// parallel copy of the completed/failed logic). It awaits `work` under
+/// [`FutureExt::catch_unwind`] so all three outcomes reach a terminal row:
+///
+/// - `Ok(scan_id)`: mark the row `completed`, then call `on_completed(scan_id)`.
+/// - `Err(e)`: mark the row `failed` with `e.code()`, then call `on_failed(code)`.
+/// - a panic inside `work`: catch the unwind, mark the row `failed` with
+///   error_code `"internal-panic"`, then call `on_failed("internal-panic")`.
+///
+/// The panic arm is the fix for the swallowed-panic hole: without it, a panic in
+/// the scan future is discarded by the async runtime, leaving the `jobs` row stuck
+/// in `running` forever and never emitting `job:failed`. The success and error
+/// arms are behavior-identical to the pre-fix inline `match`. Event emission is
+/// injected as closures so the wrapper stays Tauri-free and unit-testable.
+///
+/// (Under the release profile's `panic = "abort"`, a panic aborts the process
+/// before it can be caught; catch_unwind's guarantee therefore holds for the
+/// unwinding builds used by tests and `cargo run`, which is where a stuck
+/// `running` row would otherwise be observable.)
+pub async fn run_job_to_terminal<Fut, C, E>(
+    pool: SqlitePool,
+    job_id: i64,
+    work: Fut,
+    on_completed: C,
+    on_failed: E,
+) where
+    Fut: std::future::Future<Output = Result<i64, AppError>>,
+    C: FnOnce(i64),
+    E: FnOnce(&str),
+{
+    match AssertUnwindSafe(work).catch_unwind().await {
+        Ok(Ok(scan_id)) => {
+            mark_job_completed(&pool, job_id).await;
+            on_completed(scan_id);
+        }
+        Ok(Err(err)) => {
+            let code = err.code();
+            mark_job_failed(&pool, job_id, code).await;
+            on_failed(code);
+        }
+        Err(_panic) => {
+            mark_job_failed(&pool, job_id, "internal-panic").await;
+            on_failed("internal-panic");
+        }
     }
 }
 

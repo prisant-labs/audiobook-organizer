@@ -19,6 +19,14 @@
 ///
 /// The path is relative to the `src-tauri` crate root, matching where `cargo`
 /// runs the test binary's working directory.
+///
+/// NOTE: this test intentionally WRITES `../src/lib/bindings.ts` on every run;
+/// it is the generator, not a read-only assertion. That is the drift-gate design
+/// (`pnpm bindings:check` runs it, then `git diff --exit-code`): any `cargo test`
+/// regenerates the committed file, and CI fails if the result differs from what
+/// is checked in. So a full `cargo test --workspace` may leave `bindings.ts`
+/// rewritten in your working tree even when nothing changed (byte-identical), and
+/// a real IPC-surface change surfaces here as a diff to review and commit.
 #[test]
 fn export_bindings() {
     abo_lib::export_bindings("../src/lib/bindings.ts")

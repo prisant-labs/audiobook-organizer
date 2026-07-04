@@ -25,6 +25,11 @@
 mod commands;
 mod events;
 
+// Re-exported for the panic-safety integration test (`tests/job_terminal.rs`),
+// which drives the spawned scan job's terminal-state wrapper directly. Exposing
+// just this one helper keeps the rest of the command layer module-private.
+pub use commands::run_job_to_terminal;
+
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 use tauri_specta::{collect_commands, collect_events};
