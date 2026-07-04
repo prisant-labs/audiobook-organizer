@@ -20,5 +20,6 @@
 
 pub mod builder;
 pub mod disc;
+pub mod provenance;
 pub mod templates;
 pub mod validate;
