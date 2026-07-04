@@ -13,7 +13,11 @@ use std::fs;
 use std::path::Path;
 
 use abo_core::db::open_db;
-use abo_core::ipc::{EntryRow, ScanWarningKind};
+use abo_core::ipc::EntryRow;
+// ScanWarningKind is consumed only by the #[cfg(windows)] edge tests below;
+// an unconditional import is an unused-import clippy error on the linux leg.
+#[cfg(windows)]
+use abo_core::ipc::ScanWarningKind;
 use abo_core::scan::{get_scan_entries, run_scan};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
