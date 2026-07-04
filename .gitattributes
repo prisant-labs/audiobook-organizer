@@ -1,0 +1,11 @@
+# LF normalization keeps golden and insta-style test output byte-stable
+# across machines and Windows/Unix checkouts (FD-25, v0.1.0 hygiene set).
+* text=auto eol=lf
+
+# Binary assets: never subject to line-ending normalization or diffing as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.woff2 binary
+*.ico binary
+*.db binary
