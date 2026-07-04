@@ -5,13 +5,15 @@
 //! purity CI gate runs `cargo tree -p abo-core -e normal` and fails the
 //! build if `tauri` appears anywhere in it (AC-3).
 //!
-//! Every module below is a stub for now. Later phases of the v0.1.0
-//! implementation plan (docs/internal/releases/v0.1.0-spine/implementation-plan.md)
-//! fill them in:
-//!   - Phase 2 fills `db` (sqlx pool, WAL, migrations, corrupt-DB recovery).
+//! Phases of the v0.1.0 implementation plan
+//! (docs/internal/releases/v0.1.0-spine/implementation-plan.md) fill the
+//! modules in:
+//!   - Phase 2 (done) fills `db` (sqlx pool, WAL, migrations, corrupt-DB
+//!     recovery) and `paths` (the app-data path seam), and seeds the `error`
+//!     Storage family (`db-migration-failed`, `db-corrupt-recovered`).
 //!   - Phase 3 fills `scan` (walker, file typing, snapshot persistence).
-//!   - Phase 4 fills `error` (`AppError` taxonomy) and `ipc` (payload
-//!     structs), both deriving `serde` and `specta::Type`.
+//!   - Phase 4 extends `error` with the Scan family and fills `ipc` (payload
+//!     structs), all deriving `serde` and `specta::Type`.
 
 pub mod db;
 pub mod error;
