@@ -120,7 +120,11 @@ pub fn available_bytes(path: &Path) -> Option<u64> {
 
     // GetDiskFreeSpaceExW wants a directory (or any path) on the volume; a
     // volume root like `E:\` is what callers pass. NUL-terminate the wide form.
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     // Minimal FFI: declaring the extern adds no crate dependency (kernel32 is
     // already linked by the standard library on the Windows target).

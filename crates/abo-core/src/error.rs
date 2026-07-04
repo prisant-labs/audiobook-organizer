@@ -395,14 +395,20 @@ mod tests {
     #[test]
     fn code_matches_serde_tag() {
         // The machine code is defined "via serde rename": the code() string must
-        // equal the externally-tagged serde variant tag. This locks the two
-        // together so a future rename cannot drift the contract silently.
+        // equal the serde variant tag. This locks the two together so a future
+        // rename cannot drift the contract silently. Struct variants serialize
+        // externally-tagged as a one-key object; a UNIT variant (e.g.
+        // `NothingApproved`) serializes as the bare tag STRING - both forms are
+        // valid, and in both the tag is exactly the machine code.
         for err in one_of_each() {
             let value = serde_json::to_value(&err).expect("serialize");
-            let tag = value
-                .as_object()
-                .and_then(|o| o.keys().next().cloned())
-                .expect("externally-tagged object with one key");
+            let tag = match &value {
+                serde_json::Value::Object(o) => {
+                    o.keys().next().cloned().expect("one-key tagged object")
+                }
+                serde_json::Value::String(s) => s.clone(),
+                other => panic!("unexpected AppError serialization: {other:?}"),
+            };
             assert_eq!(tag, err.code(), "serde tag must equal code()");
         }
     }

@@ -319,7 +319,11 @@ fn volume_of(path: &str) -> Option<String> {
     if let Some(rest) = unified.strip_prefix("//") {
         let mut it = rest.split('/').filter(|s| !s.is_empty());
         if let (Some(server), Some(share)) = (it.next(), it.next()) {
-            return Some(format!("//{}/{}", server.to_lowercase(), share.to_lowercase()));
+            return Some(format!(
+                "//{}/{}",
+                server.to_lowercase(),
+                share.to_lowercase()
+            ));
         }
     }
     None
@@ -334,7 +338,9 @@ fn checkable_components(path: &str) -> Vec<String> {
         .split('/')
         .filter(|c| !c.is_empty())
         // Drop a drive-letter token like `E:` (its colon is legal only there).
-        .filter(|c| !(c.len() == 2 && c.as_bytes()[1] == b':' && c.as_bytes()[0].is_ascii_alphabetic()))
+        .filter(|c| {
+            !(c.len() == 2 && c.as_bytes()[1] == b':' && c.as_bytes()[0].is_ascii_alphabetic())
+        })
         .map(|c| c.to_string())
         .collect()
 }
@@ -444,7 +450,16 @@ pub fn validate_plan(plan: &BuiltPlan, env: &ValidationEnv) -> Vec<OpVerdict> {
     let mut verdicts: Vec<OpVerdict> = plan
         .ops
         .iter()
-        .map(|op| verdict_for_op(op, &existing, &target_counts, &vacated, &insufficient_volumes, env))
+        .map(|op| {
+            verdict_for_op(
+                op,
+                &existing,
+                &target_counts,
+                &vacated,
+                &insufficient_volumes,
+                env,
+            )
+        })
         .collect();
 
     // Post-pass: fold a blocked pack member into the pack-shell-quarantine
@@ -566,9 +581,7 @@ fn apply_pack_shell_guard(ops: &[PlannedOp], verdicts: &mut [OpVerdict]) {
     let blocked_member_sources: Vec<String> = ops
         .iter()
         .zip(verdicts.iter())
-        .filter(|(op, v)| {
-            op.op_group == "flatten-packs" && op.kind == "move" && v.is_blocked()
-        })
+        .filter(|(op, v)| op.op_group == "flatten-packs" && op.kind == "move" && v.is_blocked())
         .map(|(op, _)| norm(&op.source_path))
         .collect();
     if blocked_member_sources.is_empty() {
@@ -702,7 +715,7 @@ impl ApprovalState {
     }
 
     /// Parse a stored `approval` string.
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_stored(s: &str) -> Option<Self> {
         match s {
             "pending" => Some(ApprovalState::Pending),
             "approved" => Some(ApprovalState::Approved),
@@ -970,8 +983,18 @@ mod tests {
         let fs = FixedFreeSpace::new();
         // Two moves whose targets differ only in case: an NTFS collision.
         let plan = plan_of(vec![
-            op("move", "loose-root-books", "E:/lib/a.m4b", "E:/lib/Author/Title.m4b"),
-            op("move", "loose-root-books", "E:/lib/b.m4b", "E:/lib/author/title.m4b"),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/a.m4b",
+                "E:/lib/Author/Title.m4b",
+            ),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/b.m4b",
+                "E:/lib/author/title.m4b",
+            ),
         ]);
         let v = validate_plan(&plan, &env(&ex, true, &fs));
         assert_eq!(v[0].reason_code(), Some("collision-in-plan"));
@@ -999,11 +1022,25 @@ mod tests {
         let ex = existing(&["E:/lib/src.m4b", "E:/lib/dest.m4b"]);
         let fs = FixedFreeSpace::new();
         let plan = plan_of(vec![
-            op("move", "loose-root-books", "E:/lib/dest.m4b", "E:/lib/elsewhere.m4b"),
-            op("move", "loose-root-books", "E:/lib/src.m4b", "E:/lib/dest.m4b"),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/dest.m4b",
+                "E:/lib/elsewhere.m4b",
+            ),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/src.m4b",
+                "E:/lib/dest.m4b",
+            ),
         ]);
         let v = validate_plan(&plan, &env(&ex, true, &fs));
-        assert_eq!(v[1].state, ValidationState::Valid, "target is vacated first");
+        assert_eq!(
+            v[1].state,
+            ValidationState::Valid,
+            "target is vacated first"
+        );
     }
 
     #[test]
@@ -1075,7 +1112,12 @@ mod tests {
         let fs = FixedFreeSpace::new();
         let long_leaf = "a".repeat(EXTENDED_LENGTH_LIMIT + 10);
         let target = format!("E:/lib/{long_leaf}.m4b");
-        let plan = plan_of(vec![op("move", "loose-root-books", "E:/lib/x.m4b", &target)]);
+        let plan = plan_of(vec![op(
+            "move",
+            "loose-root-books",
+            "E:/lib/x.m4b",
+            &target,
+        )]);
         let v = validate_plan(&plan, &env(&ex, true, &fs));
         assert_eq!(v[0].reason_code(), Some("path-too-long"));
         assert!(v[0].is_blocked());
@@ -1113,7 +1155,12 @@ mod tests {
         let ex = existing(&["E:/lib/a.m4b", "E:/lib/b.m4b"]);
         // D: has room for a but not for a+b together.
         let plan_fits = {
-            let mut o = op("move", "loose-root-books", "E:/lib/a.m4b", "D:/lib/Author/a.m4b");
+            let mut o = op(
+                "move",
+                "loose-root-books",
+                "E:/lib/a.m4b",
+                "D:/lib/Author/a.m4b",
+            );
             o.byte_size = 1_000;
             plan_of(vec![o])
         };
@@ -1124,9 +1171,19 @@ mod tests {
 
         // Two cross-volume ops summing beyond D:'s free space -> both blocked.
         let plan_over = {
-            let mut a = op("move", "loose-root-books", "E:/lib/a.m4b", "D:/lib/Author/a.m4b");
+            let mut a = op(
+                "move",
+                "loose-root-books",
+                "E:/lib/a.m4b",
+                "D:/lib/Author/a.m4b",
+            );
             a.byte_size = 4_000;
-            let mut b = op("move", "loose-root-books", "E:/lib/b.m4b", "D:/lib/Author/b.m4b");
+            let mut b = op(
+                "move",
+                "loose-root-books",
+                "E:/lib/b.m4b",
+                "D:/lib/Author/b.m4b",
+            );
             b.byte_size = 4_000;
             plan_of(vec![a, b])
         };
@@ -1163,15 +1220,28 @@ mod tests {
         // quarantine must then also block (it would strand that book).
         let ex = existing(&["E:/lib/Pack", "E:/lib/Pack/Present"]); // "Blocked" member absent
         let fs = FixedFreeSpace::new();
-        let mut member_present =
-            op("move", "flatten-packs", "E:/lib/Pack/Present", "E:/lib/A/Present");
+        let mut member_present = op(
+            "move",
+            "flatten-packs",
+            "E:/lib/Pack/Present",
+            "E:/lib/A/Present",
+        );
         member_present.byte_size = 10;
         let member_gone = op("move", "flatten-packs", "E:/lib/Pack/Gone", "E:/lib/B/Gone");
-        let mut shell = op("quarantine", "empty-cleanup", "E:/lib/Pack", "E:/lib/_Quarantine/Pack");
+        let mut shell = op(
+            "quarantine",
+            "empty-cleanup",
+            "E:/lib/Pack",
+            "E:/lib/_Quarantine/Pack",
+        );
         shell.rule_id = "flatten-packs-shell".to_string();
         let plan = plan_of(vec![member_present, member_gone, shell]);
         let v = validate_plan(&plan, &env(&ex, true, &fs));
-        assert_eq!(v[1].reason_code(), Some("snapshot-stale"), "the gone member");
+        assert_eq!(
+            v[1].reason_code(),
+            Some("snapshot-stale"),
+            "the gone member"
+        );
         assert_eq!(
             v[2].reason_code(),
             Some("pack-member-blocked"),
@@ -1184,8 +1254,18 @@ mod tests {
         let ex = existing(&["E:/lib/ok.m4b"]);
         let fs = FixedFreeSpace::new();
         let plan = plan_of(vec![
-            op("move", "loose-root-books", "E:/lib/ok.m4b", "E:/lib/A/ok.m4b"),
-            op("move", "loose-root-books", "E:/lib/gone.m4b", "E:/lib/A/gone.m4b"),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/ok.m4b",
+                "E:/lib/A/ok.m4b",
+            ),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/gone.m4b",
+                "E:/lib/A/gone.m4b",
+            ),
         ]);
         let v = validate_plan(&plan, &env(&ex, true, &fs));
         let s = summarize(&v);
@@ -1200,7 +1280,10 @@ mod tests {
     fn volume_extraction() {
         assert_eq!(volume_of("E:/lib/x"), Some("E:".to_string()));
         assert_eq!(volume_of(r"e:\lib\x"), Some("E:".to_string()));
-        assert_eq!(volume_of(r"\\server\share\x"), Some("//server/share".to_string()));
+        assert_eq!(
+            volume_of(r"\\server\share\x"),
+            Some("//server/share".to_string())
+        );
         assert_eq!(volume_of("relative/path"), None);
     }
 
@@ -1256,7 +1339,7 @@ mod tests {
             ApprovalState::Rejected,
             ApprovalState::Excluded,
         ] {
-            assert_eq!(ApprovalState::from_str(s.as_str()), Some(s));
+            assert_eq!(ApprovalState::from_stored(s.as_str()), Some(s));
         }
     }
 
@@ -1292,12 +1375,28 @@ mod tests {
         let ex = existing(&["E:/lib/ok.m4b"]);
         let fs = FixedFreeSpace::new();
         let plan = plan_of(vec![
-            op("move", "loose-root-books", "E:/lib/ok.m4b", "E:/lib/A/ok.m4b"),
-            op("move", "loose-root-books", "E:/lib/gone.m4b", "E:/lib/A/gone.m4b"),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/ok.m4b",
+                "E:/lib/A/ok.m4b",
+            ),
+            op(
+                "move",
+                "loose-root-books",
+                "E:/lib/gone.m4b",
+                "E:/lib/A/gone.m4b",
+            ),
         ]);
         let verdicts = validate_plan(&plan, &env(&ex, true, &fs));
         let plan_id = persist_validated_plan(
-            &pool, scan_id, ruleset_id, "draft", &plan, &verdicts, "2026-07-04T00:00:00Z",
+            &pool,
+            scan_id,
+            ruleset_id,
+            "draft",
+            &plan,
+            &verdicts,
+            "2026-07-04T00:00:00Z",
         )
         .await
         .unwrap();
@@ -1307,7 +1406,9 @@ mod tests {
     #[tokio::test]
     async fn persist_writes_real_verdicts_not_pending() {
         let (_d, pool, plan_id) = seed_plan_with_verdicts().await;
-        let ops = crate::db::plans::get_plan_ops(&pool, plan_id).await.unwrap();
+        let ops = crate::db::plans::get_plan_ops(&pool, plan_id)
+            .await
+            .unwrap();
         assert_eq!(ops[0].validation_state, "valid");
         assert_eq!(ops[1].validation_state, "blocked");
         assert_eq!(ops[1].validation_reason.as_deref(), Some("snapshot-stale"));
@@ -1316,26 +1417,42 @@ mod tests {
     #[tokio::test]
     async fn set_op_approval_refuses_to_approve_a_blocked_op() {
         let (_d, pool, plan_id) = seed_plan_with_verdicts().await;
-        let ops = crate::db::plans::get_plan_ops(&pool, plan_id).await.unwrap();
-        let blocked_id = ops.iter().find(|o| o.validation_state == "blocked").unwrap().id;
+        let ops = crate::db::plans::get_plan_ops(&pool, plan_id)
+            .await
+            .unwrap();
+        let blocked_id = ops
+            .iter()
+            .find(|o| o.validation_state == "blocked")
+            .unwrap()
+            .id;
 
-        let result =
-            set_op_approval(&pool, blocked_id, ApprovalAction::Approve, "2026-07-04T01:00:00Z")
-                .await;
+        let result = set_op_approval(
+            &pool,
+            blocked_id,
+            ApprovalAction::Approve,
+            "2026-07-04T01:00:00Z",
+        )
+        .await;
         assert!(matches!(
             result,
             Err(ApprovalError::BlockedCannotBeApproved)
         ));
         // The stored approval is unchanged (still pending).
-        let after = crate::db::plans::get_plan_ops(&pool, plan_id).await.unwrap();
+        let after = crate::db::plans::get_plan_ops(&pool, plan_id)
+            .await
+            .unwrap();
         let blocked = after.iter().find(|o| o.id == blocked_id).unwrap();
         assert_eq!(blocked.approval, "pending");
 
         // Excluding it IS allowed.
-        let excluded =
-            set_op_approval(&pool, blocked_id, ApprovalAction::Exclude, "2026-07-04T01:00:00Z")
-                .await
-                .unwrap();
+        let excluded = set_op_approval(
+            &pool,
+            blocked_id,
+            ApprovalAction::Exclude,
+            "2026-07-04T01:00:00Z",
+        )
+        .await
+        .unwrap();
         assert_eq!(excluded, ApprovalState::Excluded);
     }
 
@@ -1355,9 +1472,14 @@ mod tests {
         .unwrap();
         assert_eq!(applied, 1, "only the non-blocked op is approved");
 
-        let ops = crate::db::plans::get_plan_ops(&pool, plan_id).await.unwrap();
+        let ops = crate::db::plans::get_plan_ops(&pool, plan_id)
+            .await
+            .unwrap();
         let valid_op = ops.iter().find(|o| o.validation_state == "valid").unwrap();
-        let blocked_op = ops.iter().find(|o| o.validation_state == "blocked").unwrap();
+        let blocked_op = ops
+            .iter()
+            .find(|o| o.validation_state == "blocked")
+            .unwrap();
         assert_eq!(valid_op.approval, "approved");
         assert_eq!(blocked_op.approval, "pending", "blocked op stays pending");
     }

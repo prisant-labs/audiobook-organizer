@@ -95,7 +95,11 @@ fn rename(source: &str, target: &str) -> PlannedOp {
     }
 }
 
-fn expect(label: &'static str, state: &'static str, code: Option<&'static str>) -> HostileExpectation {
+fn expect(
+    label: &'static str,
+    state: &'static str,
+    code: Option<&'static str>,
+) -> HostileExpectation {
     HostileExpectation { label, state, code }
 }
 
@@ -117,11 +121,7 @@ pub fn hostile_plan() -> HostilePlan {
 
     let ops = vec![
         // 0. Control: a perfectly clean loose-book move.
-        mv(
-            "E:/lib/clean.m4b",
-            "E:/lib/Author/Clean/clean.m4b",
-            1_000,
-        ),
+        mv("E:/lib/clean.m4b", "E:/lib/Author/Clean/clean.m4b", 1_000),
         // 1+2. Planned collision: two moves producing the SAME target.
         mv("E:/lib/dup1.m4b", "E:/lib/Author/Same/book.m4b", 1_000),
         mv("E:/lib/dup2.m4b", "E:/lib/Author/Same/book.m4b", 1_000),
@@ -154,10 +154,22 @@ pub fn hostile_plan() -> HostilePlan {
         expect("clean control", "valid", None),
         expect("planned collision A", "blocked", Some("collision-in-plan")),
         expect("planned collision B", "blocked", Some("collision-in-plan")),
-        expect("case-only collision A", "blocked", Some("collision-in-plan")),
-        expect("case-only collision B", "blocked", Some("collision-in-plan")),
+        expect(
+            "case-only collision A",
+            "blocked",
+            Some("collision-in-plan"),
+        ),
+        expect(
+            "case-only collision B",
+            "blocked",
+            Some("collision-in-plan"),
+        ),
         expect("on-disk collision", "blocked", Some("collision-on-disk")),
-        expect("source-inside-target cycle", "blocked", Some("cycle-detected")),
+        expect(
+            "source-inside-target cycle",
+            "blocked",
+            Some("cycle-detected"),
+        ),
         expect("over-length path", "blocked", Some("path-too-long")),
         expect("reserved device name", "blocked", Some("reserved-name")),
         expect(
@@ -173,7 +185,11 @@ pub fn hostile_plan() -> HostilePlan {
         expect("snapshot stale", "blocked", Some("snapshot-stale")),
         expect("cross-volume fits", "warning", Some("cross-volume-copy")),
         expect("near-260 interop", "warning", Some("path-length-near-260")),
-        expect("long-paths disabled", "warning", Some("long-paths-disabled")),
+        expect(
+            "long-paths disabled",
+            "warning",
+            Some("long-paths-disabled"),
+        ),
     ];
     debug_assert_eq!(ops.len(), expectations.len());
 
