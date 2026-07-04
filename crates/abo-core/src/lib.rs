@@ -38,6 +38,12 @@
 //! run (`scan::run_scan_with_job`, `scan::run_csv_import`,
 //! `classify::run_classify`), success or failure, with no `cfg`-gating (see
 //! `db::activity` module docs for why parse has no standalone hook here).
+//!
+//! v0.3.0 Phase 1 adds migration `0002_plan_and_rulesets.sql` plus
+//! `db::plans` and `db::rulesets` (F-403/F-405/F-801 storage). Phase 2 adds
+//! `plan::templates`: F-401 naming templates and presets, pure logic with no
+//! `cfg`-gating, consuming `parse::ParsedFields` and
+//! `parse::normalize::normalize_component` (see `plan` module docs).
 
 pub mod classify;
 pub mod db;
@@ -46,6 +52,7 @@ pub mod ipc;
 pub mod job;
 pub mod parse;
 pub mod paths;
+pub mod plan;
 pub mod scan;
 
 #[cfg(any(test, feature = "fixtures"))]
