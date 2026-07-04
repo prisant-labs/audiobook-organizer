@@ -14,10 +14,87 @@
 //! environment override is needed and nothing ever touches the real
 //! `%LOCALAPPDATA%`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The fixed app folder name under the per-user data root.
 const APP_DIR: &str = "AudiobookOrganizer";
+
+// ---- Windows extended-length (`\\?\`) path seam (F-101, FD-19) ----
+//
+// Storage invariant (product-wide, established here): paths PERSISTED to the
+// database are stored WITHOUT the `\\?\` verbatim prefix, for readability and so
+// the UI, logs, and later plan/apply stages all speak the human-facing path.
+// The prefix is an OPEN-TIME concern only: the scanner normalizes the root to a
+// `\\?\`-prefixed absolute path before walking so paths past the legacy 260-char
+// `MAX_PATH` limit open (FD-19), then strips the prefix again before persisting.
+// [`to_extended_length`] adds the prefix (Windows); [`strip_extended_length_prefix`]
+// removes it. The two are inverse for real absolute paths.
+
+/// Normalize `path` to an absolute form the walker can open past `MAX_PATH`.
+///
+/// Windows: returns the extended-length (`\\?\`) verbatim form via
+/// [`std::fs::canonicalize`], which yields exactly that prefix and resolves any
+/// `.`/`..` components. Resolving them is mandatory: the `\\?\` prefix disables
+/// Win32 path normalization, so an unresolved `..` would be sent to the
+/// filesystem literally and fail. If canonicalization fails (it should not - the
+/// scanner validates the root exists first), the prefix is applied manually to
+/// the absolute path as a best effort.
+///
+/// Other platforms: returns the absolute canonical path (no prefix concept).
+///
+/// The result is the WALK root only; stored paths are run back through
+/// [`strip_extended_length_prefix`] so the `\\?\` prefix never reaches the DB.
+#[cfg(windows)]
+pub fn to_extended_length(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        return path.to_path_buf();
+    }
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => canonical,
+        Err(_) => manual_extended_length(path),
+    }
+}
+
+/// Non-Windows: no `\\?\` concept; return the absolute canonical path so stored
+/// paths are stable and deterministic across a re-scan (the CI test job runs on
+/// Linux). Falls back to the path as-is if it cannot be canonicalized.
+#[cfg(not(windows))]
+pub fn to_extended_length(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Best-effort manual `\\?\` prefixing used only if [`std::fs::canonicalize`]
+/// fails. Handles both drive paths (`C:\x` -> `\\?\C:\x`) and UNC paths
+/// (`\\server\share` -> `\\?\UNC\server\share`).
+#[cfg(windows)]
+fn manual_extended_length(path: &Path) -> PathBuf {
+    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let s = abs.as_os_str().to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        abs
+    } else if let Some(rest) = s.strip_prefix(r"\\") {
+        // UNC: \\server\share -> \\?\UNC\server\share
+        PathBuf::from(format!(r"\\?\UNC\{rest}"))
+    } else {
+        PathBuf::from(format!(r"\\?\{s}"))
+    }
+}
+
+/// Strip the extended-length (`\\?\`, and `\\?\UNC\`) verbatim prefix so a stored
+/// path is the human-readable form. `\\?\C:\x` becomes `C:\x`;
+/// `\\?\UNC\server\share` becomes `\\server\share`. A path without the prefix is
+/// returned unchanged, so this is a safe no-op on non-Windows paths.
+pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        PathBuf::from(format!(r"\\{rest}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(rest.to_string())
+    } else {
+        path.to_path_buf()
+    }
+}
 
 /// The per-user application data directory for Audiobook Organizer.
 ///
@@ -93,5 +170,54 @@ mod tests {
             let expected = PathBuf::from(lad).join(APP_DIR);
             assert_eq!(app_data_dir(), expected);
         }
+    }
+
+    #[test]
+    fn strip_prefix_is_noop_without_prefix() {
+        // A path that never had the verbatim prefix is returned unchanged, so
+        // the helper is safe to run over every stored path on every platform.
+        let p = Path::new("C:/Users/x/scan-basic");
+        assert_eq!(strip_extended_length_prefix(p), p.to_path_buf());
+        let rel = Path::new("relative/dir");
+        assert_eq!(strip_extended_length_prefix(rel), rel.to_path_buf());
+    }
+
+    #[test]
+    fn strip_prefix_removes_drive_verbatim() {
+        // `\\?\C:\x` -> `C:\x` (the stored, human-readable form).
+        let p = PathBuf::from(r"\\?\C:\Users\x\scan-basic\file.m4b");
+        assert_eq!(
+            strip_extended_length_prefix(&p),
+            PathBuf::from(r"C:\Users\x\scan-basic\file.m4b")
+        );
+    }
+
+    #[test]
+    fn strip_prefix_removes_unc_verbatim() {
+        // `\\?\UNC\server\share\x` -> `\\server\share\x`.
+        let p = PathBuf::from(r"\\?\UNC\server\share\audiobooks\a.mp3");
+        assert_eq!(
+            strip_extended_length_prefix(&p),
+            PathBuf::from(r"\\server\share\audiobooks\a.mp3")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn to_extended_length_round_trips_a_real_dir() {
+        // On Windows the normalized walk root carries the `\\?\` prefix, and
+        // stripping it yields a prefix-free absolute path (the storage invariant).
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let ext = to_extended_length(tmp.path());
+        let ext_str = ext.as_os_str().to_string_lossy();
+        assert!(
+            ext_str.starts_with(r"\\?\"),
+            "normalized root must be extended-length: {ext_str}"
+        );
+        let stored = strip_extended_length_prefix(&ext);
+        assert!(
+            !stored.as_os_str().to_string_lossy().starts_with(r"\\?\"),
+            "stored path must not carry the verbatim prefix"
+        );
     }
 }
