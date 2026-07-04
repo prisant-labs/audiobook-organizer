@@ -379,10 +379,6 @@ impl BookFields {
     }
 }
 
-/// Assemble the fields to render a book target from a merged entry, letting
-/// classification-supplied clean author/series override the raw inherited
-/// values (shelf-suppression already applied). Confidence starts at `high` and
-/// is lowered to the worst source among the consulted fields.
 fn source_confidence(src: FieldSource) -> Confidence {
     match src {
         FieldSource::OwnName => Confidence::High,
@@ -391,48 +387,74 @@ fn source_confidence(src: FieldSource) -> Confidence {
     }
 }
 
-fn book_fields(
-    merged: Option<&MergedEntry>,
-    author_override: Option<&str>,
-    series_override: Option<&str>,
-) -> BookFields {
+/// Fields for a LOOSE FILE at the library root (pattern-1 `Title by Author`):
+/// there is no classification to consult, so author/title/series come straight
+/// from the file's own merged parse. Own-name values are safe here because a
+/// loose file has no organizational-shelf ancestor to inherit a spurious author
+/// from.
+fn book_fields_from_file(merged: Option<&MergedEntry>) -> BookFields {
     let mut confidence = Confidence::High;
-
-    let author = match author_override {
-        Some(a) => {
-            // Reflect the raw field's source in confidence when we have it.
-            match merged.and_then(|m| m.fields.author.as_ref()) {
-                Some(f) => confidence = worse(confidence, source_confidence(f.source)),
-                None => confidence = worse(confidence, Confidence::Medium),
-            }
-            Some(a.to_string())
-        }
-        None => merged.and_then(|m| m.fields.author.as_ref()).map(|f| {
-            confidence = worse(confidence, source_confidence(f.source));
-            f.value.clone()
-        }),
-    };
-
+    let author = merged.and_then(|m| m.fields.author.as_ref()).map(|f| {
+        confidence = worse(confidence, source_confidence(f.source));
+        f.value.clone()
+    });
     let title = merged.and_then(|m| m.fields.title.as_ref()).map(|f| {
         confidence = worse(confidence, source_confidence(f.source));
         f.value.clone()
     });
-
-    let series = match series_override {
-        Some(s) => Some(s.to_string()),
-        None => merged
-            .and_then(|m| m.fields.series.as_ref())
-            .map(|f| f.value.clone()),
-    };
+    let series = merged
+        .and_then(|m| m.fields.series.as_ref())
+        .map(|f| f.value.clone());
     let series_index = merged
         .and_then(|m| m.fields.series_index.as_ref())
         .map(|f| f.value.clone());
     let year = merged.and_then(|m| m.fields.year.as_ref()).map(|f| f.value);
-
     BookFields {
         author,
         title,
         series,
+        series_index,
+        year,
+        confidence,
+    }
+}
+
+/// Fields for a CLASSIFIED FOLDER (a pack member or a split book file). Author
+/// and series come from the classification's shelf-suppressed clean values
+/// ([`crate::classify::Evidence::clean_author`]/`clean_series`), NOT the raw
+/// merged fields: a book sitting under a `Genre - X` shelf has a spurious
+/// inherited `Genre` author in its merged fields, and the whole point of
+/// suppression is to drop it. When the clean author is absent the book is
+/// unplaceable (the render returns manual-review), which is the correct,
+/// fabricate-nothing outcome rather than filing it under a shelf name. Title,
+/// series index, and year are book-specific (never shelf-inherited) so they come
+/// from the entry's own merged parse.
+fn book_fields_from_folder(
+    merged: Option<&MergedEntry>,
+    clean_author: Option<&str>,
+    clean_series: Option<&str>,
+) -> BookFields {
+    let mut confidence = Confidence::High;
+    // Reflect the raw author field's source in confidence when a clean author
+    // survived (a suppressed None already forces manual review downstream).
+    if clean_author.is_some() {
+        match merged.and_then(|m| m.fields.author.as_ref()) {
+            Some(f) => confidence = worse(confidence, source_confidence(f.source)),
+            None => confidence = worse(confidence, Confidence::Medium),
+        }
+    }
+    let title = merged.and_then(|m| m.fields.title.as_ref()).map(|f| {
+        confidence = worse(confidence, source_confidence(f.source));
+        f.value.clone()
+    });
+    let series_index = merged
+        .and_then(|m| m.fields.series_index.as_ref())
+        .map(|f| f.value.clone());
+    let year = merged.and_then(|m| m.fields.year.as_ref()).map(|f| f.value);
+    BookFields {
+        author: clean_author.map(|s| s.to_string()),
+        title,
+        series: clean_series.map(|s| s.to_string()),
         series_index,
         year,
         confidence,
@@ -738,7 +760,7 @@ fn pass_loose_root(b: &mut Builder) {
     for id in loose {
         let src = b.node(id).path.clone();
         let size = b.node(id).size;
-        let fields = book_fields(b.merged_by_id.get(&id).copied(), None, None);
+        let fields = book_fields_from_file(b.merged_by_id.get(&id).copied());
         match render_path(preset, &fields.as_template(), width) {
             RenderOutcome::Rendered(components) => {
                 let chain = b.dir_chain(&components, true);
@@ -852,7 +874,7 @@ fn pass_split_multibook(b: &mut Builder) {
         let mut audio_children: Vec<usize> = b
             .children
             .get(&folder_id)
-            .map(|v| v.clone())
+            .cloned()
             .unwrap_or_default()
             .into_iter()
             .filter(|&c| {
@@ -866,7 +888,7 @@ fn pass_split_multibook(b: &mut Builder) {
         for file_id in audio_children {
             let src = b.node(file_id).path.clone();
             let size = b.node(file_id).size;
-            let fields = book_fields(
+            let fields = book_fields_from_folder(
                 b.merged_by_id.get(&file_id).copied(),
                 clean_author.as_deref(),
                 clean_series.as_deref(),
@@ -933,7 +955,7 @@ fn pass_flatten_packs(b: &mut Builder) {
         let mut items: Vec<usize> = b
             .children
             .get(&pack_id)
-            .map(|v| v.clone())
+            .cloned()
             .unwrap_or_default()
             .into_iter()
             .filter(|&c| b.node(c).kind == NodeKind::Folder)
@@ -975,7 +997,7 @@ fn pass_flatten_packs(b: &mut Builder) {
             let evidence = b.class_by_id.get(&item_id).map(|c| &c.evidence);
             let clean_author = evidence.and_then(|e| e.clean_author.clone());
             let clean_series = evidence.and_then(|e| e.clean_series.clone());
-            let fields = book_fields(
+            let fields = book_fields_from_folder(
                 b.merged_by_id.get(&item_id).copied(),
                 clean_author.as_deref(),
                 clean_series.as_deref(),
