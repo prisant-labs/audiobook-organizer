@@ -54,6 +54,7 @@
 
 pub mod classify;
 pub mod db;
+pub mod dupes;
 pub mod error;
 pub mod ipc;
 pub mod job;

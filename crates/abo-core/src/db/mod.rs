@@ -33,6 +33,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::SqlitePool;
 
 pub mod activity;
+pub mod dupes;
 pub mod plans;
 pub mod rulesets;
 
