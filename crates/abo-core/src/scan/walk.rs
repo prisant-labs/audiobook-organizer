@@ -239,8 +239,11 @@ pub(crate) fn system_time_to_iso8601(st: SystemTime) -> String {
 }
 
 /// The current time as an ISO-8601 UTC string (used for `started_at` /
-/// `completed_at` on the `scans` row).
-pub(crate) fn now_iso8601_utc() -> String {
+/// `completed_at` on the `scans` row, and by the Phase 5 shell for the `jobs`
+/// row so job timestamps share the scans' format). Public so the Tauri-free
+/// shell can stamp its `jobs` rows without pulling a date crate; still
+/// zero-tauri, zero-network.
+pub fn now_iso8601_utc() -> String {
     system_time_to_iso8601(SystemTime::now())
 }
 
