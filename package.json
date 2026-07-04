@@ -1,0 +1,29 @@
+{
+  "name": "audiobook-organizer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@10.33.4",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo \"lint: stub for v0.1.0 Phase 1; real ESLint config plus the no-raw-invoke rule lands in Phase 5\"",
+    "bindings:check": "echo \"bindings:check: stub for v0.1.0 Phase 1; implemented in Phase 5 as the tauri-specta bindings-drift gate\"",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "react": "19.2.7",
+    "react-dom": "19.2.7"
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/cli": "2.11.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.2",
+    "typescript": "6.0.3",
+    "vite": "8.0.16"
+  }
+}
