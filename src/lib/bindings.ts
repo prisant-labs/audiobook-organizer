@@ -84,7 +84,7 @@ export type AppError =
  */
 ({ "db-migration-failed": {
 	detail: string,
-} }) & { "db-corrupt-recovered"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
+} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
 /**
  *  The existing database was unreadable and was reset. The corrupt file was
  *  preserved (moved aside, never deleted) at `backup_path`, and a fresh,
@@ -93,15 +93,15 @@ export type AppError =
  */
 ({ "db-corrupt-recovered": {
 	backup_path: string,
-} }) & { "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
+} }) & { "csv-parse"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
 /**  The scan root does not exist. Return before any DB row is written. */
 ({ "root-not-found": {
 	path: string,
-} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "scan-failed"?: never } | 
+} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "scan-failed"?: never } | 
 /**  The scan root exists but is not a directory (e.g. a file was chosen). */
 ({ "root-not-directory": {
 	path: string,
-} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
+} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
 /**
  *  A single entry could not be read because the OS denied access. Defined
  *  and ready for v0.2.0: the v0.1.0 walk records such entries and counts
@@ -113,7 +113,7 @@ export type AppError =
  */
 ({ "permission-denied": {
 	path: string,
-} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
+} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
 /**
  *  A junction or reparse point was recorded but deliberately not followed
  *  (D-09), so the walk cannot loop through a link back into the tree.
@@ -124,7 +124,7 @@ export type AppError =
  */
 ({ "junction-skipped": {
 	path: string,
-} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
+} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never } | 
 /**
  *  An internal failure while writing the snapshot (a SQLite/transaction
  *  error during the scans/entries write path). The walk itself never fails
@@ -132,7 +132,24 @@ export type AppError =
  */
 ({ "scan-failed": {
 	detail: string,
-} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never };
+} }) & { "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never } | 
+/**
+ *  A WizTree CSV import (F-102) could not fully parse. `row` is the 1-based
+ *  index of the offending data row (the row after the header, preamble
+ *  lines not counted), OR `0` reserved for a file-level/structural failure
+ *  (the file could not be opened, or no WizTree header line was found at
+ *  all) rather than a single bad data row.
+ * 
+ *  Isolated bad data rows (`row >= 1`) are recovered from: the row is
+ *  skipped and the import continues with the rest of the file, so this
+ *  variant surfaces as a per-row record the caller collects rather than as
+ *  a hard `Err` in that case. A wholly invalid file (`row == 0`) IS a hard
+ *  `Err` returned before any `scans` row is written, mirroring
+ *  [`AppError::RootNotFound`]'s before-any-write posture.
+ */
+({ "csv-parse": {
+	row: number,
+} }) & { "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never };
 
 /**
  *  Returned by the `db_status` command: the wire form of the startup
