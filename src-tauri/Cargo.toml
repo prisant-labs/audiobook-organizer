@@ -31,3 +31,12 @@ tauri = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 abo-core = { path = "../crates/abo-core" }
+
+# Structured logging (F-1003): the shell's file+stdout logger. Registered from
+# Rust in `run()`; backend-only, no JS guest package. Captures the `log` facade,
+# so abo-core's `tracing` events (emitted as `log` records via tracing's `log`
+# feature) land in the rotating log file. Exact pin per AC-17.
+tauri-plugin-log = { workspace = true }
+# `log` is used directly for the plugin's LevelFilter and is the facade the plugin
+# captures. Kept at the workspace-safe caret used by the plugin itself.
+log = "0.4"

@@ -25,7 +25,13 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 specta = { workspace = true, features = ["derive"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
-tracing = { workspace = true }
+# The `log` feature makes every `tracing` event ALSO emit a `log` facade record
+# when no `tracing` Subscriber is installed (which is exactly the shell's setup:
+# tauri-plugin-log is a `log::Log` logger, not a tracing Subscriber). This is the
+# bridge that carries abo-core's scan-lifecycle events into the shell's log file
+# (F-1003). Proven by tests/tracing_log_bridge.rs. Pulls only the tiny `log`
+# facade crate: no tauri, no network, so the core-purity gate stays green.
+tracing = { workspace = true, features = ["log"] }
 
 # Phase 3 (scanner) adds walkdir for the recursive traversal (F-101). walkdir
 # pulls only same-file + winapi-util (no tauri, no network), so the core-purity
@@ -47,6 +53,14 @@ walkdir = "2"
 tokio = { workspace = true }
 tempfile = "3"
 serde_json = { workspace = true }
+# tests/tracing_log_bridge.rs drives the tracing -> log facade bridge directly,
+# so the integration-test crate names both crates. Integration tests do not
+# inherit the library's normal dependencies (see sqlx below), so they are
+# restated here. `tracing` restates the `log` feature so the bridge is active in
+# the test build as well (features unify with the library's own normal dep).
+tracing = { workspace = true, features = ["log"] }
+# `std` is needed for `log::set_boxed_logger` used by the bridge test.
+log = { version = "0.4", features = ["std"] }
 # The scanner integration tests (tests/scan.rs) hold the SqlitePool returned by
 # open_db and query the scans table directly to prove snapshot immutability
 # (AC-13). Integration tests are separate crates and do not inherit the library's

@@ -57,8 +57,19 @@ sqlx = { version = "0.9.0", default-features = false }
 
 # Structured logging (F-1003). tracing has no tauri dependency (core-purity
 # safe) and no network dependency; abo-core uses it to log the corrupt-DB
-# recovery path (this phase's brief item 4). The shell adds tauri-plugin-log.
+# recovery path and the scan lifecycle. The `log` feature is enabled where the
+# crate is consumed (abo-core) so tracing events are ALSO emitted as `log`
+# facade records; that is the bridge by which core tracing events reach
+# tauri-plugin-log (a `log::Log` logger) in the shell (this phase's brief item 3).
 tracing = "0.1.44"
+
+# tauri-plugin-log (F-1003): the shell's file+stdout logger. Tauri-family crate,
+# so pinned EXACT (= prefix) per AC-17. Backend-only usage (Rust Builder); the JS
+# guest package (@tauri-apps/plugin-log) is deliberately NOT added because the
+# frontend does not log through the plugin (this phase's brief item 3). This
+# crate is a `log::Log` implementation; it captures the `log` facade, which is
+# how abo-core's tracing events (via tracing's `log` feature) reach the log file.
+tauri-plugin-log = "=2.8.0"
 
 # Per-push CI / default release profile (FD-24). Tuned for a small bundle but
 # with THIN LTO and parallel codegen so per-push CI builds stay fast (the
