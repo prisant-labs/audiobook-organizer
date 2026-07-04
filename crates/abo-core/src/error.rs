@@ -56,6 +56,25 @@ pub enum AppError {
     #[error("scan root is not a directory: {path}")]
     RootNotDirectory { path: String },
 
+    /// A single entry could not be read because the OS denied access. Defined
+    /// and ready for v0.2.0: the v0.1.0 walk records such entries and counts
+    /// them in [`ScanSummary::skipped_count`](crate::ipc::ScanSummary) rather
+    /// than surfacing this per-entry error (AC-11), so a locked subtree never
+    /// aborts a scan. Wiring the walk to emit this per entry is a v0.2.0
+    /// concern; the code, message, and remediation are pinned here so the IPC
+    /// contract is stable before then. Not produced by `run_scan` yet.
+    #[error("permission denied for entry: {path}")]
+    PermissionDenied { path: String },
+
+    /// A junction or reparse point was recorded but deliberately not followed
+    /// (D-09), so the walk cannot loop through a link back into the tree.
+    /// Defined and ready for v0.2.0 on the same footing as
+    /// [`PermissionDenied`](AppError::PermissionDenied): the v0.1.0 walk counts
+    /// the skip on the summary rather than emitting this per-entry error, and
+    /// wiring it per entry is a v0.2.0 concern. Not produced by `run_scan` yet.
+    #[error("junction/reparse point skipped (not followed): {path}")]
+    JunctionSkipped { path: String },
+
     /// An internal failure while writing the snapshot (a SQLite/transaction
     /// error during the scans/entries write path). The walk itself never fails
     /// this way; this is the DB-side hard-failure end of `run_scan`.
@@ -74,6 +93,8 @@ impl AppError {
             // Scan family
             AppError::RootNotFound { .. } => "root-not-found",
             AppError::RootNotDirectory { .. } => "root-not-directory",
+            AppError::PermissionDenied { .. } => "permission-denied",
+            AppError::JunctionSkipped { .. } => "junction-skipped",
             AppError::ScanFailed { .. } => "scan-failed",
         }
     }
@@ -99,6 +120,16 @@ impl AppError {
             }
             AppError::RootNotDirectory { .. } => {
                 "The item chosen to scan is a file, not a folder. Choose a folder to scan."
+            }
+            AppError::PermissionDenied { .. } => {
+                "This item could not be read because Windows denied access. It was skipped and \
+                 the rest of the scan continued. If you need it included, run the app as a user \
+                 who can read it, or adjust the folder's permissions, then scan again."
+            }
+            AppError::JunctionSkipped { .. } => {
+                "This item is a junction or reparse point (a link to another location). It was \
+                 recorded but not opened, so the scan cannot loop back on itself. This is \
+                 expected behavior and needs no action."
             }
             AppError::ScanFailed { .. } => {
                 "The scan could not be saved. Restart the app and try again. If this keeps \
@@ -128,6 +159,12 @@ mod tests {
             },
             AppError::RootNotDirectory {
                 path: r"C:\Users\x\a-file.txt".into(),
+            },
+            AppError::PermissionDenied {
+                path: r"C:\Users\x\locked\secret.m4b".into(),
+            },
+            AppError::JunctionSkipped {
+                path: r"C:\Users\x\library\link-to-elsewhere".into(),
             },
             AppError::ScanFailed {
                 detail: "database is locked".into(),
