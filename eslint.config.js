@@ -43,6 +43,25 @@ export default tseslint.config(
           ],
         },
       ],
+      // no-raw-invoke, dynamic-import half. `no-restricted-imports` only sees
+      // STATIC `import ... from` declarations; a dynamic `import("@tauri-apps/api/core")`
+      // is an ImportExpression it never inspects, so it would slip the gate and
+      // hand back a raw `invoke`. Forbid that expression form too, for both the
+      // /core subpath and the @tauri-apps/api umbrella. bindings.ts (the one
+      // sanctioned wrapper) is exempted from both rules below.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "ImportExpression[source.value='@tauri-apps/api/core']",
+          message:
+            "Do not dynamically import @tauri-apps/api/core for invoke. Use the generated typed bindings in src/lib/bindings.ts (FD-29).",
+        },
+        {
+          selector: "ImportExpression[source.value='@tauri-apps/api']",
+          message:
+            "Do not dynamically import @tauri-apps/api for invoke. Use the generated typed bindings in src/lib/bindings.ts (FD-29).",
+        },
+      ],
     },
   },
   {
@@ -53,6 +72,7 @@ export default tseslint.config(
     files: ["src/lib/bindings.ts"],
     rules: {
       "no-restricted-imports": "off",
+      "no-restricted-syntax": "off",
     },
   },
 );
