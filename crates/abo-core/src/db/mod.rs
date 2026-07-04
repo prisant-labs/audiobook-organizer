@@ -18,6 +18,11 @@
 //!
 //! v0.2.0 Phase 6 adds [`activity`]: the F-1001 append-only `activity_records`
 //! log (one row per scan, CSV import, and classify run).
+//!
+//! v0.3.0 Phase 1 adds migration `0002_plan_and_rulesets.sql` (additive over
+//! 0001) plus [`plans`] and [`rulesets`]: sqlx CRUD for the F-403/F-405 plan
+//! tables and the F-801 ruleset table. See migration 0002's own doc comment
+//! for the frozen `plan_ops` column set later v0.3.0 phases build on.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -27,6 +32,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, S
 use sqlx::SqlitePool;
 
 pub mod activity;
+pub mod plans;
+pub mod rulesets;
 
 use crate::error::AppError;
 
@@ -321,6 +328,7 @@ fn timestamp() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::Row;
     use tempfile::TempDir;
 
     #[test]
@@ -396,5 +404,136 @@ mod tests {
             second.exists(),
             "the second backup must be present, not overwritten"
         );
+    }
+
+    /// The v0.3.0 Phase 1 tables and column exist and are queryable after
+    /// migrating a brand-new (empty) database - the "from empty" half of the
+    /// Phase 1 verification requirement.
+    #[tokio::test]
+    async fn migration_from_empty_creates_v030_tables() {
+        let tmp = TempDir::new().expect("tempdir");
+        let (pool, outcome) = open_db(tmp.path()).await.expect("open_db on empty dir");
+        assert_eq!(outcome, DbOpenOutcome::Normal);
+
+        for table in [
+            "plans",
+            "plan_ops",
+            "rulesets",
+            "duplicate_groups",
+            "duplicate_members",
+        ] {
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("table {table} must exist: {e}"));
+            assert_eq!(count, 0, "table {table} must start empty");
+        }
+
+        let retention: i64 =
+            sqlx::query_scalar("SELECT scan_retention_count FROM settings WHERE id = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("scan_retention_count column must exist on a fresh db");
+        assert_eq!(retention, 10, "FD-20 default retention is 10 scans");
+    }
+
+    /// Migrating a database that only has 0001 applied (the v0.2.0 shape,
+    /// since v0.2.0 added no migration file of its own) both preserves the
+    /// existing data and adds the v0.3.0 Phase 1 tables/column - the "from a
+    /// v0.2.0 DB" half of the Phase 1 verification requirement. This builds
+    /// the v0.2.0-shaped database with a REAL sqlx `Migrator` sourced from a
+    /// temp directory holding only migration 0001 (not by hand-writing DDL),
+    /// so the starting point is provably identical to what 0001 actually
+    /// produces, then reopens it through the crate's real [`open_db`] entry
+    /// point, which applies the full embedded migration set (0001 already
+    /// recorded as applied, so only 0002 actually runs).
+    #[tokio::test]
+    async fn migration_from_v020_db_preserves_data_and_adds_v030_tables() {
+        let tmp = TempDir::new().expect("tempdir");
+        let app_dir = tmp.path();
+        let db_path = app_dir.join(DB_FILE_NAME);
+
+        let old_migrations_dir = tmp.path().join("old-migrations");
+        std::fs::create_dir_all(&old_migrations_dir).expect("create old-migrations dir");
+        std::fs::write(
+            old_migrations_dir.join("0001_init.sql"),
+            include_str!("../../migrations/0001_init.sql"),
+        )
+        .expect("write old 0001 migration");
+
+        let old_pool = open_pool(&db_path).await.expect("open pool for v0.2.0 db");
+        sqlx::migrate::Migrator::new(old_migrations_dir)
+            .await
+            .expect("build old migrator")
+            .run(&old_pool)
+            .await
+            .expect("apply migration 0001 only");
+
+        // Insert v0.2.0-shaped data: a scan and one entry under it.
+        let scan_result = sqlx::query(
+            "INSERT INTO scans (source, root_path, started_at, status) \
+             VALUES ('live', 'E:\\Books', '2026-03-25T00:00:00Z', 'completed')",
+        )
+        .execute(&old_pool)
+        .await
+        .expect("insert scans row");
+        let scan_id = scan_result.last_insert_rowid();
+        sqlx::query(
+            "INSERT INTO entries (scan_id, parent_id, path, name, kind, size, depth) \
+             VALUES (?, NULL, 'E:\\Books\\Some Book', 'Some Book', 'dir', 0, 0)",
+        )
+        .bind(scan_id)
+        .execute(&old_pool)
+        .await
+        .expect("insert entries row");
+
+        old_pool.close().await;
+
+        // Reopen through the real entry point: the full embedded migration
+        // set applies, but 0001 is already recorded, so only 0002 runs.
+        let (pool, outcome) = open_db(app_dir)
+            .await
+            .expect("open_db over an existing v0.2.0-shaped db");
+        assert_eq!(
+            outcome,
+            DbOpenOutcome::Normal,
+            "an upgrade over a valid prior db must not be treated as corrupt/recovered"
+        );
+
+        let scan_row = sqlx::query("SELECT root_path, status FROM scans WHERE id = ?")
+            .bind(scan_id)
+            .fetch_one(&pool)
+            .await
+            .expect("the pre-existing scan row must survive migration");
+        assert_eq!(scan_row.get::<String, _>("root_path"), "E:\\Books");
+        assert_eq!(scan_row.get::<String, _>("status"), "completed");
+
+        let entry_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entries WHERE scan_id = ?")
+            .bind(scan_id)
+            .fetch_one(&pool)
+            .await
+            .expect("entries must survive migration");
+        assert_eq!(entry_count, 1);
+
+        for table in [
+            "plans",
+            "plan_ops",
+            "rulesets",
+            "duplicate_groups",
+            "duplicate_members",
+        ] {
+            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("table {table} must exist after migration: {e}"));
+            assert_eq!(count, 0);
+        }
+
+        let retention: i64 =
+            sqlx::query_scalar("SELECT scan_retention_count FROM settings WHERE id = 1")
+                .fetch_one(&pool)
+                .await
+                .expect("scan_retention_count must be backfilled onto the pre-existing row");
+        assert_eq!(retention, 10);
     }
 }
