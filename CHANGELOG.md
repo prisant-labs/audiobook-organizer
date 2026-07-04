@@ -22,3 +22,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
   dialog access.
 - FD-15 OSS-landscape pre-flight check recorded
   (`docs/internal/oss-landscape-check.md`) before any scaffold work began.
+- Tracer slice UI (Phase 6, AC-19): a disposable single-screen React
+  component (`src/App.tsx`) that runs `scan_start` on a hardcoded fixture
+  folder, listens for `job:completed`/`job:failed`, and renders the
+  persisted entries as pretty-printed JSON. This UI is throwaway and is
+  deleted at v0.4.0 (seeing) when the real product surface lands.
