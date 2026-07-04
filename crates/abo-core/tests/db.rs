@@ -136,9 +136,10 @@ async fn corrupt_db_recovers() {
 
     let db_path = dir.path().join("abo.db");
     let wal_path = with_suffix(&db_path, "-wal");
-    std::fs::write(&db_path, b"this is definitely not a sqlite database\n")
-        .expect("seed corrupt db");
-    std::fs::write(&wal_path, b"garbage wal sidecar bytes").expect("seed garbage wal");
+    let db_bytes: &[u8] = b"this is definitely not a sqlite database\n";
+    let wal_bytes: &[u8] = b"garbage wal sidecar bytes";
+    std::fs::write(&db_path, db_bytes).expect("seed corrupt db");
+    std::fs::write(&wal_path, wal_bytes).expect("seed garbage wal");
     set_readonly(&wal_path, true);
 
     let (pool, outcome) = open_db(dir.path())
@@ -160,12 +161,26 @@ async fn corrupt_db_recovers() {
         backup_path.exists(),
         "the corrupt .db must be preserved as a backup (moved, not deleted)"
     );
+    // The backup must be moved intact, not merely present: the bytes must match
+    // the garbage that was written before recovery, byte-for-byte.
+    let backup_contents = std::fs::read(&backup_path).expect("read moved db backup");
+    assert_eq!(
+        backup_contents, db_bytes,
+        "the moved .db backup must contain the exact original bytes"
+    );
 
     // The WAL sidecar must be preserved alongside the backup (the sidecar risk).
     let wal_backup = with_suffix(&backup_path, "-wal");
     assert!(
         wal_backup.exists(),
         "the -wal sidecar must be preserved in corrupt-backups/"
+    );
+    // Reading a read-only file is fine on Windows; only clearing it for write
+    // (the cleanup below) requires flipping the attribute.
+    let wal_backup_contents = std::fs::read(&wal_backup).expect("read moved wal backup");
+    assert_eq!(
+        wal_backup_contents, wal_bytes,
+        "the moved -wal backup must contain the exact original bytes"
     );
     // Clear read-only on the moved sidecar so TempDir cleanup can remove it on
     // Windows (remove_dir_all does not clear the read-only attribute).

@@ -325,9 +325,12 @@ mod tests {
         // at the original location (moved, never copied-and-kept nor deleted).
         let tmp = TempDir::new().expect("tempdir");
         let db = tmp.path().join("abo.db");
-        std::fs::write(&db, b"db").unwrap();
-        std::fs::write(sidecar(&db, "-wal"), b"wal").unwrap();
-        std::fs::write(sidecar(&db, "-shm"), b"shm").unwrap();
+        let db_bytes: &[u8] = b"db";
+        let wal_bytes: &[u8] = b"wal";
+        let shm_bytes: &[u8] = b"shm";
+        std::fs::write(&db, db_bytes).unwrap();
+        std::fs::write(sidecar(&db, "-wal"), wal_bytes).unwrap();
+        std::fs::write(sidecar(&db, "-shm"), shm_bytes).unwrap();
 
         let backup_dir = tmp.path().join("corrupt-backups");
         let moved = move_db_aside(&db, &backup_dir).expect("move should succeed");
@@ -341,13 +344,28 @@ mod tests {
             !db.exists(),
             "the original .db no longer sits at the db path"
         );
-        assert!(
-            sidecar(&moved, "-wal").exists(),
-            "the -wal sidecar moved alongside"
+        // "Moved intact", not merely "not deleted": the bytes at the new
+        // location must match what was written at the original location.
+        assert_eq!(
+            std::fs::read(&moved).unwrap(),
+            db_bytes,
+            "the moved .db must contain the exact original bytes"
         );
-        assert!(
-            sidecar(&moved, "-shm").exists(),
-            "the -shm sidecar moved alongside"
+
+        let wal_dest = sidecar(&moved, "-wal");
+        assert!(wal_dest.exists(), "the -wal sidecar moved alongside");
+        assert_eq!(
+            std::fs::read(&wal_dest).unwrap(),
+            wal_bytes,
+            "the moved -wal sidecar must contain the exact original bytes"
+        );
+
+        let shm_dest = sidecar(&moved, "-shm");
+        assert!(shm_dest.exists(), "the -shm sidecar moved alongside");
+        assert_eq!(
+            std::fs::read(&shm_dest).unwrap(),
+            shm_bytes,
+            "the moved -shm sidecar must contain the exact original bytes"
         );
     }
 
