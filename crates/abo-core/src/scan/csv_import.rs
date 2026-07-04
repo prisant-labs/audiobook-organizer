@@ -83,7 +83,13 @@
 //! header found anywhere, or every data row malformed - fails cleanly with
 //! `AppError::CsvParse { row: 0 }` before any `scans` row is written, the same
 //! before-any-write posture `crate::scan::run_scan` uses for a bad root.
+//!
+//! A multi-root export (multiple drives, or a whole-computer export with more
+//! than one top-level tree) is the same "wholly invalid" case and fails the
+//! same way, rather than silently mis-rooting on `min(segment_count)`; see
+//! [`parse_wiztree_csv`]'s root-detection comment for the two checks involved.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
@@ -305,6 +311,47 @@ pub(crate) fn parse_wiztree_csv(csv_path: &Path) -> Result<CsvParseOutcome, AppE
         .expect("root_segments is a value taken from this same iterator")
         .path
         .clone();
+
+    // Reject a multi-root export (multiple drives, or a whole-computer
+    // export) loudly rather than silently mis-rooting it. WizTree emits one
+    // chosen folder per export; when a file instead contains more than one
+    // top-level tree, picking `min(segment_count)` as "the" root above would
+    // otherwise leave every other minimum-depth entry with `depth = 0` and
+    // `parent_id = NULL`, indistinguishable from a second root, with no error
+    // (this is the bug this check exists to catch).
+    //
+    // Two checks, either of which fails the whole import before any `scans`
+    // row is written:
+    //   1. More than one entry sits at the minimum segment count: those
+    //      entries are siblings-in-name-only, not parent and child.
+    //   2. Any non-root entry's reconstructed parent path is absent from the
+    //      set of parsed paths: this also catches a subtler variant where a
+    //      second subtree's own top row (e.g. a bare `D:`) was never emitted,
+    //      so check 1 alone would miss it.
+    let root_level_count = raw
+        .iter()
+        .filter(|r| segment_count(&r.path) == root_segments)
+        .count();
+    if root_level_count > 1 {
+        return Err(AppError::CsvParse { row: 0 });
+    }
+    let raw_paths: HashSet<&str> = raw.iter().map(|r| r.path.as_str()).collect();
+    for r in &raw {
+        if r.path == root_path {
+            continue;
+        }
+        match backslash_parent(&r.path) {
+            // A non-root entry with no backslash at all (a bare drive letter)
+            // is itself a second root.
+            None => return Err(AppError::CsvParse { row: 0 }),
+            Some(parent) => {
+                let parent = parent.to_string_lossy();
+                if !raw_paths.contains(parent.as_ref()) {
+                    return Err(AppError::CsvParse { row: 0 });
+                }
+            }
+        }
+    }
 
     let mut entries: Vec<WalkedEntry> = raw
         .into_iter()
@@ -581,6 +628,49 @@ mod tests {
     fn header_only_with_all_bad_rows_fails_cleanly() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         let body = "\"E:\\Lib\\bad.mp3\",NOTANUMBER,104,2026/01/03 00:00:00,32,0,0,100,104\r\n";
+        let path = write_csv(&dir, body);
+
+        let result = parse_wiztree_csv(&path);
+        assert!(
+            matches!(result, Err(AppError::CsvParse { row: 0 })),
+            "expected CsvParse{{row: 0}}, got {:?}",
+            result.map(|o| o.entries.len())
+        );
+    }
+
+    /// A multi-root export (two drives, or a whole-computer export) must fail
+    /// loudly instead of silently mis-rooting on `min(segment_count)`: both
+    /// `C:\` and `D:\` sit at the minimum segment count here, so neither is
+    /// legitimately "the" root.
+    #[test]
+    fn multi_root_csv_fails_cleanly() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let body = "\"C:\\\",300,304,2026/01/01 00:00:00,0,2,1,300,304,100,100,100,100\r\n\
+                    \"C:\\file1.mp3\",100,104,2026/01/02 00:00:00,32,0,0,100,104\r\n\
+                    \"D:\\\",200,204,2026/01/03 00:00:00,16,0,0,200,204\r\n\
+                    \"D:\\file2.mp3\",200,204,2026/01/04 00:00:00,32,0,0,200,204\r\n";
+        let path = write_csv(&dir, body);
+
+        let result = parse_wiztree_csv(&path);
+        assert!(
+            matches!(result, Err(AppError::CsvParse { row: 0 })),
+            "expected CsvParse{{row: 0}}, got {:?}",
+            result.map(|o| o.entries.len())
+        );
+    }
+
+    /// The subtler multi-root variant: a second subtree one level deeper than
+    /// the true root, whose own intermediate row (`D:\Other`) was never
+    /// emitted, so only one entry sits at the minimum segment count. This
+    /// must still fail loudly, via the missing-parent check rather than the
+    /// minimum-count check.
+    #[test]
+    fn multi_root_csv_without_bare_drive_row_fails_cleanly() {
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let body = "\"C:\\Lib\\\",300,304,2026/01/01 00:00:00,0,2,1,300,304,100,100,100,100\r\n\
+                    \"C:\\Lib\\file1.mp3\",100,104,2026/01/02 00:00:00,32,0,0,100,104\r\n\
+                    \"D:\\Other\\Sub\\\",200,204,2026/01/03 00:00:00,16,0,0,200,204\r\n\
+                    \"D:\\Other\\Sub\\file2.mp3\",200,204,2026/01/04 00:00:00,32,0,0,200,204\r\n";
         let path = write_csv(&dir, body);
 
         let result = parse_wiztree_csv(&path);
