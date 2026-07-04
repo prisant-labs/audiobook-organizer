@@ -281,6 +281,35 @@ fn narnia_and_harry_potter_are_multibook() {
     );
 }
 
+/// F-203, the Wings of Fire fixture (`FixtureFamily::MultiBookWingsOfFire`): a
+/// series distinguished PRIMARILY by a leading series index still flags as
+/// multi-book-suspect, counted by its five real distinct per-book titles (the
+/// series name itself, "Wings of Fire", never appears in the count).
+#[test]
+fn wings_of_fire_is_multibook() {
+    let rows = rows(true);
+    let inputs = inputs(&rows);
+    let cs = classify(&inputs);
+    let id_key = id_to_key(&rows);
+
+    let wof = class_of(&cs, &id_key, "Genre - Children/Wings of Fire");
+    assert_eq!(wof.class, FolderClass::MultiBookSuspect);
+    assert_eq!(
+        wof.evidence.distinct_titles.len(),
+        5,
+        "Wings of Fire: 5 titles across 5 files: {:?}",
+        wof.evidence.distinct_titles
+    );
+    assert!(
+        !wof.evidence
+            .distinct_titles
+            .iter()
+            .any(|t| t == "wings of fire"),
+        "the shared series name must not itself be counted as a title: {:?}",
+        wof.evidence.distinct_titles
+    );
+}
+
 /// AC-203.3 (no false positives): a disc-based single book (Verbal Advantage)
 /// and a single-book-plus-bonus shape are NOT flagged multi-book.
 #[test]

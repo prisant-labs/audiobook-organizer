@@ -34,6 +34,24 @@
 //! Zero-byte files (placeholder / stub) are also dropped: a folder of empty
 //! placeholder audio is not a multi-book folder just because the placeholders
 //! have distinct names.
+//!
+//! # Series-index-only naming (the Wings of Fire case)
+//!
+//! A series distinguished PRIMARILY by a leading series index
+//! (`Wings of Fire 01 - The Dragonet Prophecy`, ... `Wings of Fire 05 - The
+//! Brightest Night`) usually still counts correctly on title text alone,
+//! because F-301's `Author - Title` shape (pattern 2) splits off the real,
+//! per-book title after the dash, and those five real titles differ. But a
+//! naming style where the text AFTER the index is the SAME on every sibling
+//! (`(01) Wings of Fire`, `(02) Wings of Fire`, ...; F-301 pattern 6) parses
+//! every file to the identical title `Wings of Fire`, which would collapse to
+//! one distinct title and silently fail to flag - the false negative this
+//! module must not have. The fix is here, not in blessing the collapse:
+//! distinctness is counted over the pair (normalized title, own-name series
+//! index), not title text alone, so two files sharing a title but carrying
+//! different series indices still count as two distinct books. Files that
+//! never carry a series index (the common case) key on `(title, None)`,
+//! which behaves exactly as plain title-counting always has.
 
 use std::sync::LazyLock;
 
@@ -41,17 +59,24 @@ use regex::Regex;
 
 /// One direct audio file of a folder, as F-203 sees it: its raw name (with
 /// extension), the title F-303 parsed from that name (if the name parsed at
-/// all), and its declared size in bytes.
+/// all), the series index F-303 read from that name's OWN text (if any, never
+/// inherited - see the `crate::parse::extract` module doc), and its declared
+/// size in bytes.
 #[derive(Debug, Clone, Copy)]
 pub struct BookFile<'a> {
     pub name: &'a str,
     pub title: Option<&'a str>,
+    pub series_index: Option<&'a str>,
     pub size: u64,
 }
 
 /// The F-203 outcome for one folder: whether it holds several complete books,
-/// and the distinct book titles the heuristic actually counted (sorted, for a
-/// deterministic evidence surface).
+/// and the distinct book identities the heuristic actually counted (sorted,
+/// for a deterministic evidence surface). Each entry is normally just a
+/// title; when two files share a title but carry different series indices
+/// (see the module doc's Wings-of-Fire-paren case), the index is appended in
+/// parentheses so the list still shows two distinct entries rather than
+/// silently deduplicating them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiBookVerdict {
     pub is_multi: bool,
@@ -135,11 +160,15 @@ fn title_for<'a>(f: &BookFile<'a>) -> &'a str {
 ///
 /// Files that are parts, bonuses, or zero-byte placeholders are dropped first;
 /// each surviving file is counted by [`title_for`] with its part suffix
-/// normalized off.
+/// normalized off. Distinctness keys on the pair (normalized title, own-name
+/// series index), not title text alone, so a naming style whose title text is
+/// identical across siblings and whose series index is the only distinguishing
+/// signal (the module doc's Wings-of-Fire-paren case) still counts as several
+/// distinct books rather than collapsing to one.
 pub fn detect_multibook(files: &[BookFile]) -> MultiBookVerdict {
     use std::collections::BTreeSet;
 
-    let mut distinct: BTreeSet<String> = BTreeSet::new();
+    let mut distinct: BTreeSet<(String, Option<String>)> = BTreeSet::new();
     for f in files {
         if f.size == 0 {
             continue;
@@ -151,10 +180,20 @@ pub fn detect_multibook(files: &[BookFile]) -> MultiBookVerdict {
         if norm.is_empty() {
             continue;
         }
-        distinct.insert(norm);
+        distinct.insert((norm, f.series_index.map(str::to_string)));
     }
 
-    let distinct_titles: Vec<String> = distinct.into_iter().collect();
+    // Render each distinct (title, index) pair as one evidence string: the
+    // plain title when it alone was enough to distinguish it (the common
+    // case, index is None), or `title (index)` when the index is what
+    // actually made it distinct.
+    let distinct_titles: Vec<String> = distinct
+        .into_iter()
+        .map(|(title, index)| match index {
+            Some(idx) => format!("{title} ({idx})"),
+            None => title,
+        })
+        .collect();
     MultiBookVerdict {
         is_multi: distinct_titles.len() >= 2,
         distinct_titles,
@@ -180,7 +219,26 @@ mod tests {
     use super::*;
 
     fn bf<'a>(name: &'a str, title: Option<&'a str>, size: u64) -> BookFile<'a> {
-        BookFile { name, title, size }
+        BookFile {
+            name,
+            title,
+            series_index: None,
+            size,
+        }
+    }
+
+    fn bf_idx<'a>(
+        name: &'a str,
+        title: Option<&'a str>,
+        series_index: Option<&'a str>,
+        size: u64,
+    ) -> BookFile<'a> {
+        BookFile {
+            name,
+            title,
+            series_index,
+            size,
+        }
     }
 
     /// AC-203.1: seven distinct real titles (Narnia) flag as multi-book.
@@ -377,6 +435,134 @@ mod tests {
         let v = detect_multibook(&files);
         assert!(!v.is_multi, "one title in two parts is a single book");
         assert_eq!(v.distinct_titles, vec!["the stand".to_string()]);
+    }
+
+    /// F-203, the Wings of Fire fixture (a series distinguished PRIMARILY by
+    /// a leading series index): five real, distinct titles flag as multi-book.
+    /// Each file's own name parses via F-301 pattern 2 (`Author - Title`),
+    /// which does not capture a series index at all, so `series_index` is
+    /// `None` on every file here; distinctness rests on the five different
+    /// real titles alone, exactly as the plain-title counting always worked.
+    /// See [`series_index_only_naming_still_flags_as_multi`] for the naming
+    /// style where the index is what actually carries the distinction.
+    #[test]
+    fn wings_of_fire_series_index_titles_is_multi() {
+        let files = [
+            bf(
+                "Wings of Fire 01 - The Dragonet Prophecy.mp3",
+                Some("The Dragonet Prophecy"),
+                90_000,
+            ),
+            bf(
+                "Wings of Fire 02 - The Lost Heir.mp3",
+                Some("The Lost Heir"),
+                88_000,
+            ),
+            bf(
+                "Wings of Fire 03 - The Hidden Kingdom.mp3",
+                Some("The Hidden Kingdom"),
+                85_000,
+            ),
+            bf(
+                "Wings of Fire 04 - The Dark Secret.mp3",
+                Some("The Dark Secret"),
+                82_000,
+            ),
+            bf(
+                "Wings of Fire 05 - The Brightest Night.mp3",
+                Some("The Brightest Night"),
+                91_000,
+            ),
+        ];
+        let v = detect_multibook(&files);
+        assert!(
+            v.is_multi,
+            "five distinct Wings of Fire titles are multi-book"
+        );
+        assert_eq!(v.distinct_titles.len(), 5);
+        assert_eq!(
+            v.distinct_titles,
+            vec![
+                "the brightest night".to_string(),
+                "the dark secret".to_string(),
+                "the dragonet prophecy".to_string(),
+                "the hidden kingdom".to_string(),
+                "the lost heir".to_string(),
+            ]
+        );
+    }
+
+    /// THE HARD SUB-CASE: a naming style where the text after the series
+    /// index is IDENTICAL on every sibling (F-301 pattern 6, `(NN) Title`) so
+    /// every file's own-name title parses to the same string. Title-text-only
+    /// counting would collapse this to one distinct title and silently fail
+    /// to flag; the fix counts distinct (title, series index) pairs instead,
+    /// so the three different own-name series indices keep these three
+    /// entries apart.
+    #[test]
+    fn series_index_only_naming_still_flags_as_multi() {
+        let files = [
+            bf_idx(
+                "(01) Wings of Fire.mp3",
+                Some("Wings of Fire"),
+                Some("01"),
+                90_000,
+            ),
+            bf_idx(
+                "(02) Wings of Fire.mp3",
+                Some("Wings of Fire"),
+                Some("02"),
+                88_000,
+            ),
+            bf_idx(
+                "(03) Wings of Fire.mp3",
+                Some("Wings of Fire"),
+                Some("03"),
+                85_000,
+            ),
+        ];
+        let v = detect_multibook(&files);
+        assert!(
+            v.is_multi,
+            "three series indices on an identical title must still flag as multi-book"
+        );
+        assert_eq!(v.distinct_titles.len(), 3);
+        assert_eq!(
+            v.distinct_titles,
+            vec![
+                "wings of fire (01)".to_string(),
+                "wings of fire (02)".to_string(),
+                "wings of fire (03)".to_string(),
+            ]
+        );
+    }
+
+    /// Sanity check on the pair key: two files with BOTH the same title AND
+    /// the same series index (a genuine duplicate/rename, not two books)
+    /// still collapse to one distinct entry, exactly as plain-title counting
+    /// always did for an unindexed duplicate.
+    #[test]
+    fn same_title_and_same_index_still_collapses() {
+        let files = [
+            bf_idx(
+                "(01) Wings of Fire.mp3",
+                Some("Wings of Fire"),
+                Some("01"),
+                90_000,
+            ),
+            bf_idx(
+                "(01) Wings of Fire (1).mp3",
+                Some("Wings of Fire"),
+                Some("01"),
+                90_000,
+            ),
+        ];
+        let v = detect_multibook(&files);
+        assert!(
+            !v.is_multi,
+            "same title and same index is one book, not two"
+        );
+        assert_eq!(v.distinct_titles, vec!["wings of fire (01)".to_string()]);
     }
 
     #[test]

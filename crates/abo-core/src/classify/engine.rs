@@ -283,6 +283,11 @@ fn is_genre_shelf(name: &str, own_author: Option<&str>) -> bool {
 
 /// Classify every folder in `entries`, bottom-up and deterministically.
 /// Returns one [`FolderClassification`] per FOLDER entry, in input order.
+///
+/// This is the pure function; production callers should go through
+/// [`crate::classify::run::run_classify`] instead, which wraps this same
+/// logic with the `db::activity` audit row (F-1001). Calling `classify`
+/// directly skips that audit trail.
 pub fn classify(entries: &[ClassifyInput]) -> Vec<FolderClassification> {
     let n = entries.len();
 
@@ -526,6 +531,10 @@ fn classify_folder(
                 title: merged_by_id
                     .get(&entries[c].id)
                     .and_then(|m| m.fields.title.as_ref())
+                    .map(|f| f.value.as_str()),
+                series_index: merged_by_id
+                    .get(&entries[c].id)
+                    .and_then(|m| m.fields.series_index.as_ref())
                     .map(|f| f.value.as_str()),
                 size: entries[c].size,
             })
@@ -914,6 +923,53 @@ mod tests {
         // Bare book under the shelf: its inherited `Genre` author is suppressed.
         let rework = cs.iter().find(|c| c.id == 3).unwrap();
         assert_eq!(rework.evidence.clean_author, None);
+    }
+
+    /// F-203, the Wings of Fire fixture (`FixtureFamily::MultiBookWingsOfFire`
+    /// in `crate::fixtures::manifest`): a series distinguished PRIMARILY by a
+    /// leading series index still flags as `multi-book-suspect`, with the
+    /// evidence's distinct-title count matching the five real per-book titles
+    /// (not the shared series name and not the raw file count).
+    #[test]
+    fn wings_of_fire_series_index_folder_is_multibook_suspect() {
+        let entries = vec![
+            folder(0, None, "Wings of Fire"),
+            audio(
+                1,
+                Some(0),
+                "Wings of Fire 01 - The Dragonet Prophecy.mp3",
+                90_000,
+            ),
+            audio(2, Some(0), "Wings of Fire 02 - The Lost Heir.mp3", 88_000),
+            audio(
+                3,
+                Some(0),
+                "Wings of Fire 03 - The Hidden Kingdom.mp3",
+                85_000,
+            ),
+            audio(4, Some(0), "Wings of Fire 04 - The Dark Secret.mp3", 82_000),
+            audio(
+                5,
+                Some(0),
+                "Wings of Fire 05 - The Brightest Night.mp3",
+                91_000,
+            ),
+        ];
+        let cs = classify(&entries);
+        let f = cs.iter().find(|c| c.id == 0).unwrap();
+        assert_eq!(f.class, FolderClass::MultiBookSuspect);
+        assert_eq!(f.rule_id, "multibook-distinct-titles");
+        assert_eq!(f.evidence.distinct_titles.len(), 5);
+        assert_eq!(
+            f.evidence.distinct_titles,
+            vec![
+                "the brightest night".to_string(),
+                "the dark secret".to_string(),
+                "the dragonet prophecy".to_string(),
+                "the hidden kingdom".to_string(),
+                "the lost heir".to_string(),
+            ]
+        );
     }
 
     /// Determinism: classifying twice yields identical output.

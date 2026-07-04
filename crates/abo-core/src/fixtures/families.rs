@@ -52,6 +52,12 @@ pub enum FixtureFamily {
     /// The Harry Potter hard case: 11 direct files spanning 7 titles plus
     /// extras.
     MultiBookHarryPotter,
+    /// The Wings of Fire case: N sibling audio files, one series,
+    /// distinguished PRIMARILY by a leading series index (`Wings of Fire 01 -
+    /// The Dragonet Prophecy` ... `Wings of Fire 05 - The Brightest Night`),
+    /// exercising F-203's distinct-(title, series index) counting rather than
+    /// title text alone.
+    MultiBookWingsOfFire,
     /// A nonconforming disc folder (Disc/CD/Disk naming variants), the
     /// Verbal Advantage case among them.
     NonconformingDisc,
@@ -131,6 +137,7 @@ impl FixtureFamily {
             FixtureFamily::Mixed => "mixed",
             FixtureFamily::MultiBookNarnia => "multi-book-narnia",
             FixtureFamily::MultiBookHarryPotter => "multi-book-harry-potter",
+            FixtureFamily::MultiBookWingsOfFire => "multi-book-wings-of-fire",
             FixtureFamily::NonconformingDisc => "nonconforming-disc",
             FixtureFamily::ParallelFormatZeroM4b => "parallel-format-0-m4b",
             FixtureFamily::UnicodeNfcNfdTwin => "unicode-nfc-nfd-twin",
@@ -171,6 +178,7 @@ impl FixtureFamily {
         FixtureFamily::Mixed,
         FixtureFamily::MultiBookNarnia,
         FixtureFamily::MultiBookHarryPotter,
+        FixtureFamily::MultiBookWingsOfFire,
         FixtureFamily::NonconformingDisc,
         FixtureFamily::ParallelFormatZeroM4b,
         FixtureFamily::UnicodeNfcNfdTwin,

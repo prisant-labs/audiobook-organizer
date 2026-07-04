@@ -1,5 +1,6 @@
 ---
 source: crates/abo-core/tests/classification_golden.rs
+assertion_line: 156
 expression: "lines.join(\"\\n\")"
 ---
 Docs And Resources => docs-resources [docs-resources-leaf] {"non_audio_files":2}
@@ -7,10 +8,11 @@ Empty Folder => empty [empty-leaf] {}
 Genre - Business => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":2,"book_children":2,"distinct_child_authors":["Chris Dixon","Michael Easter"],"own_author":"Genre"}
 Genre - Business/Chris_Dixon_-_Read_Write_Own => book [book-audio-leaf] {"audio_files":1,"clean_author":"Chris Dixon"}
 Genre - Business/Michael_Easter_-_Scarcity_Brain => book [book-audio-leaf] {"audio_files":1,"clean_author":"Michael Easter"}
-Genre - Children => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":3,"book_children":3,"distinct_child_authors":["Roald Dahl"],"own_author":"Genre"}
+Genre - Children => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":4,"book_children":4,"distinct_child_authors":["Roald Dahl"],"own_author":"Genre"}
 Genre - Children/Chronicles of Narnia => multi-book-suspect [multibook-distinct-titles] {"audio_files":7,"distinct_titles":["prince caspian","the horse and his boy","the last battle","the lion, the witch and the wardrobe","the magician's nephew","the silver chair","the voyage of the dawn treader"]}
 Genre - Children/Harry Potter => multi-book-suspect [multibook-distinct-titles] {"audio_files":11,"distinct_titles":["harry potter and the chamber of secrets","harry potter and the deathly hallows","harry potter and the goblet of fire","harry potter and the half-blood prince","harry potter and the order of the phoenix","harry potter and the philosopher's stone","harry potter and the prisoner of azkaban"]}
 Genre - Children/Roald Dahl - Charlie and the Chocolate Factory => book [book-audio-leaf] {"audio_files":1,"clean_author":"Roald Dahl"}
+Genre - Children/Wings of Fire => multi-book-suspect [multibook-distinct-titles] {"audio_files":5,"distinct_titles":["the brightest night","the dark secret","the dragonet prophecy","the hidden kingdom","the lost heir"]}
 Genre - Non-Fiction => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":4,"book_children":4,"distinct_child_authors":["Adam Savage","Richard Susskind"],"own_author":"Genre"}
 Genre - Non-Fiction/Every Tool's a Hammer - Life Is What You Make It by Adam Savage => book [book-audio-leaf] {"audio_files":1,"clean_author":"Adam Savage"}
 Genre - Non-Fiction/How to Think About AI - A Guide for the Perplexe by Richard Susskind => book [book-audio-leaf] {"audio_files":1,"clean_author":"Richard Susskind"}

@@ -1,7 +1,9 @@
 ---
 source: crates/abo-core/tests/classification_golden.rs
+assertion_line: 206
 expression: "lines.join(\"\\n\")"
 ---
 Genre - Children/Chronicles of Narnia => titles=["prince caspian", "the horse and his boy", "the last battle", "the lion, the witch and the wardrobe", "the magician's nephew", "the silver chair", "the voyage of the dawn treader"]
 Genre - Children/Harry Potter => titles=["harry potter and the chamber of secrets", "harry potter and the deathly hallows", "harry potter and the goblet of fire", "harry potter and the half-blood prince", "harry potter and the order of the phoenix", "harry potter and the philosopher's stone", "harry potter and the prisoner of azkaban"]
+Genre - Children/Wings of Fire => titles=["the brightest night", "the dark secret", "the dragonet prophecy", "the hidden kingdom", "the lost heir"]
 Genre - SciFI/Frank Herbert-Dune-#1-Chronicles[1-8} => titles=["dune", "dune messiah"]

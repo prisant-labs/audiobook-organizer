@@ -1,5 +1,6 @@
 ---
 source: crates/abo-core/tests/classification_golden.rs
+assertion_line: 187
 expression: out
 ---
 per-class (folders, bytes):
@@ -8,7 +9,7 @@ per-class (folders, bytes):
   pack-container     folders=8   bytes=0
   staging            folders=1   bytes=100000
   mixed              folders=2   bytes=110000
-  multi-book-suspect folders=3   bytes=2011000
+  multi-book-suspect folders=4   bytes=2447000
   empty              folders=1   bytes=0
   docs-resources     folders=1   bytes=2500
   manual-review      folders=4   bytes=407000
@@ -18,4 +19,4 @@ problems:
   deep-nesting                 count=3   unit=folders  bytes=0
   duplicate-candidate-groups   count=2   unit=groups   bytes=420000
   empty-folders                count=1   unit=folders  bytes=0
-total-bytes=6484200
+total-bytes=6920200

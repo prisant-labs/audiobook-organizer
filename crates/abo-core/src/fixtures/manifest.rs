@@ -547,6 +547,26 @@ pub fn standard_library_manifest() -> FixtureManifest {
                         &[FixtureFamily::Pattern9IrregularSeriesContainer],
                         vec![file("Charlie and the Chocolate Factory.m4b", 60_000)],
                     ),
+                    // Multi-book Wings of Fire: 5 sibling files, one series,
+                    // distinguished PRIMARILY by a leading series index. Real
+                    // per-book titles still differ (F-301 pattern 2 splits
+                    // them off after the dash), so this is the case where
+                    // title-text counting already works; it exists alongside
+                    // the F-203 unit tests that separately prove the
+                    // distinct-(title, series index) heuristic also survives
+                    // a naming style where the title text alone would
+                    // collapse (see crate::classify::multibook module doc).
+                    folder_fam(
+                        "Wings of Fire",
+                        &[FixtureFamily::MultiBookWingsOfFire],
+                        vec![
+                            file("Wings of Fire 01 - The Dragonet Prophecy.mp3", 90_000),
+                            file("Wings of Fire 02 - The Lost Heir.mp3", 88_000),
+                            file("Wings of Fire 03 - The Hidden Kingdom.mp3", 85_000),
+                            file("Wings of Fire 04 - The Dark Secret.mp3", 82_000),
+                            file("Wings of Fire 05 - The Brightest Night.mp3", 91_000),
+                        ],
+                    ),
                 ],
             ),
             // ---- Unicode NFC/NFD twin pair ----
