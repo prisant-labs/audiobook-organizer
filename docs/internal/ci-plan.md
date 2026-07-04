@@ -35,6 +35,13 @@ Five ideas govern this pipeline. They inherit from the reference architecture (v
 
 Runs on every pull request and on pushes to `main`. Three jobs - `lint`, `test`, `build` - and these three are exactly the required checks for merge. FD-24 additions over the release-plan sketch: a concurrency group with cancel-in-progress; `permissions: contents: read`; the zero-network grep gate (FD-11); the bindings-drift gate defaulted to the Windows runner; the macOS build leg made allow-fail-capable.
 
+Implementation note (Phase 7, landed on `release/v0.1.0-spine`): the YAML below is the plan as authored. Four reality adaptations were made when the workflow actually landed, and the live `.github/workflows/ci.yml` reflects them, not the block below verbatim:
+
+1. **Linux system dependencies, added.** This plan did not enumerate Ubuntu packages. `cargo clippy --workspace --all-targets` and `cargo test --workspace` both compile the `src-tauri` crate on the `ubuntu-latest` legs (`lint` and `test`), even though the product ships no Linux bundle (Section 8). Both jobs install the current official Tauri v2 Linux prerequisite set for Debian/Ubuntu (`libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, per `https://v2.tauri.app/start/prerequisites`) before the Rust toolchain step.
+2. **Zero-network gate, built output instead of source globs.** The `lint` job now runs `pnpm build` and greps the produced `dist/` plus `index.html`, instead of grepping committed source files matched by `git ls-files` globs. A bundler could inline a network reference that never appears in source, so grepping the real shipped output is strictly stronger. The report-template globs still join this gate at v0.3.0.
+3. **Bindings-drift step, simplified to the existing script.** The step runs `pnpm bindings:check` (the `package.json` script, which already runs `cargo test -p abo --test export_bindings` then `git diff --exit-code -- src/lib/bindings.ts`) rather than restating both commands inline. Same gate, one source of truth.
+4. **macOS `continue-on-error`, not preset.** The `build` job does NOT set `continue-on-error: ${{ !matrix.ga }}` at landing. Per the pre-agreed descope rule, macOS starts as a normal, blocking leg; `continue-on-error: true` is added only if the D-10 descope trigger fires (roughly a day of effort or three genuine fix attempts), together with a tracking issue. Windows is never allow-fail, preset or otherwise. The YAML below is retained as the eventual downgraded shape, for reference once/if the trigger fires.
+
 ```yaml
 name: ci
 
