@@ -313,8 +313,10 @@ mod tests {
                 kind: "move",
                 kind_reason: None,
                 source_path: "E:\\Books\\Hugo Pack\\2016^ - N.K. Jemisin - The Fifth Season",
-                target_path: "E:\\Books\\N.K. Jemisin\\The Broken Earth\\Book 01 - The Fifth Season",
-                rationale: "Matched pattern 4 (year-author-title-award); extracted from a Hugo pack.",
+                target_path:
+                    "E:\\Books\\N.K. Jemisin\\The Broken Earth\\Book 01 - The Fifth Season",
+                rationale:
+                    "Matched pattern 4 (year-author-title-award); extracted from a Hugo pack.",
                 rule_id: "flatten-packs-pattern-4",
                 confidence: "high",
                 byte_size: 446_693_376,
@@ -386,10 +388,7 @@ mod tests {
                 fetched.validation_reason.as_deref(),
                 original.validation_reason
             );
-            assert_eq!(
-                fetched.provenance_json.as_deref(),
-                original.provenance_json
-            );
+            assert_eq!(fetched.provenance_json.as_deref(), original.provenance_json);
             assert_eq!(fetched.approval, APPROVAL_PENDING);
             assert_eq!(fetched.approval_updated_at, None);
         }
@@ -417,7 +416,9 @@ mod tests {
         )
         .await
         .expect("insert first plan");
-        let first_ops_before = get_plan_ops(&pool, first_plan_id).await.expect("ops before");
+        let first_ops_before = get_plan_ops(&pool, first_plan_id)
+            .await
+            .expect("ops before");
 
         // Regenerate: a second, unrelated plan (simulating a ruleset change).
         let second_ops = vec![NewPlanOp {
@@ -459,7 +460,9 @@ mod tests {
             "the prior plan's ops must be byte-for-byte unchanged after regeneration"
         );
 
-        let second_fetched = get_plan_ops(&pool, second_plan_id).await.expect("second ops");
+        let second_fetched = get_plan_ops(&pool, second_plan_id)
+            .await
+            .expect("second ops");
         assert_eq!(second_fetched.len(), 1);
         assert_eq!(second_fetched[0].op_group, "strip-noise");
 

@@ -19,10 +19,11 @@
 //! v0.2.0 Phase 6 adds [`activity`]: the F-1001 append-only `activity_records`
 //! log (one row per scan, CSV import, and classify run).
 //!
-//! v0.3.0 Phase 1 adds migration `0002_plan_and_rulesets.sql` (additive over
-//! 0001) plus [`plans`] and [`rulesets`]: sqlx CRUD for the F-403/F-405 plan
-//! tables and the F-801 ruleset table. See migration 0002's own doc comment
-//! for the frozen `plan_ops` column set later v0.3.0 phases build on.
+//! v0.3.0 Phase 1 adds migration `0002_plan_and_rulesets.sql`, additive over
+//! migration `0001_init.sql`, plus [`plans`] and [`rulesets`]: sqlx CRUD for
+//! the F-403/F-405 plan tables and the F-801 ruleset table. See migration
+//! 0002's own doc comment for the frozen `plan_ops` column set later v0.3.0
+//! phases build on.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -422,10 +423,11 @@ mod tests {
             "duplicate_groups",
             "duplicate_members",
         ] {
-            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
-                .fetch_one(&pool)
-                .await
-                .unwrap_or_else(|e| panic!("table {table} must exist: {e}"));
+            let count: i64 =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or_else(|e| panic!("table {table} must exist: {e}"));
             assert_eq!(count, 0, "table {table} must start empty");
         }
 
@@ -522,10 +524,11 @@ mod tests {
             "duplicate_groups",
             "duplicate_members",
         ] {
-            let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
-                .fetch_one(&pool)
-                .await
-                .unwrap_or_else(|e| panic!("table {table} must exist after migration: {e}"));
+            let count: i64 =
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap_or_else(|e| panic!("table {table} must exist after migration: {e}"));
             assert_eq!(count, 0);
         }
 
