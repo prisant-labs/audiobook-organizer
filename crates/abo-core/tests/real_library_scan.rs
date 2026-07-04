@@ -176,7 +176,11 @@ fn compute_stats(rows: &[EntryRow], det: &NoiseDetectors) -> SnapshotStats {
 
     // Loose-root books: audio files DIRECTLY under the scan root (depth 1). In a
     // real single-rooted scan the root itself is entry depth 0, so "loose root"
-    // is depth == 1, not parent-is-none (that would only match the root folder).
+    // is depth == 1, computed here from the raw `EntryRow.depth` field for the
+    // name-parse-quality (clean/total) breakdown below. `health_metrics`'
+    // "loose-root-books" problem metric is the product's own count of the same
+    // files (fixed to use `parent`, not `depth`, since `ClassifyInput` carries
+    // no depth field); the assertion just below checks the two agree.
     let loose_names: Vec<&str> = rows
         .iter()
         .filter(|r| r.depth == 1 && r.kind == "file" && r.file_class.as_deref() == Some("audio"))
@@ -185,6 +189,22 @@ fn compute_stats(rows: &[EntryRow], det: &NoiseDetectors) -> SnapshotStats {
     let cov = coverage(loose_names.iter().copied());
     s.loose_root_total = cov.total;
     s.loose_root_clean = cov.clean;
+
+    // Cross-check: `health_metrics`' own loose-root-books problem metric (now
+    // fixed to be robust to the real single-rooted scan shape, see
+    // `classify::metrics`) must agree with the depth==1 count computed above
+    // from the raw rows. They are two independent routes to the same number;
+    // divergence here would mean the metric regressed.
+    let hm_loose_count = m
+        .problems
+        .iter()
+        .find(|p| p.problem == "loose-root-books")
+        .map(|p| p.count)
+        .unwrap_or(u64::MAX);
+    assert_eq!(
+        hm_loose_count, s.loose_root_total as u64,
+        "health_metrics loose-root-books count must agree with the depth==1 count"
+    );
 
     s.book_like_folders = s.book + s.multi_book_suspect;
     s.estimated_abs_items = s.book_like_folders + s.loose_root_total as u64;

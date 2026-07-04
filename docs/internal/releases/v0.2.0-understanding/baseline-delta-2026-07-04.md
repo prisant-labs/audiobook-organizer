@@ -90,7 +90,21 @@ product's anchored trailing/leading strip passes. See the note below the table.
 Units (FD-08): "book-like folders", "mixed folders", and all noise rows count
 FOLDERS; "estimated ABS items" is a derived item count (book-like folders plus
 loose-root books); "loose-root parses" is clean/total over the audio FILES
-directly under the library root.
+directly under the library root, read directly off `classify::health_metrics`'
+own "loose-root-books" problem metric (238 files on the live snapshot), not a
+workaround.
+
+> **Metric correction made during this gate.** `health_metrics`'
+> "loose-root-books" count originally matched a FILE against `parent.is_none()`,
+> which is correct for the multi-root fixture library but reads 0 against a real
+> scan: a real single-rooted scan persists the scan root itself as one ordinary
+> Folder entry with `parent: None`, so every loose file's parent is `Some(root_id)`,
+> never `None`. The 237/238 figure in this report was therefore first produced by
+> a test-local workaround (filtering the raw scan rows on `depth == 1` instead of
+> going through the metric). The metric was fixed in this gate to detect the
+> scan-root entry structurally and count its direct audio children; it now reads
+> 238 directly, agreeing with the workaround it replaces, and the gate test
+> (`real_library_scan.rs`) asserts the two counts agree going forward.
 
 ### Full per-class folder counts (F-201)
 
