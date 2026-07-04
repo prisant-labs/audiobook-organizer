@@ -1,0 +1,21 @@
+[package]
+name = "abo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# abo-core is the Tauri-free engine crate (D-01, D-07 engine-first order).
+# The load-bearing invariant, enforced in CI (docs/internal/ci-plan.md lint
+# job): this crate must never depend on `tauri` or any `tauri-*` crate, even
+# transitively. `cargo tree -p abo-core -e normal | grep -i tauri` must stay
+# empty (AC-3).
+#
+# Phase 1 (v0.1.0 spine workspace scaffold) adds only what the stub modules
+# need now: serde (payload derives land in Phase 4), thiserror (AppError
+# lands in Phase 4), specta (IPC type derives land in Phase 4/5). specta
+# itself pulls no tauri dependency (verified by `cargo tree`); only
+# tauri-specta, the glue crate, lives in src-tauri.
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+specta = { workspace = true, features = ["derive"] }

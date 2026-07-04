@@ -1,0 +1,15 @@
+# Pin the Rust toolchain channel for Audiobook Organizer (v0.1.0 spine,
+# Phase 1).
+#
+# Pinned to the exact stable version installed on the dev machine and
+# confirmed working (matches the reference project's toolchain family; the
+# reference itself pins the looser "stable" channel, but this phase's brief
+# calls for an exact version pin here). A stable, exact channel keeps CI
+# (Windows + macOS) and local builds on the same compiler so goldens and
+# bindings-drift checks do not drift under the toolchain. clippy and rustfmt
+# are required components so the CI lint gate (cargo clippy --workspace
+# --all-targets -- -D warnings) and formatting checks always have them.
+
+[toolchain]
+channel = "1.96.0"
+components = ["clippy", "rustfmt"]

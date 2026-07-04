@@ -1,0 +1,33 @@
+[package]
+name = "abo"
+version = "0.1.0"
+description = "Audiobook Organizer - a Windows-first audiobook library reorganizer"
+authors = ["prisant-labs"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/prisant-labs/audiobook-organizer"
+default-run = "abo"
+
+# version is hardcoded here (not `version.workspace = true`) to match the
+# reference project's convention: scripts/bump-version.mjs updates this
+# [package] section independently of the workspace root version, so a bump
+# has something concrete to rewrite.
+
+# Tauri v2 library pattern: the app entry point lives in the library
+# (`abo_lib::run`) and `main.rs` just calls it. The library crate types are
+# required for the mobile entry point and desktop linking.
+[lib]
+name = "abo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+# Phase 1 (v0.1.0 spine workspace scaffold): a plain Tauri v2 app that boots,
+# with stub command/event modules. No tauri-specta seam yet (that lands in
+# Phase 5, which also adds the tauri-specta and specta dependencies here).
+[dependencies]
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+abo-core = { path = "../crates/abo-core" }

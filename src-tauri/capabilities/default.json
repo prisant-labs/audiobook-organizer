@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "FD-29 minimal capability baseline for the v0.1.0 spine main window. Grants only event emission/listening and webview default APIs; explicitly NO fs, NO shell, NO dialog. Folder access is mediated by the backend from v0.4.0 (F-909, tauri-plugin-dialog); the frontend never touches the filesystem directly.",
+  "windows": ["main"],
+  "permissions": ["core:event:default", "core:webview:default"]
+}
