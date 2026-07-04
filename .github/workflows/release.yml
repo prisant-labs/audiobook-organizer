@@ -1,0 +1,79 @@
+name: release
+
+# Fires only on version tags (v*), so it never runs on a normal push or PR.
+on:
+  push:
+    tags: ["v*"]
+
+# Needs write to create the GitHub Release. This is the only workflow with write scope,
+# and it produces a DRAFT only; a human publishes it (D-11 governance, autonomy boundary).
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Full-LTO distribution artifacts (Cargo.toml [profile.dist]). Windows produces
+      # NSIS/MSI; macOS produces .app/.dmg, UNSIGNED (FD-22).
+      - name: Build release bundles
+        run: pnpm tauri build --profile dist
+
+      # Reality fix (Phase 7, same root cause as ci.yml's build job): this repo's
+      # Cargo.toml is a virtual workspace manifest (members = ["crates/abo-core",
+      # "src-tauri"]), so Cargo puts the bundle under the WORKSPACE ROOT's `target/`
+      # (here `target/dist/bundle/`, since `--profile dist` names the target subdir
+      # after the profile), never under `src-tauri/target/`. ci-plan.md's original
+      # `src-tauri/target/dist/bundle` path was copied from a reference project where
+      # the Tauri crate was not a workspace member; confirmed against this repo's
+      # actual `ci.yml` build-job log (Phase 7) before this path was authored here.
+      #
+      # SHA256SUMS over every produced bundle so the family install doc can verify the
+      # download. bash is available on both runners in Actions.
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -eu
+          out="SHA256SUMS-${{ matrix.os }}.txt"
+          find target/dist/bundle -type f \
+            \( -name '*.msi' -o -name '*.exe' -o -name '*.dmg' -o -name '*.app.tar.gz' \) \
+            -print0 | xargs -0 sha256sum > "$out" || true
+          cat "$out"
+
+      - name: Upload to draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true                        # publishing is human-only (D-11)
+          prerelease: true
+          files: |
+            target/dist/bundle/**/*.msi
+            target/dist/bundle/**/*.exe
+            target/dist/bundle/**/*.dmg
+            SHA256SUMS-${{ matrix.os }}.txt
+          body: |
+            See CHANGELOG.md for this version's notes.
+            Windows is the primary supported target. The installer is UNSIGNED through
+            v0.9.0 (FD-22): on first run Windows SmartScreen shows "Windows protected your
+            PC"; choose "More info", then "Run anyway". The install doc explains this flow.
+            The macOS build is UNSIGNED and beta (compiles + bundles honesty only).

@@ -1,0 +1,74 @@
+[package]
+name = "abo"
+version = "0.1.0"
+description = "Audiobook Organizer - a Windows-first audiobook library reorganizer"
+authors = ["prisant-labs"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/prisant-labs/audiobook-organizer"
+default-run = "abo"
+
+# version is hardcoded here (not `version.workspace = true`) to match the
+# reference project's convention: scripts/bump-version.mjs updates this
+# [package] section independently of the workspace root version, so a bump
+# has something concrete to rewrite.
+
+# Tauri v2 library pattern: the app entry point lives in the library
+# (`abo_lib::run`) and `main.rs` just calls it. The library crate types are
+# required for the mobile entry point and desktop linking.
+[lib]
+name = "abo_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+# Phase 5 (tauri-specta seam): the shell wires the typed IPC contract. All
+# tauri-family + specta crates are EXACT-pinned at the workspace root (AC-17);
+# consumed here via `workspace = true` so a pin flip stays consistent.
+[dependencies]
+tauri = { workspace = true }
+# tauri-specta collects the `#[tauri::command]` + `#[specta::specta]` surface and
+# the typed events, and exports `src/lib/bindings.ts`. `derive` gives the Event
+# derive macro; `typescript` pulls the specta-typescript exporter.
+tauri-specta = { workspace = true, features = ["derive", "typescript"] }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+abo-core = { path = "../crates/abo-core" }
+
+# The shell hosts the async runtime the tauri-specta commands run under and holds
+# the SQLite pool in managed AppState. tokio is that runtime; sqlx provides the
+# SqlitePool type and the minimal `jobs`-row queries scan_start writes. Both are
+# workspace-pinned (sqlx exact-adjacent, tokio caret) and pull no tauri.
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+tokio = { workspace = true }
+
+# `futures` supplies `FutureExt::catch_unwind`, used by `run_job_to_terminal` to
+# make the spawned scan job panic-safe (a panicking scan future marks its `jobs`
+# row failed with error_code "internal-panic" instead of leaving it 'running').
+# Core-pure; shell-only, so abo-core's zero-tauri gate is untouched.
+futures = { workspace = true }
+
+# Structured logging (F-1003): the shell's file+stdout logger. Registered from
+# Rust in `run()`; backend-only, no JS guest package. Captures the `log` facade,
+# so abo-core's `tracing` events (emitted as `log` records via tracing's `log`
+# feature) land in the rotating log file. Exact pin per AC-17.
+tauri-plugin-log = { workspace = true }
+# `log` is used directly for the plugin's LevelFilter and is the facade the plugin
+# captures. Kept at the workspace-safe caret used by the plugin itself.
+log = "0.4"
+
+# Test-only. `tests/job_terminal.rs` exercises `run_job_to_terminal` (the spawned
+# scan job's terminal-state wrapper) directly: it opens a migrated pool via
+# abo-core, inserts a running `jobs` row, drives the wrapper with a deliberately
+# panicking future, and asserts the row lands failed with error_code
+# "internal-panic". Integration tests are separate crates, so the crates they name
+# directly are restated here (matching abo-core's dev-dependency convention); the
+# `[[test]]` binary also picks up the comctl32-v6 manifest from build.rs, which the
+# Tauri-linked test executable needs to start on Windows.
+[dev-dependencies]
+tokio = { workspace = true }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+tempfile = "3"

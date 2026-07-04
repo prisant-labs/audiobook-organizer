@@ -1,0 +1,284 @@
+name: ci
+
+# Runs on PRs and on pushes to main. Keying push to main (not all branches) avoids a
+# duplicate run when a feature branch push and its PR would both fire. This workflow
+# file lands in v0.1.0 (spine) only; docs/internal/ci-plan.md (Section 1) records that
+# a docs-only push must never produce a red CI, and that held here empirically:
+# .github/workflows/ did not exist on main or on planning/doc-suite before this branch,
+# so no earlier push on this repo ran (or could have failed) this workflow.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push/PR-sync to the same ref cancels the older in-flight run (FD-24).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only reads the repo. No write scope, no packages, no id-token (FD-24).
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # --- lint: fast, Ubuntu-only, static gates ------------------------------------------
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reality adaptation (Phase 7): ci-plan.md's lint job did not enumerate Linux
+      # system packages. `cargo clippy --workspace --all-targets` compiles the
+      # src-tauri crate on this Ubuntu runner even though the product never ships a
+      # Linux bundle (see ci-plan.md Section 8, deliberate non-adoption of a
+      # WebKitGTK smoke). The package list is the CURRENT official Tauri v2 Linux
+      # prerequisite set for Debian/Ubuntu (https://v2.tauri.app/start/prerequisites,
+      # verified against live docs during this phase), which is narrower than an
+      # earlier draft list: no libgtk-3-dev (libwebkit2gtk-4.1-dev depends on the
+      # gtk3 dev headers it needs) and no patchelf (an AppImage-bundling tool only;
+      # no `tauri build` ever runs on Ubuntu in this pipeline).
+      - name: Install Tauri v2 Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable   # channel pinned via rust-toolchain.toml
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt (check)
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Core-purity gate (D-07 engine-first, D-09 seam): abo-core must never depend on
+      # tauri, even transitively. This is the most load-bearing static assertion in the repo.
+      - name: Assert abo-core has no tauri dependency
+        run: |
+          tree="$(cargo tree -p abo-core -e normal)"
+          echo "$tree"
+          if echo "$tree" | grep -qi 'tauri'; then
+            echo "::error::abo-core depends on tauri (directly or transitively). The core crate must stay Tauri-free."
+            exit 1
+          fi
+          echo "OK: abo-core is Tauri-free."
+
+      - uses: pnpm/action-setup@v4          # version from packageManager in package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: pnpm typecheck
+        run: pnpm typecheck
+
+      # pnpm lint includes the no-raw-invoke ESLint rule: the frontend must call the
+      # tauri-specta generated bindings, never import `invoke` from @tauri-apps/api
+      # directly (FD-29 typed-IPC-only; release-plan v0.4.0 gate "no raw invoke").
+      - name: pnpm lint
+        run: pnpm lint
+
+      # Reality adaptation (Phase 7, FD-11): ci-plan.md's original grep targeted only
+      # committed report/app-shell source globs via `git ls-files`. This phase's brief
+      # calls for grepping the ACTUAL BUILT output instead: a bundler could inline a
+      # CDN URL that never appears in source. Building first and grepping dist/ plus
+      # index.html is strictly stronger, so ci-plan.md Section 2 is updated to match
+      # in this same commit. No report template exists yet (that lands v0.3.0), so
+      # this only covers the app shell for now.
+      - name: Build frontend
+        run: pnpm build
+
+      # Reality fix (Phase 7, found reviewing this run's own log): ci-plan.md's single
+      # regex used a `(?!localhost|127\.0\.0\.1)` negative lookahead, which POSIX
+      # extended regex (what `grep -E` implements) does not support. GNU grep does not
+      # error on it, it just mis-parses it (visible as "grep: warning: ? at start of
+      # expression" in the lint log) and the catch-all `https?://` half of the pattern
+      # then silently never matches ANY plain https/http URL, localhost or otherwise
+      # (verified: "https://evil.com" produced zero matches against the original
+      # pattern). Only the explicit CDN/font-host substrings still worked. That is a
+      # false negative in a safety-relevant gate (FD-11), not a cosmetic warning, so it
+      # is fixed here rather than left as a decorative check that happened to pass.
+      # Split into two greps instead: one for any https/http URL that is not
+      # localhost/127.0.0.1 (plain POSIX alternation, no lookahead), one for the known
+      # CDN/font hosts regardless of scheme.
+      #
+      # With the lookahead bug fixed, grepping the REAL built dist/ (this phase's
+      # reality adaptation, see above) surfaces two static, non-network vendor strings
+      # that ship in every stock React production bundle: the four `http://www.w3.org/...`
+      # XML/SVG namespace identifiers (namespace URIs are never dereferenced; they are
+      # comparison strings, not fetched) and React's `https://react.dev/errors/` error-
+      # decoder link prefix (a static string only ever displayed to a human in a thrown
+      # error, never auto-fetched). Both are narrowly allowlisted by exact prefix below;
+      # any OTHER https/http reference still fails the gate. ci-plan.md Section 2
+      # records this fix and the allowlist.
+      - name: Assert zero external network references
+        run: |
+          set -eu
+          targets="index.html $(find dist -type f \( -name '*.html' -o -name '*.js' -o -name '*.css' \))"
+          hits=0
+          grep -HnE 'https?://' $targets 2>/dev/null \
+            | grep -viE 'https?://(localhost|127\.0\.0\.1)' \
+            | grep -v 'https://react\.dev/errors/' \
+            | grep -v 'http://www\.w3\.org/' \
+            && hits=1
+          grep -HnEi 'fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.|unpkg\.com|jsdelivr' $targets 2>/dev/null && hits=1
+          if [ "$hits" -eq 1 ]; then
+            echo "::error::External host or font-CDN reference found. App and report must be zero-network (FD-11)."
+            exit 1
+          fi
+          echo "OK: no external network references."
+
+  # --- test: Rust + frontend on both platforms ---------------------------------------
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false                      # want both platform signals, not the first failure
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # See the lint job for why this list and why it is needed even without a Linux
+      # bundle target: `cargo test --workspace` compiles the src-tauri crate here too.
+      - name: Install Tauri v2 Linux build dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The workspace test suite. Grows across the ladder: fixture generation and golden
+      # classification (v0.2.0); plan-determinism golden and hostile-fixture validation
+      # (v0.3.0); MemFs executor suites plus the RealFs rollback round-trip in a temp dir
+      # (v0.5.0); kill/resume reconciliation (v0.6.0). Over-length-path fixtures are
+      # generated at runtime into the temp dir, never committed, so Windows checkout never
+      # needs core.longpaths (FD-19).
+      - name: cargo test (workspace)
+        run: cargo test --workspace
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Bindings-drift gate (stream 3 audit item 7; FD-24). Regenerate the committed bindings
+      # from the live tauri-specta surface and fail if the tree drifts: a command/event/type
+      # added without re-exporting would ship a frontend type surface that lies about the
+      # backend. `pnpm bindings:check` (package.json) runs the export test and then
+      # `git diff --exit-code -- src/lib/bindings.ts` in one script.
+      #
+      # PLACEMENT DECISION (OQ-1 / FD-24), resolved empirically in Phase 5: the export
+      # test lives at src-tauri/tests/export_bindings.rs, an integration `[[test]]`
+      # target that links the full Tauri runtime. On Windows that binary needs the
+      # comctl32-v6 activation manifest src-tauri/build.rs attaches only to test
+      # binaries (see build.rs and the comment on export_bindings.rs); without it the
+      # test fails to start (STATUS_ENTRYPOINT_NOT_FOUND). The export does link Tauri
+      # (it is not a pure-data export), so per FD-24's own fallback rule this gate
+      # stays on the Windows runner, matching ci-plan.md's default.
+      - name: Assert bindings are up to date
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: pnpm bindings:check
+
+      # pnpm test: no `test` script exists in package.json at v0.1.0 (spine) - Vitest
+      # and the axe-core accessibility smoke land with the real UI work (v0.4.0, per
+      # ci-plan.md Section 5). Skipped here per this phase's brief rather than adding a
+      # placeholder script that tests nothing; re-add this step when `pnpm test` exists.
+
+  # --- build: bundle on both platforms; Windows is the GA bar -------------------------
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, ga: true }   # the real GA bar
+          - { os: macos-latest,  ga: false }   # honesty only: compiles + bundles
+    # Reality adaptation (Phase 7): ci-plan.md's template presets
+    # `continue-on-error: ${{ !matrix.ga }}` from the start, which would make the
+    # macOS leg allow-fail-capable on day one. This phase's brief calls for NOT
+    # presetting it: macOS starts as a normal, blocking job, and only the D-10
+    # descope trigger (roughly a day of effort or three genuine fix attempts,
+    # release-plan Section on descope triggers) authorizes flipping
+    # `continue-on-error: true` here, with a tracking issue filed at the same time.
+    # ci-plan.md Section 2 is updated to match in this same commit. Windows is
+    # NEVER allow-fail, preset or otherwise.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Per-push CI builds use the thin-LTO [profile.release] so bundling stays fast
+      # (Cargo.toml; FD-24). Full-LTO [profile.dist] is reserved for release-tag artifacts
+      # in release.yml. macOS bundling is UNSIGNED on purpose (FD-22, D-13): signing is
+      # human-only and decided at the public flip.
+      - name: Build and bundle
+        run: pnpm tauri build --debug
+
+      # Reality fix (Phase 7, found reviewing this run's own log): ci-plan.md's path
+      # was `src-tauri/target/debug/bundle/`, copied from a reference project where the
+      # Tauri crate was not a workspace member. This repo's Cargo.toml is a virtual
+      # workspace manifest (members = ["crates/abo-core", "src-tauri"]), so Cargo puts
+      # ALL build output, including the bundle, under the WORKSPACE ROOT's `target/`,
+      # never under `src-tauri/target/`. With the old path the upload step silently
+      # matched zero files (`if-no-files-found: warn` reports success, not failure) and
+      # no artifact was ever produced. Confirmed from the "Build and bundle" step's own
+      # log, which shows the bundle at `<repo-root>\target\debug\bundle\nsis\...`.
+      - name: Upload Windows bundle (inspection only)
+        if: matrix.ga
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-debug-bundle
+          path: target/debug/bundle/

@@ -191,11 +191,11 @@ Release folders are scaffolded via `/jp-release-plan --create vX.Y.Z` when execu
 
 The build does not start until every item is recorded. This is the gate on beginning the spine.
 
-- [ ] FD-15 OSS-landscape timeboxed check (1 hour): survey beets audiobook plugins, ABS community organizers, and standalone renamers; record the outcome (build/reuse decision) in `EXECUTION.md`. The build does not start without this recorded.
+- [x] FD-15 OSS-landscape timeboxed check: recorded 2026-07-03 in `docs/internal/oss-landscape-check.md`. Verdict: build justified (narrowly); no tool subsumes classify-plan-preview-apply-rollback over folder structure with quarantine and a family-safe desktop surface; borrow-list captured for later releases.
 - [x] Prior-work rescue: `folder-structure.md` (jp's historical naming preference), regex recipes, and `WizTree_2026-03-25.csv` rescued to `_local/prior-work/` on 2026-07-03 (audit stream 1 item 2).
-- [ ] `.gitignore` and `.gitattributes` landed now on the docs branch (FD-25): `.gitignore` ignores `_local/`, `.memsearch/`, and tool caches only (works on any machine, not just jp's global excludesfile); `.gitattributes` sets `* text=auto eol=lf` for byte-stable goldens.
-- [ ] `EXECUTION.md` ratified at repo root (governance, autonomy boundary, standing rules, model-tiering per FD-30).
-- [ ] Executive summary approved by jp ("go"), authorizing the full ladder per D-10.
+- [x] `.gitignore` and `.gitattributes` landed on the docs branch (FD-25), merged to main in PR #1 (2026-07-03): `.gitignore` ignores `_local/`, `.memsearch/`, and tool caches only (works on any machine); `.gitattributes` sets `* text=auto eol=lf` for byte-stable goldens.
+- [x] `EXECUTION.md` ratified at repo root with the planning suite (PR #1 merged 2026-07-03).
+- [x] Executive summary approved by jp ("go", 2026-07-03), authorizing the full ladder per D-10.
 
 Note on CI timing (FD-24): live workflow files land in the v0.1.0 spine, NOT in this docs-only branch. A docs-only push must not create a red CI.
 

@@ -1,0 +1,68 @@
+[package]
+name = "abo-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# abo-core is the Tauri-free engine crate (D-01, D-07 engine-first order).
+# The load-bearing invariant, enforced in CI (docs/internal/ci-plan.md lint
+# job): this crate must never depend on `tauri` or any `tauri-*` crate, even
+# transitively. `cargo tree -p abo-core -e normal | grep -i tauri` must stay
+# empty (AC-3).
+#
+# Phase 1 added serde, thiserror, and specta for the stub derives. Phase 2
+# (database) adds sqlx (runtime query API only), tracing, and the AppError
+# Storage family. specta and sqlx pull no tauri dependency (verified by
+# `cargo tree -p abo-core -e normal | grep -i tauri`, which must stay empty,
+# AC-3); only tauri-specta, the glue crate, lives in src-tauri.
+#
+# sqlx uses the RUNTIME query API (sqlx::query / query_as / bind), NEVER the
+# compile-time-checked query! macros, so the build needs no DATABASE_URL and no
+# offline query cache. The `macros` feature is enabled solely for
+# sqlx::migrate! (which lives in sqlx-macros); it does not force use of query!.
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+specta = { workspace = true, features = ["derive"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+# The `log` feature makes every `tracing` event ALSO emit a `log` facade record
+# when no `tracing` Subscriber is installed (which is exactly the shell's setup:
+# tauri-plugin-log is a `log::Log` logger, not a tracing Subscriber). This is the
+# bridge that carries abo-core's scan-lifecycle events into the shell's log file
+# (F-1003). Proven by tests/tracing_log_bridge.rs. Pulls only the tiny `log`
+# facade crate: no tauri, no network, so the core-purity gate stays green.
+tracing = { workspace = true, features = ["log"] }
+
+# Phase 3 (scanner) adds walkdir for the recursive traversal (F-101). walkdir
+# pulls only same-file + winapi-util (no tauri, no network), so the core-purity
+# gate (`cargo tree -p abo-core -e normal | grep -i tauri`) stays empty. Windows
+# extended-length (`\\?\`) semantics and the reparse-point check are handled with
+# std (`std::fs::canonicalize`, `std::os::windows::fs::MetadataExt`) plus two
+# documented `FILE_ATTRIBUTE_*` constants, so no winapi/windows-sys direct dep is
+# added. ISO-8601 timestamps are hand-formatted (Hinnant civil-from-days), so the
+# core still carries no chrono/time dependency (migration 0001 comment).
+walkdir = "2"
+
+# tokio is a TEST-ONLY dependency: the library's async fns run on whatever
+# runtime the caller (the shell) provides, and sqlx's runtime integration is
+# pulled via its `runtime-tokio` feature. Tests need the `#[tokio::test]` macro
+# (the `macros` + `rt` features) and a runtime; it inherits the workspace
+# `full` feature set, which is a superset of those. tempfile backs the temp-dir
+# tests. serde_json backs the error-taxonomy serialization tests only.
+[dev-dependencies]
+tokio = { workspace = true }
+tempfile = "3"
+serde_json = { workspace = true }
+# tests/tracing_log_bridge.rs drives the tracing -> log facade bridge directly,
+# so the integration-test crate names both crates. Integration tests do not
+# inherit the library's normal dependencies (see sqlx below), so they are
+# restated here. `tracing` restates the `log` feature so the bridge is active in
+# the test build as well (features unify with the library's own normal dep).
+tracing = { workspace = true, features = ["log"] }
+# `std` is needed for `log::set_boxed_logger` used by the bridge test.
+log = { version = "0.4", features = ["std"] }
+# The scanner integration tests (tests/scan.rs) hold the SqlitePool returned by
+# open_db and query the scans table directly to prove snapshot immutability
+# (AC-13). Integration tests are separate crates and do not inherit the library's
+# normal dependencies, so sqlx is restated here (feature set matches the lib).
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
