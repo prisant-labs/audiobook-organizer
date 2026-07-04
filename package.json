@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "echo \"lint: stub for v0.1.0 Phase 1; real ESLint config plus the no-raw-invoke rule lands in Phase 5\"",
+    "lint": "eslint .",
     "bindings:check": "cargo test -p abo --test export_bindings && git diff --exit-code -- src/lib/bindings.ts",
     "tauri": "tauri"
   },
@@ -18,12 +18,16 @@
     "react-dom": "19.2.7"
   },
   "devDependencies": {
+    "@eslint/js": "10.0.1",
     "@tauri-apps/api": "2.11.1",
     "@tauri-apps/cli": "2.11.3",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
+    "eslint": "10.5.0",
+    "globals": "17.6.0",
     "typescript": "6.0.3",
+    "typescript-eslint": "8.61.1",
     "vite": "8.0.16"
   }
 }
