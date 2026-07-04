@@ -72,6 +72,7 @@ pub const RULESET_SCHEMA_VERSION: i64 = 1;
 /// makes AC-29 rejection behavior sharp; the writer is always
 /// [`Ruleset::to_body_json`], so a round-trip is lossless.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Ruleset {
     /// Schema version of this body; must equal [`RULESET_SCHEMA_VERSION`].
     pub schema_version: i64,
@@ -86,7 +87,7 @@ pub struct Ruleset {
 /// F-401 naming: which preset renders target paths, and the series-index
 /// zero-pad width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct NamingPolicy {
     /// The shipped preset (default [`Preset::AbsAuthorFirst`], D-02).
     pub preset: Preset,
@@ -181,7 +182,7 @@ pub enum ClutterKind {
 
 /// F-402 structure policies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct StructurePolicy {
     /// Enforce one book per folder (split multi-book folders). Default `true`.
     pub one_book_per_folder: bool,
@@ -201,7 +202,7 @@ pub struct StructurePolicy {
 
 /// F-402/F-302 cleanup toggles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct CleanupPolicy {
     /// Run the F-302 strip-noise pass (ripper tags, bitrate/size markers,
     /// rank/year prefixes, ...). Default `true`.
@@ -409,6 +410,19 @@ pub async fn seed_default_ruleset(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unknown_fields_are_rejected_not_ignored() {
+        // AC-29 sharpness: a body carrying keys outside the schema is
+        // ruleset-invalid, never silently accepted and dropped on rewrite.
+        let mut body: serde_json::Value =
+            serde_json::from_str(&Ruleset::default().to_body_json()).unwrap();
+        body.as_object_mut()
+            .unwrap()
+            .insert("future_field".to_string(), serde_json::json!(true));
+        let err = parse_and_validate(&body.to_string()).unwrap_err();
+        assert_eq!(err.code(), "ruleset-invalid");
+    }
+
     use super::*;
 
     // ---- AC-30: the shipped default ruleset's values. -------------------
