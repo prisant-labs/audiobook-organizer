@@ -80,6 +80,21 @@ pub enum AppError {
     /// this way; this is the DB-side hard-failure end of `run_scan`.
     #[error("scan failed: {detail}")]
     ScanFailed { detail: String },
+
+    /// A WizTree CSV import (F-102) could not fully parse. `row` is the 1-based
+    /// index of the offending data row (the row after the header, preamble
+    /// lines not counted), OR `0` reserved for a file-level/structural failure
+    /// (the file could not be opened, or no WizTree header line was found at
+    /// all) rather than a single bad data row.
+    ///
+    /// Isolated bad data rows (`row >= 1`) are recovered from: the row is
+    /// skipped and the import continues with the rest of the file, so this
+    /// variant surfaces as a per-row record the caller collects rather than as
+    /// a hard `Err` in that case. A wholly invalid file (`row == 0`) IS a hard
+    /// `Err` returned before any `scans` row is written, mirroring
+    /// [`AppError::RootNotFound`]'s before-any-write posture.
+    #[error("CSV row {row} could not be parsed")]
+    CsvParse { row: usize },
 }
 
 impl AppError {
@@ -96,6 +111,7 @@ impl AppError {
             AppError::PermissionDenied { .. } => "permission-denied",
             AppError::JunctionSkipped { .. } => "junction-skipped",
             AppError::ScanFailed { .. } => "scan-failed",
+            AppError::CsvParse { .. } => "csv-parse",
         }
     }
 
@@ -136,6 +152,11 @@ impl AppError {
                  happening, the disk may be full or the app data folder may be on a synced \
                  location (OneDrive); free space or move the app data out of the synced folder."
             }
+            AppError::CsvParse { .. } => {
+                "One or more rows in the WizTree CSV file could not be read. Rows that could be \
+                 read were imported; check that the file is an unmodified WizTree export and try \
+                 again if entries are missing."
+            }
         }
     }
 }
@@ -169,6 +190,7 @@ mod tests {
             AppError::ScanFailed {
                 detail: "database is locked".into(),
             },
+            AppError::CsvParse { row: 42 },
         ]
     }
 
