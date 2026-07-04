@@ -60,6 +60,20 @@ globset = "0.4"
 # (tests/no_network.rs) both stay green.
 regex = "1"
 
+# v0.2.0 Phase 4b (F-304 name normalizer): NFC normalization (AC-304.3) and
+# grapheme-safe word-boundary truncation (AC-304.4). `unicode-normalization`
+# supplies the NFC pass so an NFC and an NFD spelling of the same title
+# collapse to a byte-identical component; `unicode-segmentation` supplies
+# grapheme-cluster iteration so a length cap never splits a multi-code-point
+# grapheme. Both are pure table-driven crates (unicode-normalization pulls
+# only tinyvec; unicode-segmentation pulls nothing): no tauri and no network,
+# so the core-purity gate (`cargo tree -p abo-core -e normal | grep -i tauri`)
+# and the zero-network gate (tests/no_network.rs) both stay green. Pinned to
+# the versions already resolved in Cargo.lock (no pin exists in the reference
+# project E:/Projects/product-on-purpose/repo-sync-tool).
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+
 # v0.2.0 Phase 3 (F-102 WizTree CSV import): WizTree quotes its `File Name`
 # column (many real paths embed commas, see the WizTree_2026-03-25.csv fixture),
 # so a real RFC4180 parser is needed rather than a naive comma split. `csv`
