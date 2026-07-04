@@ -85,6 +85,22 @@ unicode-segmentation = "1"
 # enforcement would otherwise reject every short row.
 csv = "1"
 
+# v0.2.0 Phase 7 (FD-14 tag-quality probe, release gate G-08): lofty reads
+# embedded audio tags (title, artist/author, album, composer/narrator) from real
+# files, READ-ONLY, for the bounded gate probe only. It is OPTIONAL and gated
+# behind the `probe` feature (see [features] below): it is never in the default
+# build, never in the shell, and never on any product code path this release
+# ships - the probe is a measurement instrument for the G-08 verdict, not a
+# runtime feature (embedded-tag extraction as a real feature is F-1101, deferred
+# past v1 per D-15/FD-03). lofty is a pure local metadata parser: it pulls no
+# tauri and no HTTP client (verified WITH the feature enabled by both the
+# core-purity `cargo tree -p abo-core -e normal --features probe | grep -i tauri`
+# check and tests/no_network.rs), so both gates stay green even with `probe` on.
+# EXACT-pinned per the workspace convention (no pin exists in the reference
+# project E:/Projects/product-on-purpose/repo-sync-tool) so a silent lofty bump
+# cannot change what the recorded FD-14 verdict was measured against.
+lofty = { version = "=0.24.0", optional = true }
+
 # v0.2.0 Phase 2 (FD-19 LongPathsEnabled detection): read the registry value
 # HKLM SYSTEM\CurrentControlSet\Control\FileSystem LongPathsEnabled to decide
 # whether a warning is warranted when a recorded path exceeds the legacy 260-char
@@ -100,6 +116,18 @@ winreg = "0.52"
 # automatically for `cargo test -p abo-core`, including integration tests
 # under tests/*.rs, without any caller needing to pass --features.
 fixtures = []
+
+# v0.2.0 Phase 7: gates the `probe` module (the FD-14 tag-quality probe) and its
+# only dependency, lofty. Off by default and DELIBERATELY NOT auto-enabled by the
+# self dev-dependency below: the default `cargo test -p abo-core` and
+# `cargo test --workspace` stay lofty-free and lean, and the FD-14 probe is
+# opt-in via `cargo test -p abo-core --features probe`. The one integration test
+# that consumes it (tests/fd14_tag_probe.rs) guards its whole body with
+# `#![cfg(feature = "probe")]`, so it compiles to nothing (no missing-symbol
+# error) in the default no-probe build and for real only under `--features probe`.
+# `dep:lofty` keeps lofty an implementation detail of this feature rather than
+# also exposing an implicit `lofty` feature flag.
+probe = ["dep:lofty"]
 
 # tokio is a TEST-ONLY dependency: the library's async fns run on whatever
 # runtime the caller (the shell) provides, and sqlx's runtime integration is
@@ -143,6 +171,16 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
 # drops insta's optional format features (yaml/json/ron) that would pull extra
 # crates; the goldens use the plain-string `assert_snapshot!` only.
 insta = { version = "=1.43.2", default-features = false }
+
+# v0.2.0 Phase 7 (real-library baseline-delta report, tests/real_library_scan.rs):
+# the ignored real-library test computes DISCOVERY-COMPARABLE per-type noise
+# presence counts (marker appears anywhere in a name, matching how the FD-18
+# 2026-03-25 baselines were derived), distinct from the product's anchored strip
+# passes. regex is already a NORMAL dependency of the crate, but integration
+# tests are separate compilation units that do not inherit normal deps, so it is
+# restated here for that one test. Dev-dependency only: no effect on core purity
+# or the shipped build.
+regex = "1"
 
 # v0.2.0 Phase 4a (F-302 noise strippers): the idempotence property
 # `strip(strip(x)) == strip(x)` (AC-302.2) is a proptest property test over a
