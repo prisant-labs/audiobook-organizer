@@ -39,6 +39,28 @@ pub enum AppError {
     /// one-time family-safe notice, not a blocking error.
     #[error("database was corrupt and has been recovered; prior data preserved at {backup_path}")]
     DbCorruptRecovered { backup_path: String },
+
+    // ---- Scan family (Phase 3: scanner, file typing, snapshot persistence) ----
+    //
+    // Phase 3 seeds the two root-validation codes plus one internal write-path
+    // code. Phase 4 formalizes the rest of the Scan taxonomy (`permission-denied`,
+    // `junction-skipped`, `csv-parse`; architecture Section 7). Note: per-entry
+    // permission-denied and junction events are NOT hard errors here - the scan
+    // records the entry, counts it as skipped on the summary, and continues to
+    // completion (AC-11); only a bad root or a failed DB write aborts a scan.
+    /// The scan root does not exist. Return before any DB row is written.
+    #[error("scan root not found: {path}")]
+    RootNotFound { path: String },
+
+    /// The scan root exists but is not a directory (e.g. a file was chosen).
+    #[error("scan root is not a directory: {path}")]
+    RootNotDirectory { path: String },
+
+    /// An internal failure while writing the snapshot (a SQLite/transaction
+    /// error during the scans/entries write path). The walk itself never fails
+    /// this way; this is the DB-side hard-failure end of `run_scan`.
+    #[error("scan failed: {detail}")]
+    ScanFailed { detail: String },
 }
 
 impl AppError {
@@ -49,6 +71,10 @@ impl AppError {
             // Storage family
             AppError::DbMigrationFailed { .. } => "db-migration-failed",
             AppError::DbCorruptRecovered { .. } => "db-corrupt-recovered",
+            // Scan family
+            AppError::RootNotFound { .. } => "root-not-found",
+            AppError::RootNotDirectory { .. } => "root-not-directory",
+            AppError::ScanFailed { .. } => "scan-failed",
         }
     }
 
@@ -65,6 +91,19 @@ impl AppError {
                 "The app's database was unreadable and has been reset so the app can run. Your \
                  previous data was preserved as a backup in the corrupt-backups folder and can \
                  be recovered manually if needed."
+            }
+            // Scan family
+            AppError::RootNotFound { .. } => {
+                "The folder to scan could not be found. Check that the drive is connected and \
+                 the folder still exists, then choose it again."
+            }
+            AppError::RootNotDirectory { .. } => {
+                "The item chosen to scan is a file, not a folder. Choose a folder to scan."
+            }
+            AppError::ScanFailed { .. } => {
+                "The scan could not be saved. Restart the app and try again. If this keeps \
+                 happening, the disk may be full or the app data folder may be on a synced \
+                 location (OneDrive); free space or move the app data out of the synced folder."
             }
         }
     }
@@ -83,6 +122,15 @@ mod tests {
             },
             AppError::DbCorruptRecovered {
                 backup_path: "C:/x/corrupt-backups/abo-1.db".into(),
+            },
+            AppError::RootNotFound {
+                path: r"C:\Users\x\missing".into(),
+            },
+            AppError::RootNotDirectory {
+                path: r"C:\Users\x\a-file.txt".into(),
+            },
+            AppError::ScanFailed {
+                detail: "database is locked".into(),
             },
         ]
     }
