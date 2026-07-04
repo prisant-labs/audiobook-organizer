@@ -14,8 +14,11 @@
 //! The engine here is Tauri-free and does no network I/O; the `src-tauri` shell
 //! wires jobs and the `job:completed` event around [`run_scan`] in Phases 5-6.
 
+pub mod exclude;
+pub mod longpath;
 pub mod persist;
 pub mod typing;
 pub mod walk;
 
-pub use persist::{get_scan_entries, run_scan};
+pub use exclude::ExcludeSet;
+pub use persist::{get_scan_entries, run_scan, run_scan_with_job, ScanOutcome};

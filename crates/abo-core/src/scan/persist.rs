@@ -22,20 +22,79 @@ use sqlx::SqlitePool;
 
 use crate::error::AppError;
 use crate::ipc::{EntryRow, ScanSummary};
+use crate::job::JobContext;
 use crate::paths::{strip_extended_length_prefix, to_extended_length};
-use crate::scan::walk::{self, WalkOutcome, WalkedEntry};
+use crate::scan::exclude::ExcludeSet;
+use crate::scan::longpath;
+use crate::scan::walk::{self, WalkOutcome, WalkStatus, WalkedEntry};
 
-/// Run a live scan of `root`: validate the root, record a `running` snapshot,
-/// walk the tree (F-101) typing each file (F-103), bulk-insert the entries with
-/// correct parent linkage, and finalize the snapshot as `completed` (F-105).
+/// The terminal result of [`run_scan_with_job`]: either a completed snapshot or a
+/// cancellation that discarded its partial work.
 ///
-/// Returns the [`ScanSummary`] for the snapshot written. Errors:
-/// [`AppError::RootNotFound`] / [`AppError::RootNotDirectory`] before any row is
-/// written when the root is bad, and [`AppError::ScanFailed`] if the database
-/// write path fails. Per-entry permission-denied and junction cases are NOT
-/// errors - they are recorded and counted in [`ScanSummary::skipped_count`], and
-/// the scan runs to completion (AC-11).
+/// Cancellation is NOT modeled as an [`AppError`]: it is a cooperative, expected
+/// outcome (FD-02), so it flows as a distinct success-side variant rather than an
+/// error the taxonomy would have to name. The shell maps it to a `cancelled`
+/// `jobs`-row state via the single `run_job_to_terminal` termination path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScanOutcome {
+    /// The scan finished; carries the full [`ScanSummary`].
+    Completed(ScanSummary),
+    /// The scan was cancelled at an entry boundary. The partial snapshot was
+    /// DISCARDED (no `entries` rows were written); the `scans` row exists and was
+    /// marked `cancelled`. `scan_id` is that row's id, kept so the caller can
+    /// correlate the cancellation to the row.
+    Cancelled { scan_id: i64 },
+}
+
+/// Run a plain live scan of `root` (no excludes, no cancellation, no progress).
+///
+/// A thin wrapper over [`run_scan_with_job`] with an empty exclude list and an
+/// inert [`JobContext`], preserved for callers and tests that want the simple
+/// path. Because an inert context can never be cancelled, this always returns a
+/// completed [`ScanSummary`] (or an error).
 pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, AppError> {
+    match run_scan_with_job(pool, root, &[], &JobContext::inert()).await? {
+        ScanOutcome::Completed(summary) => Ok(summary),
+        // Unreachable: an inert JobContext holds a fresh, un-cancellable flag, so
+        // the walk can never report WalkStatus::Cancelled on this path.
+        ScanOutcome::Cancelled { scan_id } => Err(AppError::ScanFailed {
+            detail: format!(
+                "internal invariant: run_scan (inert context) observed a cancellation \
+                 for scan {scan_id}"
+            ),
+        }),
+    }
+}
+
+/// Run a live scan of `root` under the job model (F-101 + F-104): validate the
+/// root, record a `running` snapshot, walk the tree honoring `excludes` and
+/// `ctx` (cancellation + progress), bulk-insert the entries with correct parent
+/// linkage, finalize the snapshot as `completed`, and attach the FD-19 long-path
+/// warnings (F-105).
+///
+/// Returns [`ScanOutcome::Completed`] with the [`ScanSummary`], or
+/// [`ScanOutcome::Cancelled`] when `ctx` was cancelled at an entry boundary.
+///
+/// **Cancel semantics (the decision-gate contract, AC-104.2/104.3).** A cancelled
+/// scan DISCARDS its partial snapshot: the walk stops between entries, NO
+/// `entries` rows are ever written (they persist only after a full walk, in one
+/// atomic transaction), and the `scans` row is marked `cancelled`. There is thus
+/// no such thing as a torn or half-complete snapshot from a cancel; the discarded
+/// row is inert history, distinct from a `completed` one. (A `failed` scans row,
+/// by contrast, marks a DB-write failure, not a user cancel.)
+///
+/// Errors: [`AppError::RootNotFound`] / [`AppError::RootNotDirectory`] before any
+/// row is written when the root is bad; [`AppError::ScanFailed`] for an invalid
+/// exclude pattern (before any row is written) or a database write failure.
+/// Per-entry permission-denied and junction cases are NOT errors - they are
+/// recorded, counted in [`ScanSummary::skipped_count`], and surfaced as
+/// [`ScanSummary::warnings`]; the scan runs to completion (AC-11).
+pub async fn run_scan_with_job(
+    pool: &SqlitePool,
+    root: &Path,
+    excludes: &[String],
+    ctx: &JobContext,
+) -> Result<ScanOutcome, AppError> {
     // ---- Validate the root before touching the database ----
     let root_display = root.display().to_string();
     let md = std::fs::metadata(root).map_err(|_| AppError::RootNotFound {
@@ -44,6 +103,12 @@ pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, App
     if !md.is_dir() {
         return Err(AppError::RootNotDirectory { path: root_display });
     }
+
+    // Compile excludes up front: an invalid pattern is a caller/config error and
+    // fails the scan before any snapshot row is written.
+    let exclude_set = ExcludeSet::compile(excludes).map_err(|detail| AppError::ScanFailed {
+        detail: format!("scan not started: {detail}"),
+    })?;
 
     // Normalize to the extended-length walk root (Windows `\\?\`), and derive the
     // stored (prefix-free) root path for the `scans` row.
@@ -58,11 +123,25 @@ pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, App
     // ---- Record the running snapshot ----
     let scan_id = insert_running_scan(pool, &stored_root, &started_at).await?;
 
-    // ---- Walk (never aborts; edge cases become skips) ----
+    // ---- Walk (never aborts on per-entry errors; may stop early on cancel) ----
     let WalkOutcome {
         entries,
         skipped_count,
-    } = walk::walk(&normalized_root);
+        mut warnings,
+        status,
+    } = walk::walk_with_job(&normalized_root, &exclude_set, ctx);
+
+    // Cancel: DISCARD the partial snapshot. No entries are persisted; the running
+    // scans row is marked `cancelled` (best-effort) so it is inert history, not a
+    // phantom `running` row (AC-104.2/104.3).
+    if status == WalkStatus::Cancelled {
+        mark_scan_cancelled(pool, scan_id).await;
+        tracing::info!(
+            scan_id,
+            "scan: cancelled at an entry boundary; partial snapshot discarded"
+        );
+        return Ok(ScanOutcome::Cancelled { scan_id });
+    }
 
     // From here on, the `scans` row exists. Any failure below must not leave it
     // stranded as status='running' forever (a phantom snapshot): on error, mark
@@ -76,6 +155,20 @@ pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, App
             }
         };
 
+    // Attach the FD-19 long-path warnings, which need the completed entry list
+    // and the OS setting (AC-101.4). Junction/permission warnings were collected
+    // during the walk; long-path warnings are appended here.
+    let long_paths_enabled = longpath::long_paths_enabled();
+    warnings.extend(longpath::long_path_warnings(long_paths_enabled, &entries));
+
+    if !warnings.is_empty() {
+        tracing::warn!(
+            scan_id,
+            warning_count = warnings.len(),
+            "scan: completed with warnings (junctions/permission/long-path)"
+        );
+    }
+
     tracing::info!(
         scan_id,
         entry_count,
@@ -84,7 +177,7 @@ pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, App
         "scan: completed"
     );
 
-    Ok(ScanSummary {
+    Ok(ScanOutcome::Completed(ScanSummary {
         scan_id,
         root_path: stored_root,
         entry_count,
@@ -93,7 +186,8 @@ pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, App
         started_at,
         completed_at,
         status: "completed".to_string(),
-    })
+        warnings,
+    }))
 }
 
 /// Bulk-insert `entries` for `scan_id` in one transaction (linking parents),
@@ -223,6 +317,29 @@ async fn mark_scan_failed(pool: &SqlitePool, scan_id: i64) {
     }
 }
 
+/// Best-effort mark a `scans` row as `status = 'cancelled'` after the walk was
+/// stopped by a cancellation at an entry boundary. No `entries` rows were
+/// written (the partial snapshot is discarded), so the `cancelled` row is inert
+/// history: distinct from a `completed` snapshot (which has entries) and from a
+/// `failed` one (a DB-write failure). See [`run_scan_with_job`]'s cancel-semantics
+/// contract.
+///
+/// Deliberately best-effort like [`mark_scan_failed`]: it runs on the way out of
+/// a cancelled scan, so a secondary DB error here is logged, not propagated.
+async fn mark_scan_cancelled(pool: &SqlitePool, scan_id: i64) {
+    let result = sqlx::query("UPDATE scans SET status = 'cancelled' WHERE id = ?")
+        .bind(scan_id)
+        .execute(pool)
+        .await;
+    if let Err(e) = result {
+        tracing::error!(
+            scan_id,
+            error = %e,
+            "scan: failed to mark cancelled scans row"
+        );
+    }
+}
+
 /// Map a SQLite/transaction error into the Scan-family hard-failure code.
 fn scan_failed(e: sqlx::Error) -> AppError {
     AppError::ScanFailed {
@@ -276,6 +393,88 @@ mod tests {
     async fn mark_scan_failed_on_missing_row_does_not_panic() {
         let (_dir, pool) = fresh_pool().await;
         mark_scan_failed(&pool, 999_999).await;
+    }
+
+    /// Count `entries` rows persisted for a given scan id.
+    async fn entry_count_for(pool: &SqlitePool, scan_id: i64) -> i64 {
+        let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM entries WHERE scan_id = ?")
+            .bind(scan_id)
+            .fetch_one(pool)
+            .await
+            .expect("count entries");
+        n
+    }
+
+    /// AC-104.2/104.3: a scan cancelled at an entry boundary DISCARDS its partial
+    /// snapshot - the `scans` row is marked `cancelled` and NO `entries` rows are
+    /// written - while a readable tree that the walk had begun to enumerate is
+    /// simply dropped. The cancel is driven from the progress sink (flip the flag
+    /// after the first reported entry), so it stops mid-walk, not before it began.
+    #[tokio::test]
+    async fn cancelled_scan_discards_snapshot() {
+        use crate::job::{CancelFlag, JobContext, ProgressUpdate};
+        use std::sync::Arc;
+
+        let (_db, pool) = fresh_pool().await;
+
+        // A small tree with enough entries that a cancel after entry #1 leaves
+        // real un-walked entries behind.
+        let tree = TempDir::new().expect("scan tree tempdir");
+        for i in 0..5 {
+            let sub = tree.path().join(format!("dir{i}"));
+            std::fs::create_dir(&sub).unwrap();
+            std::fs::write(sub.join("book.m4b"), b"audio").unwrap();
+        }
+
+        let cancel = CancelFlag::new();
+        let sink_cancel = cancel.clone();
+        // Cancel as soon as the first entry is reported; the next boundary stops.
+        let progress = Arc::new(move |_u: ProgressUpdate| {
+            sink_cancel.cancel();
+        });
+        let ctx = JobContext::new(cancel, progress);
+
+        let outcome = run_scan_with_job(&pool, tree.path(), &[], &ctx)
+            .await
+            .expect("scan runs");
+
+        let scan_id = match outcome {
+            ScanOutcome::Cancelled { scan_id } => scan_id,
+            other => panic!("expected Cancelled, got {other:?}"),
+        };
+        assert_eq!(
+            scan_status(&pool, scan_id).await,
+            "cancelled",
+            "the scans row must be marked cancelled"
+        );
+        assert_eq!(
+            entry_count_for(&pool, scan_id).await,
+            0,
+            "a cancelled scan writes no entries (partial snapshot discarded)"
+        );
+    }
+
+    /// A scan whose exclude pattern is invalid fails cleanly with ScanFailed
+    /// before any `scans` row is written (an invalid glob is a config error).
+    #[tokio::test]
+    async fn invalid_exclude_pattern_fails_before_writing() {
+        use crate::job::JobContext;
+
+        let (_db, pool) = fresh_pool().await;
+        let tree = TempDir::new().expect("scan tree tempdir");
+
+        let result =
+            run_scan_with_job(&pool, tree.path(), &["[".to_string()], &JobContext::inert()).await;
+        assert!(
+            matches!(result, Err(AppError::ScanFailed { .. })),
+            "an invalid exclude glob must fail with ScanFailed, got {result:?}"
+        );
+
+        let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM scans")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "no scans row is written for an invalid exclude");
     }
 
     /// End-to-end (real mid-scan failure): drop the `entries` table after the

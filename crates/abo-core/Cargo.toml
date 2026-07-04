@@ -43,6 +43,21 @@ tracing = { workspace = true, features = ["log"] }
 # core still carries no chrono/time dependency (migration 0001 comment).
 walkdir = "2"
 
+# v0.2.0 Phase 2 (F-101 exclude patterns, the minimal ruleset scope for this
+# release): globset compiles the caller-supplied exclude glob strings into a
+# matcher. Pure (aho-corasick + regex-automata + regex-syntax), no tauri and no
+# network, so the core-purity gate (`cargo tree -p abo-core -e normal | grep -i
+# tauri`) and the zero-network gate (tests/no_network.rs) both stay green.
+globset = "0.4"
+
+# v0.2.0 Phase 2 (FD-19 LongPathsEnabled detection): read the registry value
+# HKLM SYSTEM\CurrentControlSet\Control\FileSystem LongPathsEnabled to decide
+# whether a warning is warranted when a recorded path exceeds the legacy 260-char
+# limit. Windows-only (POSIX has no MAX_PATH), pulls only windows-sys, no tauri
+# and no network, so both gates stay green.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
 [features]
 # v0.2.0 Phase 1: gates the `fixtures` module (see src/fixtures/mod.rs doc
 # comment). Off by default so the fixture generator never reaches the

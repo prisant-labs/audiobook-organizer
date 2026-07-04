@@ -17,6 +17,11 @@ use tauri_specta::Event;
 
 use abo_core::ipc::{JobCompletedPayload, JobFailedPayload, JobProgressPayload};
 
+// Re-emit note: `job:progress` is now genuinely emitted (F-104), unlike the
+// v0.1.0 spine where it was frozen-but-never-emitted. The event, payload, and
+// wire name are unchanged, so the generated bindings surface is unperturbed;
+// only the emitter below is new.
+
 /// Typed `job:completed` event, emitted when a spawned scan finishes cleanly.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Event)]
 #[tauri_specta(event_name = "job:completed")]
@@ -52,6 +57,26 @@ pub fn emit_job_failed(app: &AppHandle, job_id: i64, code: &str) {
     let _ = JobFailed(JobFailedPayload {
         job_id,
         code: code.to_string(),
+    })
+    .emit(app);
+}
+
+/// Emit `job:progress` for a running scan (F-104), carrying the units done so
+/// far, the best-known total (`None` while indeterminate), and a short label
+/// (the current path). Best-effort, like [`emit_job_completed`]: a dropped
+/// progress event (for example before the webview exists) never fails the scan.
+pub fn emit_job_progress(
+    app: &AppHandle,
+    job_id: i64,
+    done: i64,
+    total_estimate: Option<i64>,
+    current_label: &str,
+) {
+    let _ = JobProgress(JobProgressPayload {
+        job_id,
+        done,
+        total_estimate,
+        current_label: current_label.to_string(),
     })
     .emit(app);
 }

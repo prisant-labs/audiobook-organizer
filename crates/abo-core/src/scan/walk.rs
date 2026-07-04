@@ -16,14 +16,23 @@
 //!   strict prefix of each descendant), which the persistence layer relies on to
 //!   assign `parent_id` in a single pass.
 //!
-//! - **Edge handling (AC-11).** `follow_links(false)` means symlinks and
-//!   directory junctions are never followed, so a junction loop terminates. Such
-//!   a reparse point is still RECORDED (as a `dir` entry) - it just is not
-//!   descended into. An explicit `FILE_ATTRIBUTE_REPARSE_POINT` check on Windows
-//!   is the belt-and-suspenders that also stops descent into the rare non-symlink
+//! - **Edge handling (AC-11, AC-101.2/101.3).** `follow_links(false)` means
+//!   symlinks and directory junctions are never followed, so a junction loop
+//!   terminates. Such a reparse point is still RECORDED (as a `dir` entry) and
+//!   draws a `junction-skipped` [`ScanWarning`] - it just is not descended into.
+//!   An explicit `FILE_ATTRIBUTE_REPARSE_POINT` check on Windows is the
+//!   belt-and-suspenders that also stops descent into the rare non-symlink
 //!   reparse directory. A permission-denied (or otherwise unstatable) subtree is
-//!   recorded where possible and counted in [`WalkOutcome::skipped_count`]; the
-//!   walk always runs to completion, never aborting.
+//!   recorded where possible, counted in [`WalkOutcome::skipped_count`], and
+//!   draws a `permission-denied` [`ScanWarning`]; the walk always runs to
+//!   completion, never aborting.
+//!
+//! - **Job model (F-104).** [`walk_with_job`] threads a [`JobContext`]: it polls
+//!   cancellation at the boundary between entries only (never mid-entry, so no
+//!   torn snapshot is possible) and reports monotonic progress after each
+//!   recorded entry. It also honors an [`ExcludeSet`] of glob patterns, pruning
+//!   matched entries (and, for directories, their subtrees). [`walk`] is the
+//!   plain wrapper with no excludes and an inert context.
 //!
 //! - **Timestamps.** `mtime` is ISO-8601 UTC, whole-second precision (e.g.
 //!   `2026-07-04T12:34:56Z`), hand-formatted so the core carries no chrono/time
@@ -34,7 +43,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use walkdir::WalkDir;
 
+use crate::ipc::ScanWarning;
+use crate::job::{JobContext, ProgressUpdate};
 use crate::paths::strip_extended_length_prefix;
+use crate::scan::exclude::ExcludeSet;
 use crate::scan::typing::{classify_path, FileClass};
 
 /// Whether a walked entry is a file or a directory. Reparse points / junctions
@@ -80,10 +92,25 @@ pub struct WalkedEntry {
     pub depth: usize,
 }
 
-/// The result of a walk: the deterministic, path-sorted entry list plus the
-/// count of entries/subtrees skipped because of errors (permission-denied,
-/// unstatable). The walk never aborts; a bad root is rejected by the caller
-/// (`run_scan`) before the walk starts.
+/// Whether a walk ran to completion or was stopped early by a cancellation
+/// request observed at a safe boundary (AC-104.2/104.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WalkStatus {
+    /// The walk enumerated the whole (non-excluded) tree.
+    #[default]
+    Completed,
+    /// A cancellation was observed at an entry boundary and the walk stopped.
+    /// The entries collected so far are partial and the caller
+    /// ([`crate::scan::run_scan_with_job`]) DISCARDS them (never persists).
+    Cancelled,
+}
+
+/// The result of a walk: the deterministic, path-sorted entry list; the count of
+/// entries/subtrees skipped because of errors (permission-denied, unstatable);
+/// the structured [`ScanWarning`] records collected during the walk
+/// (junction-skipped, permission-denied); and whether the walk completed or was
+/// cancelled. The walk never aborts on a per-entry error; a bad root is rejected
+/// by the caller (`run_scan`) before the walk starts.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WalkOutcome {
     /// Every recorded entry, sorted by stored path (parent-before-child).
@@ -91,6 +118,14 @@ pub struct WalkOutcome {
     /// Entries/subtrees that could not be fully traversed (recorded where
     /// possible, then skipped); surfaced on `ScanSummary.skipped_count`.
     pub skipped_count: u64,
+    /// Structured non-fatal conditions recorded during the walk: one
+    /// `junction-skipped` per recorded junction/reparse point, one
+    /// `permission-denied` per unreadable subtree. Long-path warnings are added
+    /// later by the caller (they need the completed entry list and the OS
+    /// setting). Empty for a clean walk.
+    pub warnings: Vec<ScanWarning>,
+    /// Whether the walk completed or was cancelled at a safe boundary.
+    pub status: WalkStatus,
 }
 
 // Windows file-attribute bits used for the reparse-point / directory checks.
@@ -102,31 +137,80 @@ const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
 
 /// Walk `normalized_root` (already extended-length on Windows) and return the
-/// sorted entries plus the skip count.
+/// sorted entries plus the skip count. No excludes, no cancellation, and no
+/// progress: the plain traversal used by the fixture harness self-test and by
+/// [`crate::scan::run_scan`]. Equivalent to [`walk_with_job`] with an empty
+/// exclude set and an inert [`JobContext`].
 ///
 /// The root itself is recorded as the depth-0 entry, so the returned tree is
 /// self-contained and every non-root entry has a parent inside the set.
 pub fn walk(normalized_root: &Path) -> WalkOutcome {
+    walk_with_job(normalized_root, &ExcludeSet::empty(), &JobContext::inert())
+}
+
+/// Walk `normalized_root`, honoring exclude globs, cancellation, and progress.
+///
+/// This is the hardened F-101 / F-104 traversal:
+///
+/// - **Excludes (F-101 ruleset scope).** A non-root entry matching `excludes` is
+///   not recorded; if it is a directory its whole subtree is pruned.
+/// - **Junctions/reparse points (AC-101.2).** `follow_links(false)` means they
+///   are never descended into (a junction loop terminates); each is RECORDED as
+///   an entry AND draws a `junction-skipped` [`ScanWarning`].
+/// - **Permission-denied (AC-101.3).** An unreadable subtree is counted in
+///   `skipped_count` and draws a `permission-denied` [`ScanWarning`]; the walk
+///   never aborts.
+/// - **Cancellation (AC-104.2/104.3).** `ctx.is_cancelled()` is polled only at
+///   the boundary between entries; when set, the walk stops with
+///   [`WalkStatus::Cancelled`], never mid-entry.
+/// - **Progress (AC-104.1).** After each recorded entry, `ctx.report` fires with
+///   a monotonically non-decreasing `done` count, an unknown total, and the
+///   current path.
+pub fn walk_with_job(
+    normalized_root: &Path,
+    excludes: &ExcludeSet,
+    ctx: &JobContext,
+) -> WalkOutcome {
     let mut entries: Vec<WalkedEntry> = Vec::new();
     let mut skipped_count: u64 = 0;
+    let mut warnings: Vec<ScanWarning> = Vec::new();
+    let mut status = WalkStatus::Completed;
 
     let mut it = WalkDir::new(normalized_root)
         .follow_links(false)
         .into_iter();
 
     loop {
+        // Safe cancellation boundary: BETWEEN entries only, so a cancel never
+        // interrupts the recording of an entry mid-flight (AC-104.3).
+        if ctx.is_cancelled() {
+            status = WalkStatus::Cancelled;
+            break;
+        }
+
         let next = match it.next() {
             None => break,
             Some(item) => item,
         };
         match next {
             Ok(entry) => {
+                let file_type = entry.file_type();
+
+                // Excludes: drop a matched non-root entry (and prune its subtree
+                // if it is a directory) before it is recorded. The root (depth 0)
+                // is never excluded.
+                if entry.depth() > 0 && excludes.is_excluded(normalized_root, entry.path()) {
+                    if file_type.is_dir() {
+                        it.skip_current_dir();
+                    }
+                    continue;
+                }
+
                 // walkdir metadata with follow_links(false) is symlink metadata,
                 // so a junction reports its own attributes (reparse + directory),
                 // not its target's. May fail under a permission deny; then we
                 // still record the entry from its (readdir-provided) file type.
                 let meta = entry.metadata().ok();
-                let file_type = entry.file_type();
 
                 #[cfg(windows)]
                 let (is_reparse, dir_attr) = {
@@ -142,6 +226,14 @@ pub fn walk(normalized_root: &Path) -> WalkOutcome {
                         None => (false, false),
                     }
                 };
+                #[cfg(not(windows))]
+                let is_reparse = false;
+
+                // A junction / symlink / reparse point: recorded, never followed.
+                // On Windows `is_symlink()` is true for junctions and the reparse
+                // attribute is the belt-and-suspenders; on other platforms a
+                // symlink is the only reparse-like case.
+                let is_link = file_type.is_symlink() || is_reparse;
 
                 let kind = if file_type.is_file() {
                     EntryKind::File
@@ -180,14 +272,28 @@ pub fn walk(normalized_root: &Path) -> WalkOutcome {
                     .as_ref()
                     .and_then(|m| m.modified().ok().map(system_time_to_iso8601));
 
+                // A recorded junction/reparse point draws its warning (AC-101.2).
+                if is_link {
+                    warnings.push(ScanWarning::junction_skipped(&stored_path));
+                }
+
                 entries.push(WalkedEntry {
-                    path: stored_path,
+                    path: stored_path.clone(),
                     name,
                     kind,
                     file_class,
                     size,
                     mtime,
                     depth: entry.depth(),
+                });
+
+                // Progress at the entry boundary: done is the count recorded so
+                // far (monotonically non-decreasing), total unknown on a first
+                // walk, label is the current path (AC-104.1).
+                ctx.report(ProgressUpdate {
+                    done: entries.len() as u64,
+                    total_estimate: None,
+                    current_label: stored_path.to_string_lossy().into_owned(),
                 });
 
                 // Defensive descent guard for a directory reparse point that is
@@ -205,8 +311,13 @@ pub fn walk(normalized_root: &Path) -> WalkOutcome {
                 // an unstatable entry). walkdir has usually already yielded the
                 // directory entry itself via its parent's listing, so the entry
                 // is recorded; this Err just means its children are unreadable.
-                // Record the skip and keep going - the scan never aborts (AC-11).
+                // Record the skip AND a structured warning, then keep going - the
+                // scan never aborts (AC-11, AC-101.3).
                 skipped_count += 1;
+                if let Some(path) = err.path() {
+                    let stored = strip_extended_length_prefix(path);
+                    warnings.push(ScanWarning::permission_denied(&stored));
+                }
                 tracing::warn!(
                     path = ?err.path(),
                     error = %err,
@@ -224,6 +335,8 @@ pub fn walk(normalized_root: &Path) -> WalkOutcome {
     WalkOutcome {
         entries,
         skipped_count,
+        warnings,
+        status,
     }
 }
 
@@ -300,5 +413,119 @@ mod tests {
     fn entry_kind_strings() {
         assert_eq!(EntryKind::File.as_str(), "file");
         assert_eq!(EntryKind::Dir.as_str(), "dir");
+    }
+
+    // ---- Job-model behavior (F-104), cross-platform ----
+
+    use crate::job::{CancelFlag, JobContext, ProgressUpdate};
+    use crate::scan::exclude::ExcludeSet;
+    use std::fs;
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
+
+    /// Build a small readable tree: `root/{dir0,dir1,dir2}/book.m4b`.
+    fn small_tree() -> TempDir {
+        let tree = TempDir::new().expect("tempdir");
+        for i in 0..3 {
+            let sub = tree.path().join(format!("dir{i}"));
+            fs::create_dir(&sub).unwrap();
+            fs::write(sub.join("book.m4b"), b"audio").unwrap();
+        }
+        tree
+    }
+
+    /// AC-104.1: progress `done` is monotonically non-decreasing across a walk,
+    /// the final value equals the entry count, and the total estimate is unknown
+    /// (None) on a first walk.
+    #[test]
+    fn progress_is_monotonic_with_unknown_total() {
+        let tree = small_tree();
+        let seen: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+        let totals_all_none = Arc::new(Mutex::new(true));
+
+        let sink_seen = seen.clone();
+        let sink_totals = totals_all_none.clone();
+        let ctx = JobContext::new(
+            CancelFlag::new(),
+            Arc::new(move |u: ProgressUpdate| {
+                sink_seen.lock().unwrap().push(u.done);
+                if u.total_estimate.is_some() {
+                    *sink_totals.lock().unwrap() = false;
+                }
+            }),
+        );
+
+        let normalized = crate::paths::to_extended_length(tree.path());
+        let outcome = walk_with_job(&normalized, &ExcludeSet::empty(), &ctx);
+        assert_eq!(outcome.status, WalkStatus::Completed);
+
+        let reported = seen.lock().unwrap().clone();
+        assert!(!reported.is_empty(), "progress must fire at least once");
+        for pair in reported.windows(2) {
+            assert!(
+                pair[1] >= pair[0],
+                "progress must be non-decreasing: {reported:?}"
+            );
+        }
+        assert_eq!(
+            *reported.last().unwrap(),
+            outcome.entries.len() as u64,
+            "final progress equals the entry count"
+        );
+        assert!(
+            *totals_all_none.lock().unwrap(),
+            "total_estimate must be None on a first walk"
+        );
+    }
+
+    /// AC-104.2/104.3: a cancel observed at an entry boundary stops the walk with
+    /// WalkStatus::Cancelled and fewer entries than a full walk would record.
+    #[test]
+    fn cancel_at_boundary_stops_the_walk() {
+        let tree = small_tree();
+        let normalized = crate::paths::to_extended_length(tree.path());
+
+        // Full walk for the baseline count.
+        let full = walk_with_job(&normalized, &ExcludeSet::empty(), &JobContext::inert());
+        assert_eq!(full.status, WalkStatus::Completed);
+        let full_count = full.entries.len();
+        assert!(full_count >= 4, "tree should have several entries");
+
+        // Cancel after the first reported entry.
+        let cancel = CancelFlag::new();
+        let sink_cancel = cancel.clone();
+        let ctx = JobContext::new(
+            cancel,
+            Arc::new(move |_u: ProgressUpdate| sink_cancel.cancel()),
+        );
+        let cancelled = walk_with_job(&normalized, &ExcludeSet::empty(), &ctx);
+        assert_eq!(cancelled.status, WalkStatus::Cancelled);
+        assert!(
+            cancelled.entries.len() < full_count,
+            "a cancelled walk records fewer entries ({}) than a full walk ({full_count})",
+            cancelled.entries.len()
+        );
+    }
+
+    /// F-101 excludes: a matched directory is pruned with its whole subtree.
+    #[test]
+    fn excludes_prune_a_directory_subtree() {
+        let tree = small_tree();
+        let normalized = crate::paths::to_extended_length(tree.path());
+
+        let excludes = ExcludeSet::compile(&["dir1".to_string()]).expect("compile");
+        let outcome = walk_with_job(&normalized, &excludes, &JobContext::inert());
+
+        assert!(
+            !outcome.entries.iter().any(|e| e.name == "dir1"),
+            "the excluded directory must not be recorded"
+        );
+        // Its child is pruned too; the other dirs' children remain.
+        let books = outcome
+            .entries
+            .iter()
+            .filter(|e| e.name == "book.m4b")
+            .count();
+        assert_eq!(books, 2, "only the two non-excluded dirs keep their book");
     }
 }

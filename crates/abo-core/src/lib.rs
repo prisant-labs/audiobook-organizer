@@ -24,6 +24,7 @@
 pub mod db;
 pub mod error;
 pub mod ipc;
+pub mod job;
 pub mod paths;
 pub mod scan;
 
