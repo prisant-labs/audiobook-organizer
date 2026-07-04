@@ -6,16 +6,16 @@ per-class (folders, bytes):
   book               folders=23  bytes=3141000
   series-container   folders=2   bytes=0
   pack-container     folders=8   bytes=0
-  staging            folders=0   bytes=0
+  staging            folders=1   bytes=100000
   mixed              folders=2   bytes=110000
   multi-book-suspect folders=3   bytes=2011000
-  empty              folders=0   bytes=0
-  docs-resources     folders=0   bytes=0
+  empty              folders=1   bytes=0
+  docs-resources     folders=1   bytes=2500
   manual-review      folders=4   bytes=407000
 problems:
   loose-root-books             count=6   unit=files    bytes=712700
   noisy-names                  count=9   unit=folders  bytes=0
   deep-nesting                 count=3   unit=folders  bytes=0
   duplicate-candidate-groups   count=2   unit=groups   bytes=420000
-  empty-folders                count=0   unit=folders  bytes=0
-total-bytes=6381700
+  empty-folders                count=1   unit=folders  bytes=0
+total-bytes=6484200

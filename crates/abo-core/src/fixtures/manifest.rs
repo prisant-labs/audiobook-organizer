@@ -631,6 +631,35 @@ pub fn standard_library_manifest() -> FixtureManifest {
                     ),
                 ],
             ),
+            // ---- Golden-path completeness (P5 concern 2): the three
+            // remaining F-201 leaf classes the manifest otherwise never
+            // exercises directly (staging, docs-resources, empty). ----
+            //
+            // A folder with no files anywhere beneath it: no children at
+            // all, so F-201 rule 5 places it `empty` (AC-201.6).
+            folder_fam("Empty Folder", &[FixtureFamily::EmptyFolder], vec![]),
+            // A folder holding only non-audio content (a pdf and a txt),
+            // no audio anywhere beneath: F-201 rule 5 places it
+            // `docs-resources`.
+            folder_fam(
+                "Docs And Resources",
+                &[FixtureFamily::DocsResourcesOnly],
+                vec![
+                    file("Owner's Manual.pdf", 2_000),
+                    file("read me.txt", 500),
+                ],
+            ),
+            // A staging area: F-201 rule 1 routes a `_sort`-named folder to
+            // `staging` by name alone, regardless of the loose audio files
+            // sitting directly inside it.
+            folder_fam(
+                "_sort",
+                &[FixtureFamily::StagingArea],
+                vec![
+                    file("New Audiobook 1.mp3", 50_000),
+                    file("New Audiobook 2.mp3", 50_000),
+                ],
+            ),
         ],
     }
 }

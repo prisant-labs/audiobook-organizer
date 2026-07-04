@@ -97,6 +97,18 @@ pub enum FixtureFamily {
     /// FD-01 pack-provenance member: a book folder carrying source-pack
     /// membership (see [`crate::fixtures::manifest::PackProvenance`]).
     PackMember,
+    /// A folder with no files anywhere beneath it (not even an empty child
+    /// folder holding a stray file) - the golden-path `empty` class case
+    /// (F-201 rule 5, AC-201.6).
+    EmptyFolder,
+    /// A folder holding only non-audio content (a pdf and a txt here) and no
+    /// audio anywhere beneath - the golden-path `docs-resources` class case
+    /// (F-201 rule 5).
+    DocsResourcesOnly,
+    /// A staging area (`_sort`) holding a couple of loose audio files - the
+    /// golden-path `staging` class case (F-201 rule 1: name alone routes it
+    /// to staging regardless of content).
+    StagingArea,
 }
 
 impl FixtureFamily {
@@ -134,6 +146,9 @@ impl FixtureFamily {
             FixtureFamily::VideoCourseRadioPlay => "video-course-radio-play",
             FixtureFamily::PackShell => "pack-shell",
             FixtureFamily::PackMember => "pack-member",
+            FixtureFamily::EmptyFolder => "empty-folder",
+            FixtureFamily::DocsResourcesOnly => "docs-resources-only",
+            FixtureFamily::StagingArea => "staging-area",
         }
     }
 
@@ -171,6 +186,9 @@ impl FixtureFamily {
         FixtureFamily::VideoCourseRadioPlay,
         FixtureFamily::PackShell,
         FixtureFamily::PackMember,
+        FixtureFamily::EmptyFolder,
+        FixtureFamily::DocsResourcesOnly,
+        FixtureFamily::StagingArea,
     ];
 }
 

@@ -2,6 +2,8 @@
 source: crates/abo-core/tests/classification_golden.rs
 expression: "lines.join(\"\\n\")"
 ---
+Docs And Resources => docs-resources [docs-resources-leaf] {"non_audio_files":2}
+Empty Folder => empty [empty-leaf] {}
 Genre - Business => pack-container [pack-container-collection] {"detected":"genre-shelf","child_folders":2,"book_children":2,"distinct_child_authors":["Chris Dixon","Michael Easter"],"own_author":"Genre"}
 Genre - Business/Chris_Dixon_-_Read_Write_Own => book [book-audio-leaf] {"audio_files":1,"clean_author":"Chris Dixon"}
 Genre - Business/Michael_Easter_-_Scarcity_Brain => book [book-audio-leaf] {"audio_files":1,"clean_author":"Michael Easter"}
@@ -48,3 +50,4 @@ Video Course Cluster/52 Sales Lessons => manual-review [fd17-video-course] {"det
 Video Course Cluster/Comics => manual-review [fd17-comic] {"detected":"comic","comic_files":2}
 Video Course Cluster/Radio Play => manual-review [fd17-radio-play] {"detected":"radio-play","audio_files":2}
 Zero Byte Samples => book [book-audio-leaf] {"audio_files":2}
+_sort => staging [staging-area] {"detected":"staging"}
