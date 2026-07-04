@@ -23,14 +23,27 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { workspace = true }
 
-# Phase 1 (v0.1.0 spine workspace scaffold): a plain Tauri v2 app that boots,
-# with stub command/event modules. No tauri-specta seam yet (that lands in
-# Phase 5, which also adds the tauri-specta and specta dependencies here).
+# Phase 5 (tauri-specta seam): the shell wires the typed IPC contract. All
+# tauri-family + specta crates are EXACT-pinned at the workspace root (AC-17);
+# consumed here via `workspace = true` so a pin flip stays consistent.
 [dependencies]
 tauri = { workspace = true }
+# tauri-specta collects the `#[tauri::command]` + `#[specta::specta]` surface and
+# the typed events, and exports `src/lib/bindings.ts`. `derive` gives the Event
+# derive macro; `typescript` pulls the specta-typescript exporter.
+tauri-specta = { workspace = true, features = ["derive", "typescript"] }
+specta = { workspace = true }
+specta-typescript = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 abo-core = { path = "../crates/abo-core" }
+
+# The shell hosts the async runtime the tauri-specta commands run under and holds
+# the SQLite pool in managed AppState. tokio is that runtime; sqlx provides the
+# SqlitePool type and the minimal `jobs`-row queries scan_start writes. Both are
+# workspace-pinned (sqlx exact-adjacent, tokio caret) and pull no tauri.
+sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+tokio = { workspace = true }
 
 # Structured logging (F-1003): the shell's file+stdout logger. Registered from
 # Rust in `run()`; backend-only, no JS guest package. Captures the `log` facade,
