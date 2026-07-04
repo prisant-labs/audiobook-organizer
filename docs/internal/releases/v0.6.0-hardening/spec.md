@@ -1,0 +1,203 @@
+---
+id: v0.6.0
+title: "Release v0.6.0 (hardening): interruption safety, duplicates, everything view"
+type: spec
+date: 2026-07-03
+status: review
+owner: jprisant
+tier: release-effort
+scope: hardening
+depends_on: v0.5.0-acting
+produced-by: author agent (release spec)
+sources:
+  - _local/planning/feature-function-breakdown_2026-07-02.md
+  - _local/planning/release-plan-and-ci_2026-07-02.md
+  - PRODUCT.md
+  - docs/internal/decision-ledger.md
+  - docs/internal/planning-audit-2026-07-03.md
+source-count: 5
+ac-count: 41
+---
+
+# Spec: Release v0.6.0 (hardening)
+
+## Task Summary
+
+- Status: review (pending jp approval of the planning suite).
+- Release theme: survive the real world - crashes, cancellations, duplicate resolution, ruleset portability, and the full-library review surface.
+- Depends on: v0.5.0-acting (executor, journal + undo manifest, rollback, quarantine, dry-run harness, apply + activity surface).
+- Features in scope: F-606, F-702, F-703, F-704, F-905, F-802, F-501 (redefined), plus long-path battle testing.
+- Open questions: 2 (see Open Questions).
+- Last updated: 2026-07-03.
+
+### AC checklist (all unchecked at review time)
+
+- [ ] AC-1..AC-9 F-606 (interruption safety + resume)
+- [ ] AC-10..AC-16 F-702 (hash verification)
+- [ ] AC-17..AC-22 F-703 (duplicate review + report)
+- [ ] AC-23..AC-27 F-704 (resolution policies)
+- [ ] AC-28..AC-31 F-905 (duplicates surface)
+- [ ] AC-32..AC-35 F-802 (ruleset import/export)
+- [ ] AC-36..AC-39 F-501 (everything view)
+- [ ] AC-40..AC-41 long-path battle testing
+
+## Purpose
+
+v0.5.0 (acting) proved the executor and rollback are correct on fixtures and on copies of real data. It proved correctness under controlled conditions. It did not prove survival: a machine that dies mid-apply, a user who cancels, a library full of duplicate copies that must be resolved by content and not by name, a ruleset that must move between machines, and a full-library change list a tier-1 reviewer wants to read exhaustively. This release closes those gaps so the M-1 (campaign: real-library reorganization) milestone can run against the actual 297 GB tree with confidence. Nothing here adds new pipeline stages; it hardens the stages that already exist and adds the two review surfaces (duplicates, everything view) that a real campaign needs.
+
+## Scope
+
+In scope: F-606 (interruption safety + resume), F-702 (hash verification), F-703 (duplicate review + report), F-704 (resolution policies), F-905 (duplicates surface), F-802 (ruleset import/export), F-501 (everything view, redefined per FD-06 (F-501 redefinition)), and long-path battle testing across the full pipeline. Every feature except F-606 is P1 and carries a descope path; F-606 is P0 and blocks the tag.
+
+## Non-Goals
+
+- No Real (non-dry-run) apply against the actual library. That is the M-1 (campaign) milestone, human-only, and remains out of every software release (D-10 go-scope, D-11 governance).
+- No ABS-side push of duplicate or provenance data (F-1102 (ABS API integration), deferred to v1.1+ per D-14 (provenance in v1)).
+- No hash-everything-on-scan. Hashing is candidates-only, on demand (discovery's explicit anti-pattern honored).
+- No tree drawing as the primary review surface. F-501 is a grouped virtualized list; tree presentation is optional and never blocks the release (D-16 (cards + report primary), FD-06).
+- No new error/empty/loading surface families. F-606 reuses the FD-04 (F-908 error, empty, and loading states) surfaces authored in v0.4.0-seeing.
+
+## Users / Actors
+
+- Tier 1 (jp): runs campaigns, resolves duplicate groups, reads the everything view, imports/exports rulesets, and is the human who chooses resume-or-rollback after an interruption.
+- Tier 2 (household, non-engineers): may review a duplicates result or an everything view; must never see a raw path, journal, or "operation" as the primary interface (PRODUCT.md tier-2 bar, D-03 (audience tiers)).
+- The executor and startup reconciler (system actors) act on the journal without a human present until the resume-or-rollback decision.
+
+## Requirements
+
+Interruption safety (F-606 (interruption safety + resume)) is the load-bearing P0. The journal-before-act invariant from v0.5.0 (F-602 (journal + undo manifest)) guarantees that at most one operation is ever in doubt after a kill: an operation whose `intent` row was flushed but whose `done`/`failed` row was not. On startup the reconciler must verify the actual on-disk outcome of that one operation and repair the journal, then present the human a family-safe resume-or-rollback choice through the FD-04 (F-908 states) surface [S1, decision-ledger FD-04].
+
+Hash verification (F-702 (hash verification)) uses BLAKE3 over candidate members only, as a background job with progress, and gates any set-aside action on a duplicate group behind verified hashes or an explicit user override with a warning confirm [S1, planning audit stream 2 item 15, docs/internal/planning-audit-2026-07-03.md]. Duplicate review (F-703 (duplicate review + report)) and resolution policies (F-704 (resolution policies)) treat the GROUP as the canonical unit: one book, N identical copies; the surface, the nav badge, and the exported report all count groups, and member files are "copies" (FD-08 (group canon)) [S4 decision-ledger FD-08]. The duplicates surface (F-905 (duplicates surface)) hosts F-703. Ruleset import/export (F-802 (ruleset import/export)) makes rulesets portable JSON validated against a versioned schema. The everything view (F-501 (everything view), redefined) is a virtualized full change list grouped by campaign group, a tier-1 disclosure surface, responsive at the full library scale [decision-ledger FD-06]. Long-path battle testing runs the full pipeline over runtime-generated paths beyond 260 characters and verifies the FD-19 detect-and-warn UX [S1, decision-ledger FD-19].
+
+## Acceptance Criteria
+
+### F-606 (interruption safety + resume) - P0
+
+- **AC-1** On startup, if the journal holds `intent` rows with no matching `done`/`failed`, the reconciler identifies exactly one in-doubt operation (the single-writer rule and journal-before-act flush guarantee at most one). [S1 breakdown F-606; S2 gate v0.6.0]
+- **AC-2** For a same-volume rename in doubt, the reconciler determines from disk whether the rename happened (target exists, source gone) or did not (source exists, target absent) and writes the correct terminal journal row. [S1 breakdown F-606]
+- **AC-3** For a cross-volume copy+verify+delete in doubt, the reconciler distinguishes the phase reached by a target-size check and repairs the journal to a coherent terminal state without data loss. [S1 breakdown F-606, F-601]
+- **AC-4** Kill between `intent` and act (operation never started): reconciliation restores the pre-operation state and the job is resumable from that operation. Proven by an automated kill-injection test. [decision-ledger AC additions; S2 gate]
+- **AC-5** Kill between act and `done` (operation completed but unrecorded): reconciliation recognizes the completed operation, records `done`, and resumes from the next operation. Proven by an automated kill-injection test. [decision-ledger AC additions; S2 gate]
+- **AC-6** After reconciliation, the human is offered a resume-or-rollback choice rendered through the FD-04 (F-908 states) surface in plain language, with no raw path or journal shown as the primary content (paths behind "Show file details" per FD-13). [decision-ledger FD-04, FD-13]
+- **AC-7** Choosing rollback runs the inverse plan through the same F-603 (rollback) pipeline; choosing resume continues the original job from the reconciled point. Neither path bypasses validation. [S1 breakdown F-606, F-603]
+- **AC-8** Cancellation of an apply job takes effect only between operations (never mid-file-move); a cancelled apply leaves a coherent, resumable state, verified by an automated test and by a hand walkthrough. [decision-ledger AC additions; S2 gate; F-104 semantics]
+- **AC-9** On an access-denied error during an operation, the executor retries once, then halts the affected campaign group with an `AppError` carrying the FD-19 remediation, leaving the journal coherent (retry-once-then-halt-group). [decision-ledger FD-19]
+
+### F-702 (hash verification) - P1
+
+- **AC-10** Hashing computes BLAKE3 over candidate members only; a full-snapshot or scan-time hash-everything path does not exist. [S1 breakdown F-702; discovery anti-pattern]
+- **AC-11** Hash verification runs as a background job emitting `job:progress` events (items done, total, current file) and is cancellable at safe boundaries (F-104 semantics). [S1 breakdown F-702, F-104]
+- **AC-12** A set-aside (quarantine) action on a duplicate group is permitted only when every member has a verified hash, OR when the user supplies an explicit override confirmed through a warning dialog that states the copies were not content-verified. [decision-ledger scope; planning audit stream 2 item 15]
+- **AC-13** The warning-confirm override is a deliberate two-step affordance (not a default), consistent with the design-system danger token pair (FD-09), and its copy uses plain language ("set aside," never "quarantine"/"delete" as primary vocabulary; FD-10 register). [FD-09, FD-10; PRODUCT.md]
+- **AC-14** Two files with identical basename and size but different content produce distinct hashes and are NOT auto-resolved into one keep/set-aside decision (version candidates, not exact duplicates). [S1 breakdown F-701/F-702]
+- **AC-15** Hash results persist on `duplicate_members` (hash state) so a re-open of the duplicates surface does not re-hash already-verified members. [S1 schema duplicate_groups/members]
+- **AC-16** If hash throughput is unacceptable on real data, the release still ships: the campaign runs dedupe as flag-only and set-aside-by-hash becomes post-campaign work (descope trigger, see Release Gate). [decision-ledger AC additions; S2 Section 5]
+
+### F-703 (duplicate review + report) - P1
+
+- **AC-17** Duplicate candidates are presented grouped: each GROUP is one book with N copies; the surface never conflates groups with copies or "pairs" (FD-08 canon). [decision-ledger FD-08; planning audit stream 2 item 8]
+- **AC-18** Every count shown - nav badge, group headline, report totals - counts GROUPS; member files are labeled "copies"; any GB figure states which quantity it refers to. [decision-ledger FD-08]
+- **AC-19** Review is group-by-group: within a group the user sees each copy with its location behind "Show file details" (FD-13) and the proposed keeper. [S1 breakdown F-703; FD-13]
+- **AC-20** The duplicates report exports as CSV (one row per copy, group key column) and its language counts groups, matching the surface exactly. [S1 breakdown F-703; FD-08]
+- **AC-21** The report and surface use the FD-10 deletion-guarantee register: "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone." Primary vocabulary for a resolved copy is "set aside," not "deleted." [decision-ledger FD-10]
+- **AC-22** Any sample numbers used in mockups or docs are labeled sample data and are not hardcoded into the surface; real counts derive from the scan (FD-27). [decision-ledger FD-27]
+
+### F-704 (resolution policies) - P1
+
+- **AC-23** Four policies are selectable per duplicates run: keep-larger, keep-higher-bitrate, keep-m4b, and flag-only; the default is flag-only. [S1 breakdown F-704; S2 gate]
+- **AC-24** A non-flag-only policy proposes a keeper per group; the user must confirm before any set-aside operation is generated (no silent auto-resolution). [S1 breakdown F-703/F-704]
+- **AC-25** Confirmed resolutions emit set-aside operations into the normal plan under the user-facing "Copies" campaign group (FD-26 (seven campaign groups)); `dedupe-quarantine` is only the internal F-403 plan-pass id and never appears as a UI or report label. Dedupe is not a special executor path, it is a campaign group through F-403 (plan builder) / F-404 (plan validation) / F-601 (executor). [S1 breakdown F-704, F-403; FD-26]
+- **AC-26** flag-only produces no set-aside operations: it records the group and keeper suggestion for later review and leaves every copy in place. [S1 breakdown F-704]
+- **AC-27** Losers set aside by a resolution round-trip through the standard journal/manifest, so a rollback restores every set-aside copy to its original path (part of the dedupe end-to-end gate). [decision-ledger AC additions; S1 F-603/F-605]
+
+### F-905 (duplicates surface) - P1
+
+- **AC-28** The duplicates surface hosts the F-703 group-by-group review and the F-704 policy selector as one screen, following the design-system register (no "dedupe"/"operations" vocabulary on the primary surface). [S1 breakdown F-905; PRODUCT.md principle 1]
+- **AC-29** The navigation badge shows the GROUP count and updates when a scan or hash job completes (event-driven, no polling). [S1 events; FD-08]
+- **AC-30** The surface exposes the F-702 override as an explicit warning-confirm affordance and the FD-13 "Show file details" disclosure for copy locations. [AC-12, FD-13]
+- **AC-31** The surface renders correct empty and loading states from the FD-04 catalog: "no duplicates found" empty state, and a distinct "checking copies" loading state during a hash job. [decision-ledger FD-04]
+
+### F-802 (ruleset import/export) - P1
+
+- **AC-32** A ruleset exports to a portable JSON file carrying its `schema_version`; the file contains templates, structure policies, and cleanup toggles sufficient to reproduce the ruleset on another machine. [S1 breakdown F-802, F-801; schema rulesets]
+- **AC-33** Import validates the JSON against the versioned schema; a schema-version mismatch is handled explicitly (accept with additive migration, or reject with a remediation message), never silently misparsed. [S1 breakdown F-802; S1 error taxonomy]
+- **AC-34** An imported ruleset is a new row (does not overwrite an existing ruleset of the same name without explicit confirmation), preserving the immutable-plan lineage. [S1 breakdown F-801/F-802]
+- **AC-35** Round-trip: export a ruleset, import it on a clean database, generate a plan from the same snapshot, and get a byte-identical plan to the original (ruleset portability proven against the F-403 determinism golden). [S1 breakdown F-403 determinism; F-802]
+
+### F-501 (everything view) - P1 (redefined per FD-06)
+
+- **AC-36** The everything view renders the complete change list virtualized (TanStack Virtual), grouped by campaign group, over the full library scale without UI freeze. [decision-ledger FD-06; S1 breakdown F-501; NFR scale]
+- **AC-37** It is a tier-1 disclosure surface: reachable but not the default review path; the default remains the per-group cards from v0.4.0 (D-16). [decision-ledger FD-06, D-16]
+- **AC-38** Each row shows source and target behind "Show file details," extended for tier 1 with matched pattern and confidence (FD-13 tier-1 content, F-504). [decision-ledger FD-13; S1 F-504]
+- **AC-39** Tree presentation is optional and behind a toggle; its absence never blocks the release (its own descope trigger, see Release Gate). [decision-ledger FD-06; S2 Section 5]
+
+### Long-path battle testing (FD-19) - release gate item
+
+- **AC-40** The full pipeline (scan, plan, validate, dry-run apply, rollback) runs green over runtime-generated fixture paths beyond 260 characters using extended-length (`\\?\`) semantics; these fixtures are generated at test time and never committed. [decision-ledger FD-19; S2 v0.6.0 scope; S2 CI notes]
+- **AC-41** When a target path would exceed the limit and `LongPathsEnabled=0` is detected, the app warns with a linked how-to rather than failing obscurely; near-260 warnings are retained for interop. [decision-ledger FD-19]
+
+## Behavior / Examples
+
+- Kill-during-apply, window A (intent then kill): the journal has `intent(op=42, rename A->B)` with no terminal row. On restart the reconciler finds A present and B absent, concludes the rename never ran, writes nothing terminal for op 42 (or a `failed` marker), and offers resume from op 42. The tier-2 surface says: "The last tidy-up was interrupted. Nothing was left half-done. You can pick up where it stopped, or undo what was already done." Paths appear only under "Show file details."
+- Kill-during-apply, window B (act then kill): the journal has `intent(op=42)` only, but on disk A is gone and B exists. The reconciler concludes the rename completed, records `done(op=42)`, and resumes from op 43.
+- Dedupe end to end on a copy: detect candidates (basename+size groups) -> verify with BLAKE3 -> apply keep-m4b policy -> confirm keepers per group -> losers set aside into `Quarantine\<job-id>\` preserving relative paths -> rollback restores every set-aside copy to its original location, tree byte-identical.
+- Everything view: 982 rows (sample data, per FD-27) grouped under seven campaign groups (FD-26), scrolled smoothly via virtualization; opening a row's "Show file details" reveals from/to plus "Matched pattern 4 (year-author-title), confidence high."
+
+## Non-Functional Requirements
+
+- Scale: the everything view and duplicates surface stay responsive at 20,000 files / 1,000 folders; virtualized rendering, no full-list materialization (NFR scale, S1 Section 9).
+- Recoverability: kill -9 during apply leaves at most one operation in doubt, auto-reconciled on restart (NFR recoverability; the F-606 signature).
+- Privacy: hashing and all dedupe work are local; no network, no telemetry (NFR privacy).
+- Accessibility: the duplicates surface, everything view, and resume-or-rollback surface pass the FD-21 verification method (mechanical contrast check of both themes, axe-core smoke in Vitest, keyboard walkthrough in the manual QA checklist); the danger/override affordance uses the FD-09 error/danger token pair, WCAG AA in both Day and Evening. [decision-ledger FD-21, FD-09]
+- Determinism: ruleset import/export preserves plan determinism (AC-35).
+
+## Release Gate
+
+The composite checklist that must be green before `v0.6.0` tags (from release plan Section 4 v0.6.0, upgraded per FD dispositions). Evidence pointers follow the conventions in `docs/internal/test-strategy.md`.
+
+- [ ] **Kill-during-apply reconciles, both windows.** Process aborted between journal `intent` and act, and again between act and `done`, reconciles correctly on restart in both directions. Evidence: executor kill/resume reconciliation tests (test-strategy Executor layer). Blocking (P0, F-606). [AC-1..AC-5]
+- [ ] **Cancelled apply is coherent and resumable.** Verified by automated test and by hand walkthrough. Blocking (P0, F-606). [AC-8]
+- [ ] **Access-denied retry-once-then-halt-group** leaves the journal coherent. Evidence: adversarial executor test. Blocking (P0, F-606, FD-19). [AC-9]
+- [ ] **Dedupe flow end to end on a real-data copy:** candidates detected -> hashes verified -> keeper chosen by policy -> losers set aside -> rollback restores them, tree byte-identical. Evidence: manual campaign log + rollback round-trip on a copy. [AC-10..AC-16, AC-23..AC-27]
+- [ ] **Set-aside gated on verified hashes or explicit override.** Evidence: F-702 gating tests + surface warning-confirm. [AC-12, AC-13]
+- [ ] **Duplicates counted as GROUPS everywhere** (surface, badge, report). Evidence: F-703 tests + report snapshot. [AC-17, AC-18, AC-20]
+- [ ] **Ruleset import/export round-trip yields a byte-identical plan.** Evidence: F-802 round-trip test against the F-403 determinism golden. [AC-35]
+- [ ] **Everything view responsive at library scale.** Virtualization verified over the real 2026-03-25 baseline (718 folders / 13,970 files, labeled "2026-03-25 baseline, pending fresh scan" per FD-18 (2026-03-25 baselines)) and, separately, against the 20,000-file / 1,000-folder NFR scale target; both may be exercised but are not conflated, and neither freezes. Evidence: frontend responsiveness check + manual QA. Non-blocking descope (see below). [AC-36, AC-39]
+- [ ] **Long-path battle test green.** Full pipeline over runtime-generated >260-char fixtures; detect-and-warn UX verified. Evidence: long-path integration suite (test-strategy Executor/Plan layers). [AC-40, AC-41]
+- [ ] **Accessibility verified** (FD-21 method) on the three new/changed surfaces in both Day and Evening themes. Evidence: contrast script output, axe-core smoke, keyboard walkthrough item. [NFR accessibility]
+
+Descope triggers for this release (pre-committed, from release plan Section 5):
+
+- Hash performance unacceptable on real data -> campaign runs dedupe as flag-only; set-aside-by-hash becomes post-campaign work. F-702/F-703/F-704 still ship (flag-only path). [AC-16]
+- F-501 (everything view) not responsive/stable by end of window -> it slips to a later release without blocking the v0.6.0 tag (P1, tier-1 disclosure, not load-bearing). The tree-presentation toggle is descoped independently and first. [AC-39]
+- Any executor invariant test flaky -> the release freezes until deflaked (the one place slippage is accepted rather than descoped, S2 Section 5).
+
+## Source Traceability
+
+| Feature | Priority | Discovery / planning source | D/FD decisions |
+|---|---|---|---|
+| F-606 (interruption safety + resume) | P0 | breakdown E-06 F-606; release plan Section 4 v0.6.0 | D-09 (safety invariants), FD-04 (resume surface), FD-19 (access-denied semantics) |
+| F-702 (hash verification) | P1 | breakdown E-07 F-702; release plan Section 4 v0.6.0 | discovery (candidates-only anti-pattern), planning audit stream 2 item 15 (override) |
+| F-703 (duplicate review + report) | P1 | breakdown E-07 F-703 | FD-08 (group canon), FD-10 (guarantee copy), FD-27 (sample data) |
+| F-704 (resolution policies) | P1 | breakdown E-07 F-704 | FD-08 (group canon), D-09 (quarantine-only) |
+| F-905 (duplicates surface) | P1 | breakdown E-09 F-905 | FD-04 (states), FD-08, FD-09 (danger token), FD-13 (disclosure) |
+| F-802 (ruleset import/export) | P1 | breakdown E-08 F-802 | D-01 (locked stack); OQ-2 (schema-version mismatch, model-inference) |
+| F-501 (everything view) | P1 | breakdown E-05 F-501 (redefined); release plan Section 4/5 | D-16 (cards + report primary), FD-06 (F-501 redefinition), FD-13 (tier-1 disclosure) |
+| Long-path battle testing | gate | release plan Section 4 v0.6.0 | FD-19 (Windows path reality) |
+
+## Revisions
+
+- 2026-07-03: initial spec authored for the planning suite (status review).
+
+## Sources & Evidence
+
+- [S1] Feature-function breakdown (E-06/E-07/E-08/E-05 features, IPC, schema, error taxonomy, NFR): `_local/planning/feature-function-breakdown_2026-07-02.md`. Class A (project design doc).
+- [S2] Release plan and CI (v0.6.0 scope, gate, descope triggers, test strategy): `_local/planning/release-plan-and-ci_2026-07-02.md`. Class A.
+- [S3] PRODUCT.md (register, tiers, principles, accessibility): `PRODUCT.md`. Class A (design contract).
+- [S4] decision ledger and FD dispositions: `docs/internal/decision-ledger.md`. Class A (ratified decisions).
+- [S5] Audit findings with dispositions: `docs/internal/planning-audit-2026-07-03.md`. Class A.
+
+## Open Questions
+
+- OQ-1 keep-higher-bitrate policy needs bitrate available per copy. If bitrate is not read at scan time (embedded-tag reading is F-1101 (embedded tag reading), deferred), does the policy fall back to keep-larger, or is bitrate a bounded lofty-subset read (FD-14 probe precedent)? Resolve before F-704 implementation. [model-inference]
+- OQ-2 Ruleset schema-version mismatch on import: additive-migrate vs reject-with-remediation. The 0.x additive-only-after-v1 policy (S2 versioning) suggests migrate-forward; confirm the pre-v1 posture allows a documented reset. [model-inference]
