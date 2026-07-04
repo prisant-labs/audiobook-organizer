@@ -26,7 +26,14 @@
 //! `parse` module docs). Phase 4b (a later dispatch on the same branch)
 //! fills in `parse::extract` (F-303 confidence merge) and `parse::normalize`
 //! (F-304 filesystem-safe names) on top of it.
+//!
+//! v0.2.0 Phase 5 adds `classify`: F-201 (folder classification engine), F-202
+//! (library health metrics), and F-203 (multi-book folder detection), pure
+//! logic with no `cfg`-gating that consumes the `parse` merge and
+//! `scan::typing` (see `classify` module docs). Its rule ids and evidence
+//! become the F-504 explainability surface in v0.4.0.
 
+pub mod classify;
 pub mod db;
 pub mod error;
 pub mod ipc;
