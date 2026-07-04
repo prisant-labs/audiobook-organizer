@@ -96,6 +96,74 @@ pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
     }
 }
 
+// ---- Free-space seam (F-404 cross-volume sizing) ----
+//
+// F-404 validation sizes cross-volume `copy+verify+delete` moves against the
+// TARGET volume's free space. The pure validator ([`crate::plan::validate`])
+// never calls the OS: it takes a [`crate::plan::validate::FreeSpace`] trait
+// object, so tests inject scarcity deterministically. The one production
+// implementation lives HERE (the platform seam), keeping the plan module free
+// of any `cfg` (the CFG RULE) - platform reality is confined to this file, as
+// it already is for the `\\?\` helpers above.
+
+/// Bytes available to the calling user on the volume that `path` lives on, or
+/// `None` if it cannot be determined (a non-Windows host, or the OS call
+/// failed). `None` means "unknown", which validation treats conservatively as
+/// "cannot prove insufficiency" rather than as zero.
+///
+/// Windows: calls `GetDiskFreeSpaceExW` (kernel32) on a NUL-terminated wide
+/// path. The "available to caller" figure (not raw total-free) is the right
+/// one because it already accounts for per-user quotas.
+#[cfg(windows)]
+pub fn available_bytes(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+
+    // GetDiskFreeSpaceExW wants a directory (or any path) on the volume; a
+    // volume root like `E:\` is what callers pass. NUL-terminate the wide form.
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+    // Minimal FFI: declaring the extern adds no crate dependency (kernel32 is
+    // already linked by the standard library on the Windows target).
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            lpDirectoryName: *const u16,
+            lpFreeBytesAvailableToCaller: *mut u64,
+            lpTotalNumberOfBytes: *mut u64,
+            lpTotalNumberOfFreeBytes: *mut u64,
+        ) -> i32;
+    }
+
+    let mut free_to_caller: u64 = 0;
+    let mut total: u64 = 0;
+    let mut total_free: u64 = 0;
+    // SAFETY: `wide` is a valid NUL-terminated UTF-16 buffer that outlives the
+    // call; the three out-pointers are valid, aligned, and writable for the
+    // duration of the call. The function reads none of the out params on entry.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_to_caller,
+            &mut total,
+            &mut total_free,
+        )
+    };
+    if ok != 0 {
+        Some(free_to_caller)
+    } else {
+        None
+    }
+}
+
+/// Non-Windows: no per-volume free-space query is wired (this crate has
+/// behavioral claims on Windows only), so return `None` = unknown. Validation
+/// then marks cross-volume moves without ever falsely blocking them on a host
+/// where it cannot measure free space (the CI test leg runs on Linux).
+#[cfg(not(windows))]
+pub fn available_bytes(_path: &Path) -> Option<u64> {
+    None
+}
+
 /// The per-user application data directory for Audiobook Organizer.
 ///
 /// Windows: `%LOCALAPPDATA%\AudiobookOrganizer`. macOS:
