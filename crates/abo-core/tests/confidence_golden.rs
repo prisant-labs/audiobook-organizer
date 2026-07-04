@@ -14,12 +14,13 @@
 //! The expectations deliberately LOCK the folder-first structural behavior
 //! documented in `abo_core::parse::extract`, including the artifacts a pure
 //! name pass cannot avoid without classification: a shelf folder named
-//! `Genre - SciFI` parses (F-301 pattern 2) as author `Genre`, so a bare book
-//! under it inherits `Genre` at MEDIUM and a book with its own author FLAGS a
-//! conflict against `Genre`. That is correct for this layer (nothing is
-//! marked high that was not explicit; nothing is fabricated); F-201
-//! classification (P5) is what later distinguishes shelves from real
-//! containers.
+//! `Genre - Children` (or `Genre - SciFI`) parses (F-301 pattern 2) as author
+//! `Genre`, so a bare book under it inherits `Genre` at MEDIUM and a book with
+//! its own author FLAGS a conflict against `Genre`. That is correct for this
+//! layer (nothing is marked high that was not explicit; nothing is
+//! fabricated); F-201 classification (P5) is what later distinguishes shelves
+//! from real containers, using the ancestor provenance recorded on each
+//! inherited field.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -198,14 +199,17 @@ fn confidence_golden_over_the_fixture_library() {
             subtitle: None,
             conflicts: &[],
         },
-        // ---- the `SciFI` shelf: its second token `SciFI` reads as a
-        //      release-group tag (F-302) and is stripped, so this shelf has
-        //      NO author - books under it inherit nothing and never conflict
-        //      with a spurious `Genre`. Locks that F-302 interaction. ----
+        // ---- the `SciFI` shelf: `SciFI` is a legitimate mixed-case title
+        //      word, NOT a ripper tag, so F-302's evidence-based release-group
+        //      stripper (D1 fix) leaves it in place. The shelf therefore
+        //      parses via pattern 2 as author `Genre`, title `SciFI`, exactly
+        //      like the other `Genre - X` shelves - books under it inherit
+        //      `Genre` at MEDIUM and books with their own author flag a
+        //      conflict against `Genre`. Locks the post-fix behavior. ----
         Expect {
             key: "Genre - SciFI",
-            title: Some(("Genre -", High, OwnName)),
-            author: None,
+            title: Some(("SciFI", High, OwnName)),
+            author: Some(("Genre", High, OwnName)),
             series: None,
             series_index: None,
             year: None,
@@ -225,7 +229,10 @@ fn confidence_golden_over_the_fixture_library() {
             conflicts: &[],
         },
         // ---- pattern 4 folder under the SciFI shelf: full field set at
-        //      high, and (because the SciFI shelf has no author) NO conflict ----
+        //      high; its own author disagrees with the nearest author ancestor
+        //      (the `Genre` shelf, now that SciFI parses as author=Genre), so
+        //      that disagreement is FLAGGED (D1 fix changed this from no
+        //      conflict) ----
         Expect {
             key: "Genre - SciFI/Hugo Collection/2016^ - N.K. Jemisin - The Fifth Season (The Broken Earth Book 1) [64k 15;27;29 426MB]",
             title: Some(("The Fifth Season", High, OwnName)),
@@ -234,7 +241,7 @@ fn confidence_golden_over_the_fixture_library() {
             series_index: Some(("1", High, OwnName)),
             year: Some((2016, High, OwnName)),
             subtitle: None,
-            conflicts: &[],
+            conflicts: &[(FieldName::Author, "N.K. Jemisin", "Genre")],
         },
         // ---- the canonical AC-303.2 case: a book file inherits series AND
         //      author from its series-container folder at MEDIUM, keeps its
@@ -286,8 +293,10 @@ fn confidence_golden_over_the_fixture_library() {
             subtitle: None,
             conflicts: &[],
         },
-        // ---- pattern 5 folder: title/author/year high, no shelf author
-        //      above it (SciFI stripped), so no conflict ----
+        // ---- pattern 5 folder: title/author/year high; its own author
+        //      disagrees with the nearest author ancestor (the `Genre` shelf,
+        //      now that SciFI parses as author=Genre), so it is FLAGGED (D1
+        //      fix changed this from no conflict) ----
         Expect {
             key: "Genre - SciFI/Top 100 Sci-Fi Books/1 - Ender's Game - Orson Scott Card - 1985",
             title: Some(("Ender's Game", High, OwnName)),
@@ -296,10 +305,12 @@ fn confidence_golden_over_the_fixture_library() {
             series_index: None,
             year: Some((1985, High, OwnName)),
             subtitle: None,
-            conflicts: &[],
+            conflicts: &[(FieldName::Author, "Orson Scott Card", "Genre")],
         },
-        // ---- pattern 9 container: author + series + index high, no title,
-        //      no conflict (SciFI shelf has no author) ----
+        // ---- pattern 9 container: author + series + index high, no title;
+        //      its own author disagrees with the nearest author ancestor (the
+        //      `Genre` shelf, now that SciFI parses as author=Genre), so it is
+        //      FLAGGED (D1 fix changed this from no conflict) ----
         Expect {
             key: "Genre - SciFI/Frank Herbert-Dune-#1-Chronicles[1-8}",
             title: None,
@@ -308,7 +319,7 @@ fn confidence_golden_over_the_fixture_library() {
             series_index: Some(("1", High, OwnName)),
             year: None,
             subtitle: None,
-            conflicts: &[],
+            conflicts: &[(FieldName::Author, "Frank Herbert", "Genre")],
         },
         // ---- a pattern 9 member: own title high, own (mis-parsed) author
         //      high, series inherited medium, and the disagreement between
@@ -422,6 +433,66 @@ fn confidence_golden_over_the_fixture_library() {
             .unwrap_or_else(|| panic!("fixture entry not found for key {:?}", expect.key));
         check(entry, expect, &id_to_key);
     }
+
+    // FIX 2 (D3): each INHERITED field records the id of the ancestor it came
+    // from, so P5 can suppress a shelf-derived inheritance (drop the spurious
+    // `Genre` author) without re-walking the tree. Assert the recorded
+    // ancestor resolves back to the expected genre shelf for the shelf-derived
+    // inheritance rows, and that own-name fields carry no such provenance.
+    let provenance_rows: &[(&str, &str)] = &[
+        // (entry key, expected ancestor-shelf key it inherited author from)
+        ("Genre - Non-Fiction/Rework", "Genre - Non-Fiction"),
+        (
+            "Genre - Children/Chronicles of Narnia/Prince Caspian.m4b",
+            "Genre - Children",
+        ),
+        (
+            "Genre - Children/Chronicles of Narnia/The Silver Chair.m4b",
+            "Genre - Children",
+        ),
+    ];
+    for (entry_key, shelf_key) in provenance_rows {
+        let entry = by_key
+            .get(entry_key)
+            .unwrap_or_else(|| panic!("fixture entry not found for key {entry_key:?}"));
+        let author = entry
+            .fields
+            .author
+            .as_ref()
+            .unwrap_or_else(|| panic!("expected an inherited author for {entry_key:?}"));
+        assert_eq!(
+            author.source,
+            FieldSource::Inherited,
+            "expected inherited author for {entry_key:?}"
+        );
+        let from = author
+            .inherited_from
+            .unwrap_or_else(|| panic!("inherited author for {entry_key:?} records no ancestor"));
+        assert_eq!(
+            id_to_key.get(&from).map(String::as_str),
+            Some(*shelf_key),
+            "inherited author for {entry_key:?} came from the wrong ancestor"
+        );
+        // The entry's own-name title must NOT carry ancestor provenance.
+        assert_eq!(
+            entry.fields.title.as_ref().and_then(|f| f.inherited_from),
+            None,
+            "own-name title for {entry_key:?} must not record an ancestor"
+        );
+    }
+    // An own-name (high) author never records provenance.
+    let own_author = by_key
+        .get("Atomic Habits by James Clear.m4b")
+        .expect("Atomic Habits entry present");
+    assert_eq!(
+        own_author
+            .fields
+            .author
+            .as_ref()
+            .and_then(|f| f.inherited_from),
+        None,
+        "own-name author must not record an ancestor"
+    );
 
     // Global invariant across EVERY merged entry (not just the table rows):
     // fabricate-nothing means no field is ever present with an empty value,

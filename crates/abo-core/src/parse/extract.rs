@@ -74,11 +74,15 @@
 //! only medium (a review tier, never high), and the conflict is surfaced.
 //! Distinguishing an organizational shelf from a real series/author container
 //! is F-201 classification's job (P5), which consumes these merged fields and
-//! conflicts; it is deliberately NOT reimplemented here. (Whether a shelf
-//! parses as an author at all depends on its exact name: `Genre - SciFI`, for
-//! instance, does NOT, because F-302's release-group stripper treats the
-//! mixed-case `SciFI` token as a ripper tag and removes it - another reason
-//! this layer flags rather than trusts such inferences.)
+//! conflicts; it is deliberately NOT reimplemented here.
+//!
+//! To make that P5 job possible without a re-walk, every INHERITED field
+//! records the id of the ancestor entry it inherited from
+//! ([`Field::inherited_from`], mirroring [`FieldConflict::ancestor_id`]). P5
+//! can therefore FILTER an inherited field whose recorded ancestor it
+//! classifies as a shelf - dropping the spurious `Genre` author on a book
+//! under `Genre - Children` - by looking at the provenance already on the
+//! field, rather than re-deriving which ancestor supplied it.
 
 use std::collections::HashMap;
 
@@ -174,13 +178,20 @@ impl ConfidenceWeights {
     }
 }
 
-/// A single merged field: its value, where it came from, and the resolved
-/// confidence tier.
+/// A single merged field: its value, where it came from, the resolved
+/// confidence tier, and (for an inherited field) the ancestor it came from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field<T> {
     pub value: T,
     pub source: FieldSource,
     pub confidence: Confidence,
+    /// The `id` of the ancestor entry this value was inherited from, when
+    /// `source` is [`FieldSource::Inherited`]; [`None`] for an own-name or
+    /// derived field (which have no ancestor). This mirrors
+    /// [`FieldConflict::ancestor_id`] and lets P5 classification suppress an
+    /// inherited field whose ancestor it classifies as a shelf WITHOUT
+    /// re-walking the tree to rediscover which ancestor supplied the value.
+    pub inherited_from: Option<usize>,
 }
 
 /// The merged, confidence-annotated fields for one entry. Every field is
@@ -219,6 +230,14 @@ pub struct MergedEntry {
     /// nothing. A degraded pattern-8 fallback still records
     /// [`MatcherId::Pattern8BareTitle`] here.
     pub own_matcher: Option<MatcherId>,
+    /// The specificity score of the matcher that parsed this entry's OWN name
+    /// (the F-301 `MatcherMatch::score`), when one produced a confident
+    /// result; [`None`] whenever [`own_matcher`](Self::own_matcher) is
+    /// [`None`] (ambiguous or no match). A degraded pattern-8 fallback records
+    /// its [`DEGRADED_FALLBACK_SCORE`] here alongside
+    /// [`MatcherId::Pattern8BareTitle`], so a downstream consumer can tell a
+    /// degraded fallback from a genuine bare-title match.
+    pub own_score: Option<u32>,
     /// Whether this entry's own name resolved to an F-301 tie
     /// ([`MatchOutcome::Ambiguous`]); when true, no own fields are trusted
     /// (they may still be inherited) and this is surfaced for review.
@@ -236,6 +255,10 @@ struct OwnParse {
     /// inheritable or explicit-high value).
     fields: ParsedFields,
     matcher: Option<MatcherId>,
+    /// The specificity score of the winning matcher, carried alongside
+    /// `matcher` so [`MergedEntry::own_score`] can expose it. [`None`] for an
+    /// ambiguous or no-match outcome.
+    score: Option<u32>,
     ambiguous: bool,
     /// A best-effort title kept verbatim from a degraded pattern-8 fallback
     /// (low confidence / derived). [`None`] for every non-degraded outcome.
@@ -287,6 +310,7 @@ fn parse_own(entry: &EntryInput) -> OwnParse {
                 OwnParse {
                     fields: ParsedFields::default(),
                     matcher: Some(m.id),
+                    score: Some(m.score),
                     ambiguous: false,
                     derived_title: m.fields.title,
                 }
@@ -294,6 +318,7 @@ fn parse_own(entry: &EntryInput) -> OwnParse {
                 OwnParse {
                     fields: m.fields,
                     matcher: Some(m.id),
+                    score: Some(m.score),
                     ambiguous: false,
                     derived_title: None,
                 }
@@ -302,12 +327,14 @@ fn parse_own(entry: &EntryInput) -> OwnParse {
         MatchOutcome::Ambiguous(_) => OwnParse {
             fields: ParsedFields::default(),
             matcher: None,
+            score: None,
             ambiguous: true,
             derived_title: None,
         },
         MatchOutcome::NoMatch => OwnParse {
             fields: ParsedFields::default(),
             matcher: None,
+            score: None,
             ambiguous: false,
             derived_title: None,
         },
@@ -404,6 +431,7 @@ fn merge_entry(
     MergedEntry {
         id: entry.id,
         own_matcher: mine.matcher,
+        own_score: mine.score,
         own_ambiguous: mine.ambiguous,
         fields,
         conflicts,
@@ -442,7 +470,7 @@ fn resolve_inheritable(
             }
             Some(own_field(mine.to_string(), weights))
         }
-        None => ancestor.map(|(value, _)| inherited_field(value, weights)),
+        None => ancestor.map(|(value, anc_id)| inherited_field(value, anc_id, weights)),
     }
 }
 
@@ -477,14 +505,20 @@ fn own_field<T>(value: T, weights: &ConfidenceWeights) -> Field<T> {
         value,
         source: FieldSource::OwnName,
         confidence: weights.confidence_for(FieldSource::OwnName),
+        inherited_from: None,
     }
 }
 
-fn inherited_field(value: String, weights: &ConfidenceWeights) -> Field<String> {
+fn inherited_field(
+    value: String,
+    ancestor_id: usize,
+    weights: &ConfidenceWeights,
+) -> Field<String> {
     Field {
         value,
         source: FieldSource::Inherited,
         confidence: weights.confidence_for(FieldSource::Inherited),
+        inherited_from: Some(ancestor_id),
     }
 }
 
@@ -493,6 +527,7 @@ fn derived_field(value: String, weights: &ConfidenceWeights) -> Field<String> {
         value,
         source: FieldSource::Derived,
         confidence: weights.confidence_for(FieldSource::Derived),
+        inherited_from: None,
     }
 }
 
@@ -584,6 +619,67 @@ mod tests {
             Some(("Dune", Confidence::Medium, FieldSource::Inherited))
         );
         assert!(member.conflicts.is_empty());
+
+        // FIX 2 (D3): inherited fields carry ancestor provenance so P5 can
+        // suppress shelf-derived inheritance without re-walking the tree.
+        assert_eq!(
+            member.fields.author.as_ref().and_then(|f| f.inherited_from),
+            Some(0),
+            "inherited author records the container it came from"
+        );
+        assert_eq!(
+            member.fields.series.as_ref().and_then(|f| f.inherited_from),
+            Some(0),
+            "inherited series records the container it came from"
+        );
+        // Own-name fields carry no ancestor provenance.
+        assert_eq!(
+            member.fields.title.as_ref().and_then(|f| f.inherited_from),
+            None
+        );
+
+        // FIX 3 (D2): a confident own-name match exposes its matcher score
+        // alongside the matcher id.
+        assert!(member.own_matcher.is_some());
+        assert!(
+            member.own_score.is_some(),
+            "a confident own-name match exposes its score"
+        );
+    }
+
+    /// FIX 3 (D2): `own_score` is present exactly when `own_matcher` is, and
+    /// carries the winning matcher's specificity score (so a downstream
+    /// consumer no longer has to re-parse to recover it).
+    #[test]
+    fn own_score_is_exposed_alongside_own_matcher() {
+        let entries = vec![
+            folder(0, None, "Frank Herbert-Dune-#1-Chronicles[1-8}"),
+            file(1, Some(0), "The Battle of Corrin.m4b"),
+        ];
+        let merged = extract(&entries);
+
+        // A confidently-matched container: matcher id and score both present.
+        let container = by_id(&merged, 0);
+        assert_eq!(
+            container.own_matcher,
+            Some(MatcherId::Pattern9IrregularSeriesContainer)
+        );
+        assert!(container.own_score.is_some());
+
+        // A degraded pattern-8 fallback still records its score (the degraded
+        // tier), so a consumer can distinguish it from a genuine bare title.
+        let degraded = vec![file(0, None, "FREE SAMPLE_ The Martian by Andy Weir.m4b")];
+        let dmerged = extract(&degraded);
+        let d = by_id(&dmerged, 0);
+        assert_eq!(d.own_matcher, Some(MatcherId::Pattern8BareTitle));
+        assert_eq!(d.own_score, Some(DEGRADED_FALLBACK_SCORE));
+
+        // No confident match => no matcher id and no score.
+        let empty = vec![folder(0, None, "   ")];
+        let emerged = extract(&empty);
+        let e = by_id(&emerged, 0);
+        assert_eq!(e.own_matcher, None);
+        assert_eq!(e.own_score, None);
     }
 
     /// Explicit-over-inherited: the member's own author overrides, and the

@@ -204,12 +204,26 @@ static RELEASE_GROUP_BRACKET_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\s*\[[A-Za-z][A-Za-z ]{0,19}\]\s*$").expect("valid release-group bracket regex")
 });
 
+/// Known bare release-group tokens, seeded from discovery evidence: the
+/// ` jZQ` scene-tag suffix and its case variants. Bare-word stripping fires
+/// ONLY for an EXACT match against this small, evidence-based list.
+///
+/// This deliberately replaces an earlier speculative heuristic that stripped
+/// any 2-8 letter mixed-case trailing word that was not simple TitleCase. That
+/// heuristic ate legitimate title words (`YouTube`, `iPhone`, `GitHub`, `iOS`,
+/// `eBay`) and then promoted the truncated title to a HIGH-confidence field
+/// with no flag, which is worse than leaving a rare ripper tag in place. The
+/// bracketed release-group suffix (`[Thomas]`-style, handled by
+/// [`RELEASE_GROUP_BRACKET_RE`]) keeps its pattern-based strip; only the bare
+/// word case is now evidence-gated. P7's real-library run expands this list
+/// from observed data (the pass stays toggleable via [`StripOptions`]).
+const KNOWN_RELEASE_GROUP_TOKENS: &[&str] = &["jZQ", "JZQ", "jzq"];
+
 /// Remove a trailing release-group suffix: either a short letters-only
-/// bracket (`[Thomas]`) or a bare trailing word with an internal
-/// capitalization pattern real prose never uses (`jZQ`: lowercase first
-/// letter, uppercase later letters), the classic scene/ripper-tag
-/// signature. Ordinary trailing words (a title that happens to end in a
-/// normal word) are left alone.
+/// bracket (`[Thomas]`, pattern-based) or a bare trailing word that EXACTLY
+/// matches a known scene/ripper tag ([`KNOWN_RELEASE_GROUP_TOKENS`], e.g.
+/// `jZQ`). Ordinary trailing words (a title that happens to end in a normal
+/// word, including mixed-case brand words like `YouTube`) are left alone.
 pub fn strip_release_group_suffix(input: &str) -> String {
     let after_bracket = strip_or_keep(input, &RELEASE_GROUP_BRACKET_RE);
     strip_bare_release_group_word(&after_bracket)
@@ -242,25 +256,11 @@ fn strip_bare_release_group_word(input: &str) -> String {
     }
 }
 
-/// A scene/ripper-tag word: 2-8 ASCII letters, at least one lowercase and
-/// one uppercase letter, and NOT simple TitleCase (first letter uppercase,
-/// every other letter lowercase) -- real words and real names are
-/// TitleCase or all-lowercase; a tag like `jZQ` or `xVid` has an uppercase
-/// letter appearing after a lowercase one, which ordinary English text does
-/// not produce.
+/// A known scene/ripper-tag word: an EXACT match against the evidence-based
+/// [`KNOWN_RELEASE_GROUP_TOKENS`] list. Nothing else qualifies -- a legitimate
+/// mixed-case title word (`YouTube`, `iPhone`) is never treated as a tag.
 fn is_release_group_word(word: &str) -> bool {
-    if word.len() < 2 || word.len() > 8 || !word.chars().all(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    let has_lower = word.chars().any(|c| c.is_ascii_lowercase());
-    let has_upper = word.chars().any(|c| c.is_ascii_uppercase());
-    if !has_lower || !has_upper {
-        return false;
-    }
-    let mut chars = word.chars();
-    let first = chars.next().expect("checked non-empty above");
-    let is_simple_titlecase = first.is_ascii_uppercase() && chars.all(|c| c.is_ascii_lowercase());
-    !is_simple_titlecase
+    KNOWN_RELEASE_GROUP_TOKENS.contains(&word)
 }
 
 // ---- bitrate markers (170, 2026-03-25 baseline) ----
@@ -423,6 +423,9 @@ mod tests {
                 "11 Years of Nebula Best Novel Nominees - 2014-2024 - 68 Audiobooks jZQ",
                 "11 Years of Nebula Best Novel Nominees - 2014-2024 - 68 Audiobooks",
             ),
+            // known-token case variants still strip
+            ("Some Collection JZQ", "Some Collection"),
+            ("Some Collection jzq", "Some Collection"),
             (
                 "Dune Universe Series [1-21] (Audiobooks) [Thomas]",
                 "Dune Universe Series [1-21] (Audiobooks)",
@@ -434,6 +437,18 @@ mod tests {
             ),
             // ordinary trailing word, all lowercase: untouched
             ("Out of the Silent Planet", "Out of the Silent Planet"),
+            // ADVERSARIAL (D1 fix): legitimate mixed-case brand/title words
+            // are NOT ripper tags and MUST survive stripping. The old
+            // heuristic ate every one of these; the known-token list does not.
+            ("The Story of YouTube", "The Story of YouTube"),
+            ("Getting Started with GitHub", "Getting Started with GitHub"),
+            ("Life with the iPhone", "Life with the iPhone"),
+            ("Programming for iOS", "Programming for iOS"),
+            ("Selling on eBay", "Selling on eBay"),
+            // a mixed-case token that used to be stripped as a "ripper tag"
+            // signature (uppercase after lowercase, not simple TitleCase) but
+            // is a real word: SciFI now survives.
+            ("Genre - SciFI", "Genre - SciFI"),
         ];
         for (input, expected) in cases {
             assert_eq!(
