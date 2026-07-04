@@ -25,6 +25,16 @@
 //! total bytes with no double counting (asserted against the fixture's declared
 //! total, AC-F5 + AC-202.1).
 //!
+//! # Loose-root books: robust to how the scan root is represented
+//!
+//! "Loose root" audio files (no book/container folder around them) are the
+//! headline health metric campaign group ordering depends on. The scan-root
+//! entry itself is represented two different ways across this codebase's own
+//! inputs (a multi-root fixture shape with no synthetic root entry, versus a
+//! real single-rooted scan where the root is one ordinary persisted Folder
+//! entry), and the metric is defined to read correctly under both; see the
+//! comment at its computation site for the exact rule.
+//!
 //! # Disc-part folds (F-204 preview)
 //!
 //! A disc-split single book classifies its disc subfolders as `book` too (there
@@ -172,11 +182,48 @@ pub fn health_metrics(
         .collect();
 
     // ---- problem metrics ----
-    // Loose root books: audio files directly at the library root (no parent).
+    // Loose root books: audio files sitting directly at the scan root, with no
+    // book/container folder in between.
+    //
+    // Two conventions coexist over this same input shape, and this predicate
+    // is written to be correct under both (the bug this replaced: it only
+    // handled the first).
+    //
+    //   1. Fixture / multi-root convention (unit tests here, the golden
+    //      fixture library): every top-level manifest node sits directly
+    //      under the caller-supplied generation root with NO synthetic root
+    //      entry recorded, so a loose file simply has `parent.is_none()`
+    //      itself, alongside other top-level BOOK folders that also have
+    //      `parent.is_none()` (multiple parentless entries).
+    //   2. Real single-rooted scan convention (`scan::walk` / `run_scan`):
+    //      the scan root itself is persisted as one ordinary entry (a
+    //      Folder, depth 0, `parent_id NULL`; see `scan::persist`'s doc
+    //      comment), and every file directly "at the root" is that ONE
+    //      entry's child, i.e. `parent == Some(root_id)`. No file ever has
+    //      `parent.is_none()` in this shape, so the naive "parent is none"
+    //      check always reads zero here (the bug: it silently read 0 against
+    //      every real snapshot).
+    //
+    // The two are told apart structurally, with no I/O and no depth field on
+    // `ClassifyInput`: if exactly one entry is parentless and it is a Folder,
+    // that is the scan root (case 2) and its direct file children are loose;
+    // otherwise (zero or several parentless entries, or the lone parentless
+    // entry is itself a file) this is the multi-root fixture shape (case 1),
+    // and a file is loose exactly when it is itself parentless.
+    let parentless: Vec<&ClassifyInput> = entries.iter().filter(|e| e.parent.is_none()).collect();
+    let scan_root_id: Option<usize> = match parentless.as_slice() {
+        [only] if only.kind == NodeKind::Folder => Some(only.id),
+        _ => None,
+    };
     let (loose_count, loose_bytes) = entries
         .iter()
         .filter(|e| {
-            e.kind == NodeKind::File && e.parent.is_none() && e.file_class == Some(FileClass::Audio)
+            e.kind == NodeKind::File
+                && e.file_class == Some(FileClass::Audio)
+                && match scan_root_id {
+                    Some(root_id) => e.parent == Some(root_id),
+                    None => e.parent.is_none(),
+                }
         })
         .fold((0u64, 0u64), |(n, b), e| (n + 1, b + e.size));
 
@@ -395,5 +442,37 @@ mod tests {
         let loose = problem(&m, "loose-root-books").byte_total;
         assert_eq!(class_bytes + loose, m.total_bytes);
         assert_eq!(m.total_bytes, 225_000);
+    }
+
+    /// The bug this metric shipped with: on a REAL single-rooted scan the scan
+    /// root is one ordinary persisted Folder entry with `parent: None` (see
+    /// `scan::persist`'s doc comment), and every loose-root file is that
+    /// entry's child (`parent == Some(root_id)`), never `parent: None` itself.
+    /// A naive `parent.is_none()` check on the file therefore always read
+    /// zero against a real snapshot. This locks the corrected behavior: with
+    /// exactly one parentless Folder entry (the scan root shape), its direct
+    /// audio children count as loose, a nested book's audio does not, and a
+    /// non-audio file directly under the root does not either.
+    #[test]
+    fn loose_root_counts_children_of_a_real_scan_root_entry() {
+        let entries = vec![
+            folder(0, None, "Books - Audio"), // the persisted scan-root entry
+            audio(1, Some(0), "Sapiens by Yuval Noah Harari.m4b", 180_000),
+            audio(2, Some(0), "Atomic Habits by James Clear.m4b", 140_000),
+            crate::classify::engine::ClassifyInput {
+                id: 3,
+                parent: Some(0),
+                name: "readme.txt".to_string(),
+                kind: NodeKind::File,
+                file_class: None,
+                size: 1_000,
+            },
+            folder(4, Some(0), "Andy Weir - Project Hail Mary"),
+            audio(5, Some(4), "Project Hail Mary.m4b", 175_000),
+        ];
+        let cs = classify(&entries);
+        let m = health_metrics(&entries, &cs);
+        assert_eq!(problem(&m, "loose-root-books").count, 2);
+        assert_eq!(problem(&m, "loose-root-books").byte_total, 320_000);
     }
 }

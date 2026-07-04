@@ -41,7 +41,7 @@ Feature AC roll-up (all unchecked at review time):
 - [ ] F-303 (field extraction with confidence) AC-303.1..AC-303.3
 - [ ] F-304 (name normalizer) AC-304.1..AC-304.5
 - [ ] F-1001 (activity log) AC-1001.1..AC-1001.2
-- [ ] Release gate G-01..G-09
+- [x] Release gate G-01..G-09 (walked by Fable 2026-07-04; see Release Gate section)
 
 ## Context
 
@@ -235,15 +235,17 @@ Acceptance criteria:
 
 Composite checklist (release plan Section 4 v0.2.0, upgraded per FD dispositions). Evidence pointers follow docs/internal/test-strategy.md conventions (name the test suite; CI job that runs it). All must be green before v0.2.0 tags.
 
-- [ ] G-01: fixture library scans, classifies, and parses to golden expectations (insta snapshot tests in the `test` CI job). [F-201, F-202, F-301, F-303 AC]
-- [ ] G-02: noise strippers proven idempotent by property tests across all fixture names (proptest in `test` job). [F-302 AC-302.2]
-- [ ] G-03: real-library read-only scan completes in under 60 s on the local drive, and health metrics match the FD-18 2026-03-25 baselines within drift tolerance: ~582 book-like folders, ~11 mixed folders, ~831 estimated ABS items, noise counts (203 bracket tags, 170 bitrate markers, 214 size markers, 143 rank prefixes, 116 year prefixes), and 237/238 loose-root parses - every figure labeled "2026-03-25 baseline, pending fresh scan". The measured drift is recorded as the deliverable (first fresh look since 2026-03-25). [NFR Scale; FD-18]
-- [ ] G-04: junction/permission/cancellation edge cases covered by tests, including the junction-loop termination test. [F-101 AC-101.2/101.3, F-104 AC-104.2]
-- [ ] G-05: parser fixture coverage measured; if below ~90%, the pattern set is frozen and the remainder routes to `manual-review` by design, with the freeze decision recorded (descope trigger). [F-301 AC-301.4; release plan Section 5]
-- [ ] G-06: per FD-17, video/course clusters and radio plays route to `manual-review` and are never auto-classified as books (covered by fixture and test). [F-201 AC-201.3]
-- [ ] G-07: WizTree CSV import of `_local/prior-work/WizTree_2026-03-25.csv` produces a valid snapshot that feeds the baseline comparison in G-03. [F-102 AC-102.1]
-- [ ] G-08: FD-14 tag-quality probe run as a bounded gate item - a lofty subset reads embedded tags on a few hundred real files, read-only, produces a field-completeness report, and records a written verdict on whether the folder-first assumption holds (the verdict tunes F-303 confidence weighting). [FD-14]
-- [ ] G-09: full CI matrix green (lint including core-purity and bindings-drift, test on ubuntu + windows, build on windows GA + macos honesty), per docs/internal/ci-plan.md and FD-24. [release plan Section 6]
+Gate walked by Fable, 2026-07-04. Every phase passed an independent adversarial task review with all Critical/Important findings fixed and re-verified. Evidence docs: baseline-delta-2026-07-04.md and fd14-tag-probe-2026-07-04.md in this folder.
+
+- [x] G-01: fixture library scans, classifies, and parses to golden expectations (12 insta goldens + parse tables, green locally and in CI). [F-201, F-202, F-301, F-303 AC]
+- [x] G-02: stripper idempotence proven by proptest across composed-realistic and arbitrary-unicode generators; the NFC-ordering flake found during P5 was fixed (strip before NFC) with a deterministic seed regression; proptest module re-run 5x at 4096 cases clean. [F-302 AC-302.2]
+- [x] G-03: real-library read-only scan completed in under 1 s (warm cache; two orders of magnitude inside the soft 60 s target), 14,799 entries / 320.8 GB / 0 skipped / 113 NearMaxPathInterop warnings (all deep Hugo/Nebula paths, all scanned via extended-length opens). Baselines vs CSV vs live recorded three-column in baseline-delta-2026-07-04.md with every figure FD-18-labeled; headline: loose-root 237/238 parses and the corrected loose-root metric read 238 EXACTLY on live data; book-like 582 -> 582. Drift reported, not judged, per OQ-2 resolution below. [NFR Scale; FD-18]
+- [x] G-04: junction-loop termination, permission-denied continue, and cancel-at-boundary all covered by named tests (P2 review verified each). [F-101, F-104]
+- [x] G-05: parser coverage 95.2% (20/21; sole miss is the documented AC-301.3 outlier), above the ~90% freeze threshold: NO freeze; pattern set stays open. Decision recorded here. [F-301 AC-301.4]
+- [x] G-06: FD-17 routing tested directly (52 Sales Lessons mp4 cluster, comics, radio play all manual-review). [F-201 AC-201.3]
+- [x] G-07: the rescued 2026-03-25 WizTree CSV imports to the EXACT discovery totals (14,689 entries, 319,290,437,409 bytes, 719 dirs, 13,970 files, 0 skipped) and feeds the G-03 comparison. [F-102 AC-102.1]
+- [x] G-08: FD-14 probe run over a 300-file deterministic sample, read-only (lofty behind an optional feature; absent from default builds; no tauri or HTTP client in its graph). Verdict: folder-first HOLDS (folders carry title/author for 100% of the sample vs tags 85%/96%); F-303 default weighting unchanged; OQ-1 not reopened. Full numbers in fd14-tag-probe-2026-07-04.md. [FD-14]
+- [x] G-09: full CI matrix green on every merged PR of this release (runs on PRs #6, #7+fix, #9, #10, #11) and on this gate branch's PR at merge time. Two linux-clippy cfg-gating incidents were caught by the matrix and fixed forward; the cfg rule now rides in every implementer brief. [FD-24]
 
 ## Source Traceability
 
