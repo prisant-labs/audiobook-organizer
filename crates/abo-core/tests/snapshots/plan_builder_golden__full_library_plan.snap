@@ -663,7 +663,7 @@ expression: plan.to_canonical_json()
       "kind": "mkdir",
       "source_path": "",
       "target_path": "library/_Quarantine",
-      "rationale": "Create the quarantine folder so emptied box-set shells can be set aside without deleting anything.",
+      "rationale": "Create the quarantine folder so items can be set aside without deleting anything.",
       "rule_id": "empty-cleanup-mkdir",
       "confidence": "high",
       "byte_size": 0
@@ -690,6 +690,26 @@ expression: plan.to_canonical_json()
     },
     {
       "op_group": "empty-cleanup",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Parallel Format Example/track01.mp3",
+      "target_path": "library/_Quarantine/track01.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside in quarantine (never deleted).",
+      "rule_id": "parallel-format-quarantine",
+      "confidence": "high",
+      "byte_size": 40000
+    },
+    {
+      "op_group": "empty-cleanup",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Parallel Format Example/track02.mp3",
+      "target_path": "library/_Quarantine/track02.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track02.mp3\" copy is set aside in quarantine (never deleted).",
+      "rule_id": "parallel-format-quarantine",
+      "confidence": "high",
+      "byte_size": 40000
+    },
+    {
+      "op_group": "empty-cleanup",
       "kind": "rmdir-empty",
       "source_path": "library/Empty Folder",
       "target_path": "library/Empty Folder",
@@ -700,7 +720,7 @@ expression: plan.to_canonical_json()
     }
   ],
   "stats": {
-    "total_ops": 66,
+    "total_ops": 68,
     "manual_review_ops": 21,
     "per_group": [
       {
@@ -729,7 +749,7 @@ expression: plan.to_canonical_json()
       },
       {
         "group": "empty folders",
-        "ops": 4
+        "ops": 6
       }
     ]
   }

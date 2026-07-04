@@ -257,6 +257,36 @@ fn nonconforming_disc_folders_are_normalized() {
     }
 }
 
+/// F-205 (AC-33): the "Parallel Format Example" folder holds mp3 chapters plus
+/// an m4b sibling in a "0 M4B" child folder; the two mp3 losers are set aside
+/// (rule parallel-format-quarantine) and the m4b is kept.
+#[test]
+fn parallel_format_losers_are_set_aside_and_m4b_kept() {
+    let nodes = nodes_from_manifest();
+    let (cs, merged) = analyze(&nodes);
+    let plan = build_plan(&nodes, &cs, &merged, &default_ruleset(), ROOT);
+
+    let losers: Vec<_> = plan
+        .ops
+        .iter()
+        .filter(|o| o.rule_id == "parallel-format-quarantine")
+        .collect();
+    assert_eq!(losers.len(), 2, "the two mp3 chapters are set aside: {losers:?}");
+    for op in &losers {
+        assert_eq!(op.kind, "quarantine");
+        assert!(op.source_path.contains("Parallel Format Example"));
+        assert!(op.source_path.ends_with(".mp3"));
+    }
+    // The m4b copy is never a quarantine source.
+    assert!(
+        !plan
+            .ops
+            .iter()
+            .any(|o| o.kind == "quarantine" && o.source_path.ends_with(".m4b")),
+        "the preferred m4b copy must be kept"
+    );
+}
+
 /// F-507: every flatten-packs member move records pack provenance, and the Hugo
 /// award-marked member records the caret.
 #[test]

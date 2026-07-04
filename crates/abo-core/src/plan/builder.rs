@@ -82,7 +82,10 @@ use crate::parse::extract::{Confidence, FieldSource, MergedEntry, NodeKind};
 use crate::parse::strip::{strip, StripOptions};
 use crate::plan::disc::conformant_disc_rename;
 use crate::plan::templates::{render_path, ManualReviewReason, RenderOutcome, TemplateFields};
-use crate::ruleset::{pack_shell_disposition, PackShellOutcome, Ruleset};
+use crate::ruleset::{
+    clutter_kind_from_name, pack_shell_disposition, ClutterAction, PackShellOutcome,
+    PreferredFormat, Ruleset,
+};
 use crate::scan::typing::FileClass;
 
 /// The folder name new quarantined shells and clutter land under, relative to
@@ -1156,7 +1159,190 @@ fn pass_normalize_series(b: &mut Builder) {
     }
 }
 
-// ---- pass: empty-cleanup ----
+// ---- pass: empty-cleanup (removals + set-aside, strictly after all moves) ----
+
+/// The extension (no dot) of the preferred canonical audio format.
+fn preferred_ext(preferred: PreferredFormat) -> &'static str {
+    match preferred {
+        PreferredFormat::M4b => "m4b",
+        PreferredFormat::Mp3 => "mp3",
+    }
+}
+
+/// Whether an audio file NAME is the preferred canonical format.
+fn is_preferred_audio(name: &str, preferred: PreferredFormat) -> bool {
+    name.to_ascii_lowercase()
+        .ends_with(&format!(".{}", preferred_ext(preferred)))
+}
+
+/// Whether `folder_id` has a direct child folder named `0 <ext>` (the Hugo-pack
+/// `0 M4B` convention) that holds a direct preferred-format audio file. This is
+/// how a book keeps its preferred copy in a sibling subfolder while the loser
+/// chapters sit at the folder root.
+fn zero_format_child_has_preferred(
+    b: &Builder,
+    folder_id: usize,
+    preferred: PreferredFormat,
+) -> bool {
+    let marker = format!("0 {}", preferred_ext(preferred));
+    let Some(kids) = b.children.get(&folder_id) else {
+        return false;
+    };
+    for &c in kids {
+        if b.node(c).kind != NodeKind::Folder {
+            continue;
+        }
+        if !b.node(c).name.trim().eq_ignore_ascii_case(&marker) {
+            continue;
+        }
+        if let Some(grandkids) = b.children.get(&c) {
+            if grandkids.iter().any(|&g| {
+                b.node(g).kind == NodeKind::File
+                    && b.node(g).file_class == Some(FileClass::Audio)
+                    && is_preferred_audio(&b.node(g).name, preferred)
+            }) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The audio stem of a file name (lowercased, extension removed). Used to match
+/// a non-preferred copy to its preferred twin in the direct-sibling case.
+fn audio_stem(name: &str) -> String {
+    const EXTS: &[&str] = &[".m4b", ".mp3", ".m4a", ".opus", ".wma", ".flac"];
+    let lower = name.to_ascii_lowercase();
+    for ext in EXTS {
+        if let Some(stripped) = lower.strip_suffix(ext) {
+            return stripped.to_string();
+        }
+    }
+    lower
+}
+
+/// F-205: the non-preferred-format audio files to set aside (keep the preferred
+/// copy, AC-33). Two precise shapes are recognized so unrelated same-folder
+/// files are never mistaken for a parallel format:
+///   - **`0 M4B` convention**: a folder holds direct non-preferred chapters AND
+///     a `0 <ext>` child folder with the combined preferred copy (the Hugo-pack
+///     case). Every direct non-preferred audio file is a loser.
+///   - **direct twin**: a non-preferred audio file has a direct preferred-format
+///     sibling with the SAME stem (`Book.mp3` beside `Book.m4b`). Only the
+///     matched non-preferred file is a loser, so `CON.mp3` beside an unrelated
+///     `COM1.m4b` is never flagged.
+///
+/// Returns file ids sorted by path (determinism).
+fn detect_parallel_format_losers(b: &Builder) -> Vec<usize> {
+    let preferred = b.ruleset.structure.preferred_format;
+    let mut losers: Vec<usize> = Vec::new();
+    for n in b.nodes {
+        if n.kind != NodeKind::Folder {
+            continue;
+        }
+        let id = n.id;
+        if matches!(
+            b.class_of(id),
+            Some(FolderClass::Staging) | Some(FolderClass::ManualReview)
+        ) || b.inside_staging(id)
+        {
+            continue;
+        }
+        let Some(kids) = b.children.get(&id) else {
+            continue;
+        };
+        let direct_audio: Vec<usize> = kids
+            .iter()
+            .copied()
+            .filter(|&c| {
+                b.node(c).kind == NodeKind::File && b.node(c).file_class == Some(FileClass::Audio)
+            })
+            .collect();
+        let non_preferred: Vec<usize> = direct_audio
+            .iter()
+            .copied()
+            .filter(|&c| !is_preferred_audio(&b.node(c).name, preferred))
+            .collect();
+        if non_preferred.is_empty() {
+            continue;
+        }
+
+        if zero_format_child_has_preferred(b, id, preferred) {
+            // The combined preferred copy lives in a `0 <ext>` subfolder; every
+            // direct non-preferred chapter is a loser.
+            losers.extend(non_preferred);
+            continue;
+        }
+
+        // Direct-twin case: a non-preferred file whose stem matches a direct
+        // preferred sibling's stem.
+        let preferred_stems: std::collections::HashSet<String> = direct_audio
+            .iter()
+            .filter(|&&c| is_preferred_audio(&b.node(c).name, preferred))
+            .map(|&c| audio_stem(&b.node(c).name))
+            .collect();
+        if preferred_stems.is_empty() {
+            continue;
+        }
+        for c in non_preferred {
+            if preferred_stems.contains(&audio_stem(&b.node(c).name)) {
+                losers.push(c);
+            }
+        }
+    }
+    losers.sort_by(|&a, &c| b.node(a).path.cmp(&b.node(c).path));
+    losers
+}
+
+/// F-402: the non-audio clutter files the ruleset quarantines
+/// (nfo/sfv/playlist/weblink by default; ebook/cover are kept). Skips files in a
+/// staging area or under a folder already relocated by an earlier pass (that
+/// clutter rides along with the move). Returns file ids sorted by path.
+fn detect_clutter_quarantine(b: &Builder) -> Vec<usize> {
+    let mut out: Vec<usize> = Vec::new();
+    for n in b.nodes {
+        if n.kind != NodeKind::File {
+            continue;
+        }
+        let id = n.id;
+        let Some(kind) = clutter_kind_from_name(&n.name) else {
+            continue;
+        };
+        if b.ruleset.structure.clutter.action_for(kind) != ClutterAction::Quarantine {
+            continue;
+        }
+        if b.inside_staging(id) || b.ancestor_handled(id) {
+            continue;
+        }
+        out.push(id);
+    }
+    out.sort_by(|&a, &c| b.node(a).path.cmp(&b.node(c).path));
+    out
+}
+
+/// Ensure the library-root `_Quarantine` directory is scheduled for creation
+/// (emitting one `mkdir` the first time any quarantine op in `pass` needs it),
+/// and return its path. Deduplicated via the shared `created_dirs` set, so the
+/// mkdir appears exactly once and always before the first quarantine into it.
+fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) -> String {
+    let quarantine_dir = join_path(&b.library_root, b.sep, &[QUARANTINE_DIRNAME]);
+    if !b.created_dirs.contains(&quarantine_dir) {
+        b.created_dirs.insert(quarantine_dir.clone());
+        b.ops.push(PlannedOp {
+            op_group: pass.as_str().to_string(),
+            kind: "mkdir".to_string(),
+            kind_reason: None,
+            source_path: String::new(),
+            target_path: quarantine_dir.clone(),
+            rationale: "Create the quarantine folder so items can be set aside without deleting anything.".to_string(),
+            rule_id: "empty-cleanup-mkdir".to_string(),
+            confidence: "high".to_string(),
+            byte_size: 0,
+            provenance_json: None,
+        });
+    }
+    quarantine_dir
+}
 
 fn pass_empty_cleanup(b: &mut Builder) {
     let pass = InternalPass::EmptyCleanup;
@@ -1166,23 +1352,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
     shells.sort_by(|(_, a), (_, c)| a.cmp(c));
     for (_, shell_path) in shells {
         let name = base_name(&shell_path, b.sep).to_string();
-        let quarantine_dir = join_path(&b.library_root, b.sep, &[QUARANTINE_DIRNAME]);
-        // Ensure the quarantine root exists.
-        if !b.created_dirs.contains(&quarantine_dir) {
-            b.created_dirs.insert(quarantine_dir.clone());
-            b.ops.push(PlannedOp {
-                op_group: pass.as_str().to_string(),
-                kind: "mkdir".to_string(),
-                kind_reason: None,
-                source_path: String::new(),
-                target_path: quarantine_dir.clone(),
-                rationale: "Create the quarantine folder so emptied box-set shells can be set aside without deleting anything.".to_string(),
-                rule_id: "empty-cleanup-mkdir".to_string(),
-                confidence: "high".to_string(),
-                byte_size: 0,
-                provenance_json: None,
-            });
-        }
+        let quarantine_dir = ensure_quarantine_dir(b, pass);
         let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
         b.ops.push(PlannedOp {
             op_group: pass.as_str().to_string(),
@@ -1200,7 +1370,58 @@ fn pass_empty_cleanup(b: &mut Builder) {
         });
     }
 
-    // 2. Remove folders emptied by a split (deterministic; BTreeSet is sorted).
+    // 2. F-205 parallel-format losers: set aside the non-preferred copy (keep
+    // the m4b, AC-33). Detected here so the quarantine follows every move.
+    let losers = detect_parallel_format_losers(b);
+    for id in losers {
+        let src = b.node(id).path.clone();
+        let name = base_name(&src, b.sep).to_string();
+        let size = b.node(id).size;
+        let quarantine_dir = ensure_quarantine_dir(b, pass);
+        let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
+        b.ops.push(PlannedOp {
+            op_group: pass.as_str().to_string(),
+            kind: "quarantine".to_string(),
+            kind_reason: None,
+            source_path: src,
+            target_path: target,
+            rationale: format!(
+                "This book keeps a preferred {} copy, so the extra \"{name}\" copy is set aside in quarantine (never deleted).",
+                preferred_ext(b.ruleset.structure.preferred_format)
+            ),
+            rule_id: "parallel-format-quarantine".to_string(),
+            confidence: "high".to_string(),
+            byte_size: size as i64,
+            provenance_json: None,
+        });
+    }
+
+    // 3. F-402 non-audio clutter: set aside nfo/sfv/playlist/weblink; ebook and
+    // cover are kept with their book (no op).
+    let clutter = detect_clutter_quarantine(b);
+    for id in clutter {
+        let src = b.node(id).path.clone();
+        let name = base_name(&src, b.sep).to_string();
+        let size = b.node(id).size;
+        let quarantine_dir = ensure_quarantine_dir(b, pass);
+        let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
+        b.ops.push(PlannedOp {
+            op_group: pass.as_str().to_string(),
+            kind: "quarantine".to_string(),
+            kind_reason: None,
+            source_path: src,
+            target_path: target,
+            rationale: format!(
+                "\"{name}\" is not an audiobook file; set it aside in quarantine (never deleted)."
+            ),
+            rule_id: "clutter-quarantine".to_string(),
+            confidence: "high".to_string(),
+            byte_size: size as i64,
+            provenance_json: None,
+        });
+    }
+
+    // 4. Remove folders emptied by a split (deterministic; BTreeSet is sorted).
     if b.ruleset.structure.empty_folder_removal {
         let emptied = std::mem::take(&mut b.emptied_sources);
         for path in emptied {
@@ -1220,7 +1441,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             });
         }
 
-        // 3. Folders classified empty in the snapshot.
+        // 5. Folders classified empty in the snapshot.
         let mut empties: Vec<usize> = b
             .nodes
             .iter()
@@ -1878,6 +2099,144 @@ mod tests {
         assert_eq!(staging.len(), 1);
         assert_eq!(staging[0].kind, "no-op");
         assert_eq!(staging[0].kind_reason.as_deref(), Some("staging"));
+    }
+
+    // ---- F-205 parallel-format (AC-33) -------------------------------------
+
+    fn file(id: usize, parent: Option<usize>, path: &str, size: u64) -> PlanNode {
+        PlanNode {
+            id,
+            parent,
+            name: leaf(path),
+            path: path.to_string(),
+            kind: NodeKind::File,
+            file_class: Some(crate::scan::typing::classify_path(std::path::Path::new(&leaf(path)))),
+            size,
+        }
+    }
+
+    /// AC-33: a book folder holding mp3 chapters plus an m4b sibling in a `0 M4B`
+    /// child folder is flagged; the mp3 losers are set aside and the m4b is kept.
+    #[test]
+    fn parallel_format_quarantines_the_mp3_losers_and_keeps_the_m4b() {
+        let nodes = vec![
+            dir(0, None, "lib/Some Book"),
+            file(1, Some(0), "lib/Some Book/track01.mp3", 40_000),
+            file(2, Some(0), "lib/Some Book/track02.mp3", 40_000),
+            dir(3, Some(0), "lib/Some Book/0 M4B"),
+            file(4, Some(3), "lib/Some Book/0 M4B/Some Book.m4b", 80_000),
+        ];
+        let plan = build(&nodes);
+        let quarantines: Vec<&PlannedOp> = plan
+            .ops
+            .iter()
+            .filter(|o| o.rule_id == "parallel-format-quarantine")
+            .collect();
+        assert_eq!(quarantines.len(), 2, "both mp3 losers set aside");
+        for q in &quarantines {
+            assert_eq!(q.kind, "quarantine");
+            assert_eq!(q.op_group, "empty-cleanup");
+            assert!(q.source_path.ends_with(".mp3"), "loser is an mp3");
+            assert!(q.target_path.starts_with("lib/_Quarantine/"));
+        }
+        // The m4b is never a quarantine source anywhere in the plan.
+        assert!(
+            !plan
+                .ops
+                .iter()
+                .any(|o| o.kind == "quarantine" && o.source_path.ends_with(".m4b")),
+            "the preferred m4b copy must be kept"
+        );
+    }
+
+    /// A direct m4b sibling (not in a `0 M4B` folder) also triggers the
+    /// parallel-format policy on the mp3 loser.
+    #[test]
+    fn parallel_format_direct_sibling_m4b_also_flags() {
+        let nodes = vec![
+            dir(0, None, "lib/Some Book"),
+            file(1, Some(0), "lib/Some Book/Some Book.mp3", 40_000),
+            file(2, Some(0), "lib/Some Book/Some Book.m4b", 80_000),
+        ];
+        let plan = build(&nodes);
+        let losers: Vec<&PlannedOp> = plan
+            .ops
+            .iter()
+            .filter(|o| o.rule_id == "parallel-format-quarantine")
+            .collect();
+        assert_eq!(losers.len(), 1);
+        assert!(losers[0].source_path.ends_with(".mp3"));
+    }
+
+    /// A folder with mp3s but no m4b anywhere is NOT a parallel-format case (no
+    /// quarantine); the mp3s are the book's only copy.
+    #[test]
+    fn mp3_only_folder_is_not_parallel_format() {
+        let nodes = vec![
+            dir(0, None, "lib/Some Book"),
+            file(1, Some(0), "lib/Some Book/track01.mp3", 40_000),
+            file(2, Some(0), "lib/Some Book/track02.mp3", 40_000),
+        ];
+        let plan = build(&nodes);
+        assert!(!plan
+            .ops
+            .iter()
+            .any(|o| o.rule_id == "parallel-format-quarantine"));
+    }
+
+    // ---- F-402 clutter (AC-6) ----------------------------------------------
+
+    /// The default clutter policy sets aside nfo/sfv/playlist/weblink and keeps
+    /// ebook/cover with the book.
+    #[test]
+    fn clutter_quarantines_junk_and_keeps_ebook_and_cover() {
+        let nodes = vec![
+            dir(0, None, "lib/N.K. Jemisin"),
+            dir(1, Some(0), "lib/N.K. Jemisin/The Fifth Season"),
+            aud(
+                2,
+                Some(1),
+                "lib/N.K. Jemisin/The Fifth Season/The Fifth Season.m4b",
+                100_000,
+            ),
+            file(
+                3,
+                Some(1),
+                "lib/N.K. Jemisin/The Fifth Season/release.nfo",
+                500,
+            ),
+            file(
+                4,
+                Some(1),
+                "lib/N.K. Jemisin/The Fifth Season/check.sfv",
+                200,
+            ),
+            file(
+                5,
+                Some(1),
+                "lib/N.K. Jemisin/The Fifth Season/cover.jpg",
+                3_000,
+            ),
+            file(
+                6,
+                Some(1),
+                "lib/N.K. Jemisin/The Fifth Season/book.epub",
+                9_000,
+            ),
+        ];
+        let plan = build(&nodes);
+        let clutter: Vec<&PlannedOp> = plan
+            .ops
+            .iter()
+            .filter(|o| o.rule_id == "clutter-quarantine")
+            .collect();
+        assert_eq!(clutter.len(), 2, "only nfo + sfv set aside");
+        let sources: Vec<&str> = clutter.iter().map(|o| o.source_path.as_str()).collect();
+        assert!(sources.iter().any(|s| s.ends_with("release.nfo")));
+        assert!(sources.iter().any(|s| s.ends_with("check.sfv")));
+        // ebook + cover are kept: never a quarantine source.
+        assert!(!plan.ops.iter().any(|o| o.kind == "quarantine"
+            && (o.source_path.ends_with(".jpg") || o.source_path.ends_with(".epub"))));
     }
 
     // ---- stats --------------------------------------------------------------
