@@ -43,9 +43,92 @@ use serde::{Deserialize, Serialize};
 /// reachable under `abo_core::ipc` (AC-4). Defined in [`crate::error`].
 pub use crate::error::AppError;
 
+/// The category of a [`ScanWarning`].
+///
+/// The two per-entry kinds ([`JunctionSkipped`](ScanWarningKind::JunctionSkipped)
+/// and [`PermissionDenied`](ScanWarningKind::PermissionDenied)) share their
+/// kebab-case wire strings with the corresponding [`AppError`] codes on purpose:
+/// a warning is the collected-during-scan record of the same condition the error
+/// taxonomy names, so a caller can key off one vocabulary. The scanner records
+/// these as warnings (the scan runs to completion, AC-11) rather than raising
+/// them as errors; the `AppError` variants remain for the per-entry error case.
+/// The two path-length kinds are scan-level (FD-19): [`LongPathsDisabled`] when a
+/// recorded path exceeds the legacy 260-char limit while Windows long-path
+/// support is off, and [`NearMaxPathInterop`] for paths near the limit that
+/// other Windows tools may still mishandle.
+///
+/// [`LongPathsDisabled`]: ScanWarningKind::LongPathsDisabled
+/// [`NearMaxPathInterop`]: ScanWarningKind::NearMaxPathInterop
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScanWarningKind {
+    /// A junction or reparse point was recorded but deliberately not followed
+    /// (shares the `junction-skipped` wire string with [`AppError::JunctionSkipped`]).
+    JunctionSkipped,
+    /// An entry (or a subtree) could not be read because the OS denied access;
+    /// it was recorded where possible and the scan continued (shares the
+    /// `permission-denied` wire string with [`AppError::PermissionDenied`]).
+    PermissionDenied,
+    /// One or more recorded paths exceed the legacy 260-char Windows limit and
+    /// long-path support is disabled; carries a how-to link (FD-19, AC-101.4).
+    LongPathsDisabled,
+    /// A recorded path is at or near the legacy 260-char limit; some Windows
+    /// tools may not handle it even though this scan did (FD-19 interop note).
+    NearMaxPathInterop,
+}
+
+/// A non-fatal condition recorded during a scan, for the caller (and, from
+/// v0.4.0, the GUI) to surface. Structured now so the shape is stable before any
+/// UI renders it (spec F-101: "add a warning record to the ScanSummary;
+/// structure it; the GUI renders it in v0.4.0").
+///
+/// `path` is the stored, human-readable path the warning concerns (the first
+/// offending path, for the scan-level [`ScanWarningKind::LongPathsDisabled`]).
+/// `detail` is a family-safe sentence; `how_to` is an optional link to guidance
+/// (populated for [`ScanWarningKind::LongPathsDisabled`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ScanWarning {
+    /// The category of condition (see [`ScanWarningKind`]).
+    pub kind: ScanWarningKind,
+    /// The stored, human-readable path the warning concerns.
+    pub path: String,
+    /// A family-safe, human-readable explanation.
+    pub detail: String,
+    /// An optional link to guidance (populated for `long-paths-disabled`).
+    pub how_to: Option<String>,
+}
+
+impl ScanWarning {
+    /// Build a `junction-skipped` warning for a recorded junction/reparse point.
+    pub fn junction_skipped(path: &std::path::Path) -> Self {
+        Self {
+            kind: ScanWarningKind::JunctionSkipped,
+            path: path.to_string_lossy().into_owned(),
+            detail: "This item is a junction or reparse point (a link to another \
+                     location). It was recorded but not opened, so the scan cannot \
+                     loop back on itself."
+                .to_string(),
+            how_to: None,
+        }
+    }
+
+    /// Build a `permission-denied` warning for a subtree the OS refused to read.
+    pub fn permission_denied(path: &std::path::Path) -> Self {
+        Self {
+            kind: ScanWarningKind::PermissionDenied,
+            path: path.to_string_lossy().into_owned(),
+            detail: "This item could not be read because Windows denied access. It \
+                     was skipped and the rest of the scan continued."
+                .to_string(),
+            how_to: None,
+        }
+    }
+}
+
 /// The result of a completed [`crate::scan::run_scan`]: the metadata of the one
 /// immutable `scans` row it wrote (F-105), plus the count of entries skipped
-/// during the walk (permission-denied subtrees, unstatable entries; AC-11).
+/// during the walk (permission-denied subtrees, unstatable entries; AC-11) and
+/// the structured [`ScanWarning`] records collected during the scan (FD-19).
 ///
 /// `total_bytes` is the sum of file sizes (directories contribute 0). Timestamps
 /// are ISO-8601 UTC, whole-second precision (see [`crate::scan`]). `root_path`
@@ -68,6 +151,10 @@ pub struct ScanSummary {
     pub completed_at: String,
     /// Terminal status of the snapshot; `completed` for a successful scan.
     pub status: String,
+    /// Structured non-fatal conditions recorded during the scan (junctions
+    /// skipped, permission-denied subtrees, long-path warnings). Empty for a
+    /// clean scan. The GUI renders these from v0.4.0; this release logs them.
+    pub warnings: Vec<ScanWarning>,
 }
 
 /// One persisted `entries` row (F-101 / F-105), read back for the tracer.
@@ -205,6 +292,8 @@ mod contract {
     #[test]
     fn every_cross_boundary_type_is_ipc_ready() {
         assert_ipc_ready::<ScanSummary>();
+        assert_ipc_ready::<ScanWarning>();
+        assert_ipc_ready::<ScanWarningKind>();
         assert_ipc_ready::<EntryRow>();
         assert_ipc_ready::<AppError>();
         // Phase 5 shell payloads (command returns + event payloads).

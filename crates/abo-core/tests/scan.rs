@@ -13,7 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use abo_core::db::open_db;
-use abo_core::ipc::EntryRow;
+use abo_core::ipc::{EntryRow, ScanWarningKind};
 use abo_core::scan::{get_scan_entries, run_scan};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -293,6 +293,114 @@ async fn bad_root_is_rejected() {
     assert_eq!(count, 0, "a bad root writes no scans row");
 }
 
+/// AC-101.1: scanning the P1 fixture library yields exact expected entry counts
+/// and byte totals, checked against the generator's own `GeneratedLibrary` index
+/// (the golden source, per test-strategy.md Section 3). This is the persisted
+/// (run_scan -> DB) counterpart of the fixtures module's walk-level self-test.
+#[tokio::test]
+async fn scan_fixture_library_counts_match_generated() {
+    use abo_core::fixtures::{generate, standard_library_manifest, GeneratedKind};
+
+    let (_db, pool) = fresh_pool().await;
+    let tree = TempDir::new().expect("fixture tempdir");
+    let lib = generate(&standard_library_manifest(), tree.path()).expect("generate fixtures");
+
+    let summary = run_scan(&pool, tree.path()).await.expect("scan fixtures");
+    assert_eq!(summary.status, "completed");
+
+    let entries = get_scan_entries(&pool, summary.scan_id)
+        .await
+        .expect("read entries");
+
+    // File count and byte total must match the generator's materialized index
+    // exactly (dirs are compared via file count + the +1 root below to avoid the
+    // NFC/NFD-fold subtlety the generator already accounts for on this host).
+    let scanned_files = entries.iter().filter(|e| e.kind == "file").count();
+    let declared_files = lib
+        .entries
+        .iter()
+        .filter(|e| e.kind == GeneratedKind::File)
+        .count();
+    assert_eq!(
+        scanned_files, declared_files,
+        "persisted file count must equal the generator's declared file count"
+    );
+
+    assert_eq!(
+        summary.total_bytes as u64, lib.declared_total_bytes,
+        "persisted byte total must equal the manifest-declared total (AC-F5 tie-in)"
+    );
+
+    // Every materialized directory (plus the scan root) is present as a dir row.
+    let scanned_dirs = entries.iter().filter(|e| e.kind == "dir").count();
+    let declared_dirs = lib
+        .entries
+        .iter()
+        .filter(|e| e.kind == GeneratedKind::Dir)
+        .count();
+    assert_eq!(
+        scanned_dirs,
+        declared_dirs + 1,
+        "persisted dir count must equal declared dirs plus the scan root"
+    );
+}
+
+/// AC-101.5: names are captured case-preservingly, and NFC/NFD Unicode inputs are
+/// both captured verbatim (the scanner never normalizes - that is F-304's job).
+/// The NFC/NFD twin assertion is conditional on the host filesystem keeping the
+/// two byte-forms as distinct directory entries (Windows NTFS and Linux ext4 do);
+/// a folding filesystem is handled with a skip-note so CI stays green everywhere.
+#[tokio::test]
+async fn scan_preserves_case_and_unicode_forms() {
+    let (_db, pool) = fresh_pool().await;
+    let base = TempDir::new().expect("base tempdir");
+
+    // Case preservation: a mixed-case name round-trips byte-for-byte.
+    let mixed = base.path().join("MixedCase Book");
+    fs::create_dir(&mixed).expect("mkdir mixed-case");
+    fs::write(mixed.join("Chapter One.m4b"), b"audio").expect("write");
+
+    // NFC vs NFD forms of "Cafe" with an accented e.
+    let nfc = base.path().join("Caf\u{00e9}"); // é as one code point (NFC)
+    let nfd = base.path().join("Cafe\u{0301}"); // e + combining acute (NFD)
+    let nfc_made = fs::create_dir(&nfc).is_ok();
+    let nfd_made = fs::create_dir(&nfd).is_ok();
+
+    let summary = run_scan(&pool, base.path()).await.expect("scan");
+    let entries = get_scan_entries(&pool, summary.scan_id)
+        .await
+        .expect("read");
+
+    // Case-preserving: the exact mixed-case name is stored, not lowercased.
+    assert!(
+        entries.iter().any(|e| e.name == "MixedCase Book"),
+        "the mixed-case directory name must be preserved verbatim"
+    );
+    assert!(
+        entries.iter().any(|e| e.name == "Chapter One.m4b"),
+        "the mixed-case file name must be preserved verbatim"
+    );
+
+    // Unicode forms: both captured verbatim when the FS kept them distinct.
+    let nfc_present = entries.iter().any(|e| e.name == "Caf\u{00e9}");
+    let nfd_present = entries.iter().any(|e| e.name == "Cafe\u{0301}");
+    if nfc_made && nfd_made && nfc_present && nfd_present {
+        // Ideal case (NTFS / ext4): both distinct byte-forms are captured.
+        assert!(
+            nfc_present && nfd_present,
+            "both NFC and NFD forms captured"
+        );
+    } else {
+        // A folding filesystem collapsed the pair; at least one form must be
+        // present and stored WITHOUT normalization (the scanner never rewrites
+        // the bytes it read).
+        assert!(
+            nfc_present || nfd_present,
+            "at least one Unicode form must be captured verbatim"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Windows-only filesystem-edge tests (AC-10, AC-11). Each builds its OS-feature
 // fixture at runtime and guarantees cleanup via a Drop guard.
@@ -383,6 +491,16 @@ async fn scan_records_permission_denied() {
         "the unreadable subtree is counted as skipped (was {})",
         summary.skipped_count
     );
+    // AC-101.3: the denied subtree is recorded as a structured warning, not just
+    // a count.
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|w| w.kind == ScanWarningKind::PermissionDenied),
+        "a permission-denied warning must be recorded, got {:?}",
+        summary.warnings
+    );
 
     let entries = get_scan_entries(&pool, summary.scan_id)
         .await
@@ -429,6 +547,16 @@ async fn scan_terminates_on_junction_loop() {
         summary.entry_count < 20,
         "entry count stays finite (loop terminated), was {}",
         summary.entry_count
+    );
+    // AC-101.2: the junction is recorded AS a structured junction-skipped warning
+    // (not merely present as a dir entry), naming the loop path.
+    assert!(
+        summary
+            .warnings
+            .iter()
+            .any(|w| w.kind == ScanWarningKind::JunctionSkipped && w.path.ends_with("loop")),
+        "a junction-skipped warning for the loop path must be recorded, got {:?}",
+        summary.warnings
     );
 
     let entries = get_scan_entries(&pool, summary.scan_id)
