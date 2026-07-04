@@ -50,6 +50,30 @@ walkdir = "2"
 # tauri`) and the zero-network gate (tests/no_network.rs) both stay green.
 globset = "0.4"
 
+# v0.2.0 Phase 4a (F-301 pattern matchers, F-302 noise strippers): the parse
+# module recognizes and strips naming noise with real regular expressions
+# rather than hand-rolled string scanning, since the seed recipes this phase
+# adapts from (_local/prior-work/bulkrename_chatgpt.md,
+# _local/prior-work/chatgpt_shell.md) are themselves written as regexes.
+# `regex` pulls only regex-syntax, regex-automata, aho-corasick, and memchr
+# (no tauri, no network), so the core-purity gate and the zero-network gate
+# (tests/no_network.rs) both stay green.
+regex = "1"
+
+# v0.2.0 Phase 4b (F-304 name normalizer): NFC normalization (AC-304.3) and
+# grapheme-safe word-boundary truncation (AC-304.4). `unicode-normalization`
+# supplies the NFC pass so an NFC and an NFD spelling of the same title
+# collapse to a byte-identical component; `unicode-segmentation` supplies
+# grapheme-cluster iteration so a length cap never splits a multi-code-point
+# grapheme. Both are pure table-driven crates (unicode-normalization pulls
+# only tinyvec; unicode-segmentation pulls nothing): no tauri and no network,
+# so the core-purity gate (`cargo tree -p abo-core -e normal | grep -i tauri`)
+# and the zero-network gate (tests/no_network.rs) both stay green. Pinned to
+# the versions already resolved in Cargo.lock (no pin exists in the reference
+# project E:/Projects/product-on-purpose/repo-sync-tool).
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+
 # v0.2.0 Phase 3 (F-102 WizTree CSV import): WizTree quotes its `File Name`
 # column (many real paths embed commas, see the WizTree_2026-03-25.csv fixture),
 # so a real RFC4180 parser is needed rather than a naive comma split. `csv`
@@ -109,3 +133,11 @@ log = { version = "0.4", features = ["std"] }
 # (AC-13). Integration tests are separate crates and do not inherit the library's
 # normal dependencies, so sqlx is restated here (feature set matches the lib).
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+# v0.2.0 Phase 4a (F-302 noise strippers): the idempotence property
+# `strip(strip(x)) == strip(x)` (AC-302.2) is a proptest property test over a
+# generator that composes realistic name fragments and arbitrary unicode
+# strings. Dev-dependency only: proptest never reaches the production build,
+# so core purity is unaffected. No pinned version exists yet in the reference
+# project (E:/Projects/product-on-purpose/repo-sync-tool), so this pins the
+# current stable major version.
+proptest = "1"
