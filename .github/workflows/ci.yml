@@ -109,12 +109,41 @@ jobs:
       - name: Build frontend
         run: pnpm build
 
+      # Reality fix (Phase 7, found reviewing this run's own log): ci-plan.md's single
+      # regex used a `(?!localhost|127\.0\.0\.1)` negative lookahead, which POSIX
+      # extended regex (what `grep -E` implements) does not support. GNU grep does not
+      # error on it, it just mis-parses it (visible as "grep: warning: ? at start of
+      # expression" in the lint log) and the catch-all `https?://` half of the pattern
+      # then silently never matches ANY plain https/http URL, localhost or otherwise
+      # (verified: "https://evil.com" produced zero matches against the original
+      # pattern). Only the explicit CDN/font-host substrings still worked. That is a
+      # false negative in a safety-relevant gate (FD-11), not a cosmetic warning, so it
+      # is fixed here rather than left as a decorative check that happened to pass.
+      # Split into two greps instead: one for any https/http URL that is not
+      # localhost/127.0.0.1 (plain POSIX alternation, no lookahead), one for the known
+      # CDN/font hosts regardless of scheme.
+      #
+      # With the lookahead bug fixed, grepping the REAL built dist/ (this phase's
+      # reality adaptation, see above) surfaces two static, non-network vendor strings
+      # that ship in every stock React production bundle: the four `http://www.w3.org/...`
+      # XML/SVG namespace identifiers (namespace URIs are never dereferenced; they are
+      # comparison strings, not fetched) and React's `https://react.dev/errors/` error-
+      # decoder link prefix (a static string only ever displayed to a human in a thrown
+      # error, never auto-fetched). Both are narrowly allowlisted by exact prefix below;
+      # any OTHER https/http reference still fails the gate. ci-plan.md Section 2
+      # records this fix and the allowlist.
       - name: Assert zero external network references
         run: |
           set -eu
-          patterns='https?://(?!localhost|127\.0\.0\.1)|fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.|unpkg\.com|jsdelivr'
           targets="index.html $(find dist -type f \( -name '*.html' -o -name '*.js' -o -name '*.css' \))"
-          if grep -HnEi "$patterns" $targets; then
+          hits=0
+          grep -HnE 'https?://' $targets 2>/dev/null \
+            | grep -viE 'https?://(localhost|127\.0\.0\.1)' \
+            | grep -v 'https://react\.dev/errors/' \
+            | grep -v 'http://www\.w3\.org/' \
+            && hits=1
+          grep -HnEi 'fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.|unpkg\.com|jsdelivr' $targets 2>/dev/null && hits=1
+          if [ "$hits" -eq 1 ]; then
             echo "::error::External host or font-CDN reference found. App and report must be zero-network (FD-11)."
             exit 1
           fi
