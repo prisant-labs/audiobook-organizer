@@ -14,9 +14,18 @@
 //!   - Phase 3 fills `scan` (walker, file typing, snapshot persistence).
 //!   - Phase 4 extends `error` with the Scan family and fills `ipc` (payload
 //!     structs), all deriving `serde` and `specta::Type`.
+//!
+//! v0.2.0 Phase 1 adds `fixtures`: a deterministic synthetic-library
+//! generator that every later v0.2.0 phase's golden tests build on (see
+//! `fixtures` module docs). It is test-only surface (`cfg(any(test, feature
+//! = "fixtures"))`), so it never touches the production build or the public
+//! API the shell depends on.
 
 pub mod db;
 pub mod error;
 pub mod ipc;
 pub mod paths;
 pub mod scan;
+
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixtures;
