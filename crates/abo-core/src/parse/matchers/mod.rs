@@ -53,6 +53,8 @@ mod pattern7;
 mod pattern8;
 mod pattern9;
 
+pub(crate) use pattern8::DEGRADED_FALLBACK_SCORE;
+
 use crate::parse::ParsedFields;
 
 /// Stable matcher identity. `as_str` gives the stable `pattern-N` id form
