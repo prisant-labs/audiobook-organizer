@@ -43,7 +43,11 @@
 //! `db::plans` and `db::rulesets` (F-403/F-405/F-801 storage). Phase 2 adds
 //! `plan::templates`: F-401 naming templates and presets, pure logic with no
 //! `cfg`-gating, consuming `parse::ParsedFields` and
-//! `parse::normalize::normalize_component` (see `plan` module docs).
+//! `parse::normalize::normalize_component` (see `plan` module docs). Phase 3
+//! adds `ruleset`: the F-402 structure policies plus the F-801
+//! schema-versioned ruleset model (validation, default seed, and the pure
+//! policy helpers the plan builder calls), with no `cfg`-gating (see `ruleset`
+//! module docs).
 
 pub mod classify;
 pub mod db;
@@ -53,6 +57,7 @@ pub mod job;
 pub mod parse;
 pub mod paths;
 pub mod plan;
+pub mod ruleset;
 pub mod scan;
 
 #[cfg(any(test, feature = "fixtures"))]
