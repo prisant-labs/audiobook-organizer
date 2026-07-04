@@ -7,8 +7,12 @@
 //! doc comment for why: naming is filesystem-name SEMANTICS, not a
 //! platform-specific concern, so a plan built on one host renders
 //! byte-identically on another, matching the NFR Determinism requirement).
-//! Later v0.3.0 phases add the rest of this module: `builder` (F-403, Phase
-//! 4), `validate` (F-404, Phase 5), `disc`/`dupes::detect` (F-204/F-205/
-//! F-701, Phase 6), and `export`/`report` (F-505/F-506, Phases 7-8).
+//! v0.3.0 Phase 4 adds [`builder`] (F-403): the ordered, immutable,
+//! deterministic plan builder that consumes a snapshot + classifications +
+//! merged fields + a ruleset and emits the campaign-grouped operation list.
+//! Later v0.3.0 phases add the rest of this module: `validate` (F-404, Phase
+//! 5), `disc`/`dupes::detect` (F-204/F-205/F-701, Phase 6), and
+//! `export`/`report` (F-505/F-506, Phases 7-8).
 
+pub mod builder;
 pub mod templates;
