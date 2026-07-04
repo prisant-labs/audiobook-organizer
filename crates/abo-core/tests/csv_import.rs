@@ -182,6 +182,7 @@ async fn import_wholly_invalid_file_writes_no_scan_row() {
 /// WizTree's `Modified` shape (`YYYY/MM/DD HH:MM:SS`), the reverse of
 /// `crate::scan::csv_import::reformat_modified`. Test-only: only needs to
 /// round-trip the exact shape the walker itself produces.
+#[cfg(windows)] // used only by the cfg(windows) parity test; dead code on the linux clippy leg otherwise
 fn to_wiztree_modified(iso: &str) -> String {
     let date = &iso[0..10].replace('-', "/");
     let time = &iso[11..19];
@@ -190,6 +191,7 @@ fn to_wiztree_modified(iso: &str) -> String {
 
 /// Quote a `File Name` field WizTree-style (wrap in `"`; WizTree paths never
 /// contain a literal `"`, so no escaping is needed for this test's fixtures).
+#[cfg(windows)] // used only by the cfg(windows) parity test; dead code on the linux clippy leg otherwise
 fn quote(s: &str) -> String {
     format!("\"{s}\"")
 }
