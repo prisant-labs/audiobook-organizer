@@ -11,20 +11,36 @@ export const commands = {
 	 *  Start a live scan of `root` as a background job (F-104), returning
 	 *  immediately with the new job's id.
 	 * 
-	 *  Records a `running` `jobs` row, spawns `abo_core::scan::run_scan` on Tauri's
-	 *  async runtime, and returns [`JobStarted`] straight away so the IPC call never
-	 *  blocks on the walk. When the spawned scan finishes, the task marks the `jobs`
-	 *  row `completed` (and emits `job:completed { job_id, scan_id }`) or `failed`
-	 *  with the stable error `code` (and emits `job:failed { job_id, code }`).
+	 *  Records a `running` `jobs` row, registers a [`CancelFlag`] under the job id so
+	 *  [`scan_cancel`] can stop it, spawns `abo_core::scan::run_scan_with_job` on
+	 *  Tauri's async runtime with a progress sink that emits `job:progress`, and
+	 *  returns [`JobStarted`] straight away so the IPC call never blocks on the walk.
+	 *  When the spawned scan reaches a terminal state the task marks the `jobs` row:
+	 *  `completed` (emits `job:completed { job_id, scan_id }`), `failed` with the
+	 *  stable error `code` (emits `job:failed { job_id, code }`), or `cancelled` (no
+	 *  event: the requester already knows, and the `jobs` row is the durable signal).
+	 *  The cancel flag is deregistered once the job is terminal, whichever way it ends.
 	 * 
-	 *  Spine scope (this phase's brief): the `jobs` handling is deliberately minimal
-	 *  - no progress rows and no cancellation. `root` arrives as a plain string from
-	 *  the frontend because the spine has no dialog plugin; the backend-mediated
-	 *  folder picker (tauri-plugin-dialog, F-909) arrives at v0.4.0, together with
-	 *  the capability-model change it needs. That is acceptable here because the
-	 *  tracer UI (Phase 6) is disposable (FD-29).
+	 *  `root` arrives as a plain string from the frontend because this release has no
+	 *  dialog plugin; the backend-mediated folder picker (tauri-plugin-dialog, F-909)
+	 *  arrives at v0.4.0 with the capability-model change it needs. That is acceptable
+	 *  because the tracer UI is disposable (FD-29).
 	 */
 	scanStart: (root: string) => typedError<JobStarted, AppError>(__TAURI_INVOKE("scan_start", { root })),
+	/**
+	 *  Request cancellation of a running scan job (F-104, FD-02 cooperative Stop).
+	 * 
+	 *  Flips the [`CancelFlag`] registered for `job_id`, which the running scan
+	 *  observes at its next safe entry boundary and stops there (discarding its
+	 *  partial snapshot; see `run_scan_with_job`). Returns `true` if a running job
+	 *  was found and signalled, `false` if no such in-flight job exists (already
+	 *  finished, never started, or unknown id) - a clear no-op status, not an error
+	 *  (a cancel of a not-running job is expected and harmless).
+	 * 
+	 *  Synchronous: it only flips an atomic in managed state, so it needs no async
+	 *  runtime and returns instantly without waiting for the scan to actually stop.
+	 */
+	scanCancel: (jobId: number) => __TAURI_INVOKE<boolean>("scan_cancel", { jobId }),
 	/**
 	 *  Read every entry of a completed snapshot back for the tracer UI (F-105).
 	 * 

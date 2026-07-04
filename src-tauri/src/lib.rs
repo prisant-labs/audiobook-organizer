@@ -27,9 +27,14 @@ mod events;
 
 // Re-exported for the panic-safety integration test (`tests/job_terminal.rs`),
 // which drives the spawned scan job's terminal-state wrapper directly. Exposing
-// just this one helper keeps the rest of the command layer module-private.
-pub use commands::run_job_to_terminal;
+// just this helper (and its terminal-outcome type) keeps the rest of the command
+// layer module-private.
+pub use commands::{run_job_to_terminal, JobEnd};
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use abo_core::job::CancelFlag;
 use tauri::Manager;
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 use tauri_specta::{collect_commands, collect_events};
@@ -46,6 +51,12 @@ pub struct AppState {
     /// What happened while opening the database (Normal vs Recovered); surfaced
     /// by the `db_status` command as [`abo_core::ipc::DbStatus`].
     pub db_outcome: abo_core::db::DbOpenOutcome,
+    /// Cancel flags for in-flight scan jobs, keyed by `jobs.id` (F-104).
+    /// `scan_start` inserts a flag when it spawns a job and removes it when the
+    /// job reaches a terminal state; `scan_cancel` flips the flag to request a
+    /// cooperative stop. A plain `std::sync::Mutex` is enough: every access is a
+    /// brief, non-async insert/remove/lookup, never held across an `.await`.
+    pub jobs: Arc<Mutex<HashMap<i64, CancelFlag>>>,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -66,6 +77,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             commands::scan_start,
+            commands::scan_cancel,
             commands::scan_entries,
             commands::db_status,
         ])
@@ -124,7 +136,11 @@ pub fn run() {
                 );
             }
 
-            app.manage(AppState { pool, db_outcome });
+            app.manage(AppState {
+                pool,
+                db_outcome,
+                jobs: Arc::new(Mutex::new(HashMap::new())),
+            });
             Ok(())
         })
         .run(tauri::generate_context!())
