@@ -43,13 +43,30 @@ tracing = { workspace = true, features = ["log"] }
 # core still carries no chrono/time dependency (migration 0001 comment).
 walkdir = "2"
 
+[features]
+# v0.2.0 Phase 1: gates the `fixtures` module (see src/fixtures/mod.rs doc
+# comment). Off by default so the fixture generator never reaches the
+# production shell build; the self dev-dependency below turns it on
+# automatically for `cargo test -p abo-core`, including integration tests
+# under tests/*.rs, without any caller needing to pass --features.
+fixtures = []
+
 # tokio is a TEST-ONLY dependency: the library's async fns run on whatever
 # runtime the caller (the shell) provides, and sqlx's runtime integration is
 # pulled via its `runtime-tokio` feature. Tests need the `#[tokio::test]` macro
 # (the `macros` + `rt` features) and a runtime; it inherits the workspace
 # `full` feature set, which is a superset of those. tempfile backs the temp-dir
 # tests. serde_json backs the error-taxonomy serialization tests only.
+# Self dev-dependency, `fixtures` feature enabled: this is what makes
+# `crate::fixtures` (gated `cfg(feature = "fixtures")`) visible to
+# integration tests under tests/*.rs, which are separate compilation units
+# and do not see the library's own `cfg(test)`. Cargo unifies features
+# across a package's whole dev-dependency graph for `cargo test`, so this is
+# enough for every Phase 2-5 integration test to `use abo_core::fixtures::*`
+# without passing --features explicitly. Verified by
+# tests/fixtures_integration_smoke.rs.
 [dev-dependencies]
+abo-core = { path = ".", features = ["fixtures"] }
 tokio = { workspace = true }
 tempfile = "3"
 serde_json = { workspace = true }
