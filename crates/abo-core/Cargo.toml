@@ -133,6 +133,17 @@ log = { version = "0.4", features = ["std"] }
 # (AC-13). Integration tests are separate crates and do not inherit the library's
 # normal dependencies, so sqlx is restated here (feature set matches the lib).
 sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
+# v0.2.0 Phase 5 (F-201/F-202/F-203 classification goldens): insta drives the
+# committed snapshot tests for folder classification, health metrics, and
+# multi-book flags over the P1 fixture library (tests/classification_golden.rs).
+# Dev-dependency only: insta never reaches the production build, so core purity
+# is unaffected. No pin exists in the reference project
+# (E:/Projects/product-on-purpose/repo-sync-tool); pinned EXACT here so a silent
+# insta bump cannot churn the committed snapshots. `default-features = false`
+# drops insta's optional format features (yaml/json/ron) that would pull extra
+# crates; the goldens use the plain-string `assert_snapshot!` only.
+insta = { version = "=1.43.2", default-features = false }
+
 # v0.2.0 Phase 4a (F-302 noise strippers): the idempotence property
 # `strip(strip(x)) == strip(x)` (AC-302.2) is a proptest property test over a
 # generator that composes realistic name fragments and arbitrary unicode

@@ -26,7 +26,20 @@
 //! `parse` module docs). Phase 4b (a later dispatch on the same branch)
 //! fills in `parse::extract` (F-303 confidence merge) and `parse::normalize`
 //! (F-304 filesystem-safe names) on top of it.
+//!
+//! v0.2.0 Phase 5 adds `classify`: F-201 (folder classification engine), F-202
+//! (library health metrics), and F-203 (multi-book folder detection), pure
+//! logic with no `cfg`-gating that consumes the `parse` merge and
+//! `scan::typing` (see `classify` module docs). Its rule ids and evidence
+//! become the F-504 explainability surface in v0.4.0.
+//!
+//! v0.2.0 Phase 6 adds `db::activity`: F-1001, the append-only activity log.
+//! One `activity_records` row is appended per scan, CSV import, and classify
+//! run (`scan::run_scan_with_job`, `scan::run_csv_import`,
+//! `classify::run_classify`), success or failure, with no `cfg`-gating (see
+//! `db::activity` module docs for why parse has no standalone hook here).
 
+pub mod classify;
 pub mod db;
 pub mod error;
 pub mod ipc;

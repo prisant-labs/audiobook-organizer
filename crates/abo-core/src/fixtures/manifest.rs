@@ -547,6 +547,26 @@ pub fn standard_library_manifest() -> FixtureManifest {
                         &[FixtureFamily::Pattern9IrregularSeriesContainer],
                         vec![file("Charlie and the Chocolate Factory.m4b", 60_000)],
                     ),
+                    // Multi-book Wings of Fire: 5 sibling files, one series,
+                    // distinguished PRIMARILY by a leading series index. Real
+                    // per-book titles still differ (F-301 pattern 2 splits
+                    // them off after the dash), so this is the case where
+                    // title-text counting already works; it exists alongside
+                    // the F-203 unit tests that separately prove the
+                    // distinct-(title, series index) heuristic also survives
+                    // a naming style where the title text alone would
+                    // collapse (see crate::classify::multibook module doc).
+                    folder_fam(
+                        "Wings of Fire",
+                        &[FixtureFamily::MultiBookWingsOfFire],
+                        vec![
+                            file("Wings of Fire 01 - The Dragonet Prophecy.mp3", 90_000),
+                            file("Wings of Fire 02 - The Lost Heir.mp3", 88_000),
+                            file("Wings of Fire 03 - The Hidden Kingdom.mp3", 85_000),
+                            file("Wings of Fire 04 - The Dark Secret.mp3", 82_000),
+                            file("Wings of Fire 05 - The Brightest Night.mp3", 91_000),
+                        ],
+                    ),
                 ],
             ),
             // ---- Unicode NFC/NFD twin pair ----
@@ -629,6 +649,35 @@ pub fn standard_library_manifest() -> FixtureManifest {
                             file("The War of the Worlds Radio Play - Part 2.mp3", 60_000),
                         ],
                     ),
+                ],
+            ),
+            // ---- Golden-path completeness (P5 concern 2): the three
+            // remaining F-201 leaf classes the manifest otherwise never
+            // exercises directly (staging, docs-resources, empty). ----
+            //
+            // A folder with no files anywhere beneath it: no children at
+            // all, so F-201 rule 5 places it `empty` (AC-201.6).
+            folder_fam("Empty Folder", &[FixtureFamily::EmptyFolder], vec![]),
+            // A folder holding only non-audio content (a pdf and a txt),
+            // no audio anywhere beneath: F-201 rule 5 places it
+            // `docs-resources`.
+            folder_fam(
+                "Docs And Resources",
+                &[FixtureFamily::DocsResourcesOnly],
+                vec![
+                    file("Owner's Manual.pdf", 2_000),
+                    file("read me.txt", 500),
+                ],
+            ),
+            // A staging area: F-201 rule 1 routes a `_sort`-named folder to
+            // `staging` by name alone, regardless of the loose audio files
+            // sitting directly inside it.
+            folder_fam(
+                "_sort",
+                &[FixtureFamily::StagingArea],
+                vec![
+                    file("New Audiobook 1.mp3", 50_000),
+                    file("New Audiobook 2.mp3", 50_000),
                 ],
             ),
         ],

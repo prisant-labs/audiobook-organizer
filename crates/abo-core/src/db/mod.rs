@@ -15,6 +15,9 @@
 //! Safety invariant (this is a safety-adjacent path): recovery NEVER deletes the
 //! corrupt database. The file is moved into `corrupt-backups/`, together with
 //! its `-wal`/`-shm` sidecars, so nothing is ever lost.
+//!
+//! v0.2.0 Phase 6 adds [`activity`]: the F-1001 append-only `activity_records`
+//! log (one row per scan, CSV import, and classify run).
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -22,6 +25,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::SqlitePool;
+
+pub mod activity;
 
 use crate::error::AppError;
 

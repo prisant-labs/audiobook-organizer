@@ -14,9 +14,9 @@
 //! scope here.
 //!
 //! The pipeline, in order (order is load-bearing, see each step):
-//!   1. Unicode NFC normalization (AC-304.3).
-//!   2. Remove Windows-illegal characters `<>:"/\|?*` and ASCII control
+//!   1. Remove Windows-illegal characters `<>:"/\|?*` and ASCII control
 //!      characters (AC-304.1).
+//!   2. Unicode NFC normalization (AC-304.3).
 //!   3. Collapse internal whitespace runs to a single space and trim both
 //!      ends (F-304 "collapse whitespace").
 //!   4. Remove trailing dots and spaces (AC-304.1; Win32 strips them
@@ -42,6 +42,53 @@
 //! Every transformation that fired is recorded on
 //! [`NormalizedComponent::flags`] so a later review surface can explain what
 //! it changed and why, rather than silently rewriting a family's book name.
+//!
+//! # Idempotence: why illegal-char strip must run BEFORE NFC (not after)
+//!
+//! An earlier version of this pipeline ran NFC first and stripped illegal
+//! characters second. That ordering is not idempotent:
+//! `normalize(normalize(x))` can differ from `normalize(x)`, because an
+//! illegal character sitting between two code points can be a canonical-
+//! combination "blocker" (Unicode Normalization Annex #15): a starter and a
+//! later combining/composing code point separated by an intervening
+//! character (any character, illegal or not) do not compose under NFC,
+//! because composition only looks at a maximal contiguous combining
+//! sequence. Concretely, for input `"\u{113c2}*\u{113c7}"` (a Tulu-Tigalari
+//! base letter, an ASCII `*`, and a Tulu-Tigalari vowel sign that would
+//! canonically compose with the base if adjacent): running NFC first sees
+//! the `*` in between, so the base and vowel sign do NOT compose, and only
+//! afterward is the (non-combining) `*` stripped, leaving the base and vowel
+//! sign uncomposed side by side. Feed THAT output back into the same
+//! pipeline: this time there is no `*` between them, so NFC now composes
+//! them into the precomposed form. Two different fixed shapes for what
+//! should be one canonical value: not idempotent.
+//!
+//! The fix is to strip illegal/control characters FIRST, so NFC only ever
+//! runs once the blocker is already gone and always sees the same adjacency
+//! the string will have on every subsequent pass. Reordering alone (no
+//! fixpoint loop) is provably sufficient, not just empirically lucky:
+//!   - NFC is idempotent by construction (`nfc(nfc(s)) == nfc(s)` for any
+//!     `s`; this is a defining property of a normalization form, UAX #15
+//!     Definition 4).
+//!   - Stripping illegal/control characters is idempotent PROVIDED nothing
+//!     downstream re-introduces one. NFC canonical composition/decomposition
+//!     only ever produces the compositions and decompositions listed in the
+//!     Unicode Character Database; none of `<>:"/\|?*` (all ASCII
+//!     punctuation with no canonical decomposition mapping to them) or any
+//!     C0/C1 control code point appears as the output of a canonical
+//!     composition, so NFC never manufactures a fresh illegal or control
+//!     character for the strip step to have missed.
+//!   - Therefore, on the second pass: strip(nfc(strip(x))) == nfc(strip(x))
+//!     (the strip step is already a no-op, per the point above), and then
+//!     nfc(nfc(strip(x))) == nfc(strip(x)) (NFC idempotence). So the second
+//!     pass's steps 1-2 output is byte-identical to the first pass's, and
+//!     every step from 3 onward is a pure function of that shared output, so
+//!     the two passes concur all the way through. One reordering, no
+//!     fixpoint loop, no re-verification pass needed at runtime.
+//!
+//! See [`tests::idempotence_regression_seed`] for the literal seed proptest
+//! surfaced (`"\u{113c2}*\u{113c7}"`) as a deterministic, non-flaky
+//! regression alongside the `normalization_is_idempotent` proptest.
 
 use unicode_normalization::UnicodeNormalization;
 use unicode_segmentation::UnicodeSegmentation;
@@ -129,14 +176,15 @@ pub fn normalize_component(input: &str) -> NormalizedComponent {
 pub fn normalize_component_with(input: &str, options: &NormalizeOptions) -> NormalizedComponent {
     let mut flags = Vec::new();
 
-    // 1. Unicode NFC normalization (AC-304.3): an NFC and an NFD spelling of
-    //    the same title become the identical byte sequence here.
-    let nfc: String = input.nfc().collect();
-
-    // 2. Remove Windows-illegal and control characters (AC-304.1).
+    // 1. Remove Windows-illegal and control characters (AC-304.1). Runs
+    //    BEFORE NFC (see the module doc's idempotence section): stripping
+    //    first means NFC never sees a since-removed character acting as a
+    //    canonical-composition blocker between two code points that would
+    //    otherwise compose, which is what made the old NFC-then-strip order
+    //    non-idempotent.
     let mut removed_illegal = false;
     let mut removed_control = false;
-    let cleaned: String = nfc
+    let cleaned: String = input
         .chars()
         .filter(|c| {
             if ILLEGAL_CHARS.contains(c) {
@@ -157,11 +205,17 @@ pub fn normalize_component_with(input: &str, options: &NormalizeOptions) -> Norm
         flags.push(NormalizeFlag::ControlCharsRemoved);
     }
 
+    // 2. Unicode NFC normalization (AC-304.3): an NFC and an NFD spelling of
+    //    the same title become the identical byte sequence here. Now that
+    //    the blocker characters are already gone, this composes exactly the
+    //    same way on every subsequent pass (idempotent; see module doc).
+    let nfc: String = cleaned.nfc().collect();
+
     // 3. Collapse internal whitespace and trim both ends.
     let collapsed = if options.collapse_whitespace {
-        cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+        nfc.split_whitespace().collect::<Vec<_>>().join(" ")
     } else {
-        cleaned.trim().to_string()
+        nfc.trim().to_string()
     };
 
     // 4. Remove trailing dots and spaces (AC-304.1).
@@ -520,6 +574,33 @@ mod tests {
             normalize_component_with(messy, &opts).component,
             "The   Long    Way"
         );
+    }
+
+    /// Deterministic regression for the CI-flake proptest seed: a Tulu-
+    /// Tigalari base letter (`\u{113c2}`), an illegal `*`, and a Tulu-
+    /// Tigalari vowel sign (`\u{113c7}`) that canonically composes with the
+    /// base letter when the two are adjacent. Before the fix (NFC before
+    /// illegal-char strip), the `*` blocked composition during NFC and was
+    /// then stripped, leaving the base and vowel sign uncomposed; feeding
+    /// that output back in had no blocker left, so NFC composed them on the
+    /// second pass, i.e. `normalize(normalize(x)) != normalize(x)`. Pinned
+    /// here as a plain `#[test]` (not just left to the proptest, which only
+    /// finds this shape probabilistically) so this exact input can never
+    /// silently regress. See the module doc's "Idempotence" section for why
+    /// stripping before NFC (this pipeline's order) fixes it unconditionally.
+    #[test]
+    fn idempotence_regression_seed() {
+        let input = "\u{113c2}*\u{113c7}";
+        let once = norm(input);
+        let twice = norm(&once.component);
+        assert_eq!(
+            once.component, twice.component,
+            "normalize(normalize(x)) must equal normalize(x) for the seed input"
+        );
+        // The seed's `*` must still be stripped, and re-normalizing that
+        // already-clean output must be a true no-op flag-wise too.
+        assert!(!once.component.contains('*'));
+        assert_eq!(once.component, once.component.nfc().collect::<String>());
     }
 
     mod proptests {

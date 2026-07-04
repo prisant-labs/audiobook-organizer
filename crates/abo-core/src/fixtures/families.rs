@@ -52,6 +52,12 @@ pub enum FixtureFamily {
     /// The Harry Potter hard case: 11 direct files spanning 7 titles plus
     /// extras.
     MultiBookHarryPotter,
+    /// The Wings of Fire case: N sibling audio files, one series,
+    /// distinguished PRIMARILY by a leading series index (`Wings of Fire 01 -
+    /// The Dragonet Prophecy` ... `Wings of Fire 05 - The Brightest Night`),
+    /// exercising F-203's distinct-(title, series index) counting rather than
+    /// title text alone.
+    MultiBookWingsOfFire,
     /// A nonconforming disc folder (Disc/CD/Disk naming variants), the
     /// Verbal Advantage case among them.
     NonconformingDisc,
@@ -97,6 +103,18 @@ pub enum FixtureFamily {
     /// FD-01 pack-provenance member: a book folder carrying source-pack
     /// membership (see [`crate::fixtures::manifest::PackProvenance`]).
     PackMember,
+    /// A folder with no files anywhere beneath it (not even an empty child
+    /// folder holding a stray file) - the golden-path `empty` class case
+    /// (F-201 rule 5, AC-201.6).
+    EmptyFolder,
+    /// A folder holding only non-audio content (a pdf and a txt here) and no
+    /// audio anywhere beneath - the golden-path `docs-resources` class case
+    /// (F-201 rule 5).
+    DocsResourcesOnly,
+    /// A staging area (`_sort`) holding a couple of loose audio files - the
+    /// golden-path `staging` class case (F-201 rule 1: name alone routes it
+    /// to staging regardless of content).
+    StagingArea,
 }
 
 impl FixtureFamily {
@@ -119,6 +137,7 @@ impl FixtureFamily {
             FixtureFamily::Mixed => "mixed",
             FixtureFamily::MultiBookNarnia => "multi-book-narnia",
             FixtureFamily::MultiBookHarryPotter => "multi-book-harry-potter",
+            FixtureFamily::MultiBookWingsOfFire => "multi-book-wings-of-fire",
             FixtureFamily::NonconformingDisc => "nonconforming-disc",
             FixtureFamily::ParallelFormatZeroM4b => "parallel-format-0-m4b",
             FixtureFamily::UnicodeNfcNfdTwin => "unicode-nfc-nfd-twin",
@@ -134,6 +153,9 @@ impl FixtureFamily {
             FixtureFamily::VideoCourseRadioPlay => "video-course-radio-play",
             FixtureFamily::PackShell => "pack-shell",
             FixtureFamily::PackMember => "pack-member",
+            FixtureFamily::EmptyFolder => "empty-folder",
+            FixtureFamily::DocsResourcesOnly => "docs-resources-only",
+            FixtureFamily::StagingArea => "staging-area",
         }
     }
 
@@ -156,6 +178,7 @@ impl FixtureFamily {
         FixtureFamily::Mixed,
         FixtureFamily::MultiBookNarnia,
         FixtureFamily::MultiBookHarryPotter,
+        FixtureFamily::MultiBookWingsOfFire,
         FixtureFamily::NonconformingDisc,
         FixtureFamily::ParallelFormatZeroM4b,
         FixtureFamily::UnicodeNfcNfdTwin,
@@ -171,6 +194,9 @@ impl FixtureFamily {
         FixtureFamily::VideoCourseRadioPlay,
         FixtureFamily::PackShell,
         FixtureFamily::PackMember,
+        FixtureFamily::EmptyFolder,
+        FixtureFamily::DocsResourcesOnly,
+        FixtureFamily::StagingArea,
     ];
 }
 

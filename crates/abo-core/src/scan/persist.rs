@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 
 use sqlx::SqlitePool;
 
+use crate::db::activity::{append_activity, json_object, ActivityOutcome};
 use crate::error::AppError;
 use crate::ipc::{EntryRow, ScanSummary};
 use crate::job::JobContext;
@@ -89,7 +90,42 @@ pub async fn run_scan(pool: &SqlitePool, root: &Path) -> Result<ScanSummary, App
 /// Per-entry permission-denied and junction cases are NOT errors - they are
 /// recorded, counted in [`ScanSummary::skipped_count`], and surfaced as
 /// [`ScanSummary::warnings`]; the scan runs to completion (AC-11).
+///
+/// F-1001 (v0.2.0 Phase 6): after [`run_scan_with_job_impl`] returns, this
+/// wrapper appends exactly one `activity_records` row for the run - action
+/// `"scan"`, whichever outcome resulted (`Completed` -> succeeded, `Cancelled`
+/// -> cancelled, `Err` -> failed with the [`AppError::code`]) - regardless of
+/// which return point inside the impl produced it, so an early root-validation
+/// failure is logged just as reliably as a late DB-write failure.
 pub async fn run_scan_with_job(
+    pool: &SqlitePool,
+    root: &Path,
+    excludes: &[String],
+    ctx: &JobContext,
+) -> Result<ScanOutcome, AppError> {
+    let result = run_scan_with_job_impl(pool, root, excludes, ctx).await;
+
+    let params = json_object(&[
+        ("root", &root.display().to_string()),
+        ("excludes", &excludes.join(",")),
+    ]);
+    let outcome = match &result {
+        Ok(ScanOutcome::Completed(_)) => ActivityOutcome::Succeeded,
+        Ok(ScanOutcome::Cancelled { .. }) => ActivityOutcome::Cancelled,
+        Err(e) => ActivityOutcome::Failed {
+            error_code: e.code().to_string(),
+        },
+    };
+    append_activity(pool, "scan", &params, &outcome).await;
+
+    result
+}
+
+/// The scan implementation [`run_scan_with_job`] wraps with the F-1001
+/// activity-log append. See that function's doc for the full contract; this
+/// split exists only so the append happens exactly once, after every return
+/// point below, without repeating it at each one.
+async fn run_scan_with_job_impl(
     pool: &SqlitePool,
     root: &Path,
     excludes: &[String],
