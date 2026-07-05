@@ -251,6 +251,33 @@ impl Default for ClutterPolicy {
     }
 }
 
+/// Map a file name to the non-audio clutter category F-402 governs, by
+/// extension (case-insensitive), or [`None`] when the file is not clutter this
+/// policy applies to. The plan builder calls this to look a concrete file's
+/// action up via [`ClutterPolicy::action_for`].
+///
+/// Deliberately extension-level, not [`crate::scan::typing::FileClass`]-level:
+/// `.nfo`, `.sfv`, and `.txt` all type as `release-info`, but `.txt` is a
+/// description SIDECAR governed by [`StructurePolicy::sidecars`] (keep-with-book)
+/// while `.nfo`/`.sfv` are clutter this policy quarantines, so they must be
+/// distinguished by extension. Audio and video are never clutter (audio is the
+/// content; video routes to manual review via FD-17), so they return `None`.
+pub fn clutter_kind_from_name(name: &str) -> Option<ClutterKind> {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())?
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "epub" | "pdf" | "mobi" | "azw3" | "lit" | "pdb" | "docx" => Some(ClutterKind::Ebook),
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" => Some(ClutterKind::Cover),
+        "nfo" => Some(ClutterKind::Nfo),
+        "sfv" => Some(ClutterKind::Sfv),
+        "m3u" | "m3u8" | "cue" => Some(ClutterKind::Playlist),
+        "url" | "html" | "htm" => Some(ClutterKind::Weblink),
+        _ => None,
+    }
+}
+
 impl ClutterPolicy {
     /// The action this policy assigns to a given clutter category.
     pub fn action_for(&self, kind: ClutterKind) -> ClutterAction {
@@ -626,6 +653,41 @@ mod tests {
             clutter.action_for(ClutterKind::Weblink),
             ClutterAction::Quarantine
         );
+    }
+
+    /// AC-6 mapping: extensions resolve to their clutter category, `.txt` is
+    /// NOT clutter (it is a keep-with-book description sidecar), and audio is
+    /// never clutter.
+    #[test]
+    fn clutter_kind_maps_extensions_and_excludes_sidecars_and_audio() {
+        assert_eq!(
+            clutter_kind_from_name("release.nfo"),
+            Some(ClutterKind::Nfo)
+        );
+        assert_eq!(clutter_kind_from_name("check.sfv"), Some(ClutterKind::Sfv));
+        assert_eq!(
+            clutter_kind_from_name("tracks.m3u"),
+            Some(ClutterKind::Playlist)
+        );
+        assert_eq!(
+            clutter_kind_from_name("buy.url"),
+            Some(ClutterKind::Weblink)
+        );
+        assert_eq!(
+            clutter_kind_from_name("book.epub"),
+            Some(ClutterKind::Ebook)
+        );
+        assert_eq!(
+            clutter_kind_from_name("cover.JPG"),
+            Some(ClutterKind::Cover)
+        );
+        // A .txt description is a sidecar, not clutter this policy governs.
+        assert_eq!(clutter_kind_from_name("read me.txt"), None);
+        // Audio and video are never clutter.
+        assert_eq!(clutter_kind_from_name("book.m4b"), None);
+        assert_eq!(clutter_kind_from_name("chapter.mp3"), None);
+        assert_eq!(clutter_kind_from_name("interview.mp4"), None);
+        assert_eq!(clutter_kind_from_name("noext"), None);
     }
 
     // ---- AC-7: FD-17 classes route to manual review. --------------------

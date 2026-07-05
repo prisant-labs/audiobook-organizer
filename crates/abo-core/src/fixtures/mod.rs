@@ -26,12 +26,14 @@
 
 pub mod families;
 pub mod generate;
+pub mod hostile;
 pub mod manifest;
 
 pub use families::FixtureFamily;
 pub use generate::{
     generate, FixtureError, GeneratedEntry, GeneratedKind, GeneratedLibrary, SkippedFixture,
 };
+pub use hostile::{hostile_plan, HostileExpectation, HostilePlan};
 pub use manifest::{
     standard_library_manifest, DupGroup, FileNode, FixtureManifest, FixtureNode, FolderNode,
     PackProvenance,

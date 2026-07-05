@@ -1,0 +1,766 @@
+---
+source: crates/abo-core/tests/plan_builder_golden.rs
+assertion_line: 118
+expression: plan.to_canonical_json()
+---
+{
+  "ops": [
+    {
+      "op_group": "staging-separation",
+      "kind": "no-op",
+      "kind_reason": "staging",
+      "source_path": "library/_sort",
+      "target_path": "",
+      "rationale": "This is a staging or inbox area; its contents are separated into books in a later step, not moved automatically now.",
+      "rule_id": "staging-area",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/James Clear",
+      "rationale": "Create the folder \"James Clear\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/James Clear/Atomic Habits",
+      "rationale": "Create the folder \"Atomic Habits\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "move",
+      "source_path": "library/Atomic Habits by James Clear.m4b",
+      "target_path": "library/James Clear/Atomic Habits/Atomic Habits by James Clear.m4b",
+      "rationale": "This audiobook is sitting loose at the library root; move it into \"James Clear/Atomic Habits\".",
+      "rule_id": "loose-root-books",
+      "confidence": "high",
+      "byte_size": 140000
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/FREE SAMPLE_ The Martian by Andy Weir.m4b",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "loose-root-books-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Aldous Huxley (1)",
+      "rationale": "Create the folder \"Aldous Huxley (1)\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Aldous Huxley (1)/Island",
+      "rationale": "Create the folder \"Island\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "move",
+      "source_path": "library/Island by Aldous Huxley (1).m4b",
+      "target_path": "library/Aldous Huxley (1)/Island/Island by Aldous Huxley (1).m4b",
+      "rationale": "This audiobook is sitting loose at the library root; move it into \"Aldous Huxley (1)/Island\".",
+      "rule_id": "loose-root-books",
+      "confidence": "high",
+      "byte_size": 120000
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Aldous Huxley",
+      "rationale": "Create the folder \"Aldous Huxley\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Aldous Huxley/Island",
+      "rationale": "Create the folder \"Island\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "move",
+      "source_path": "library/Island by Aldous Huxley.m4b",
+      "target_path": "library/Aldous Huxley/Island/Island by Aldous Huxley.m4b",
+      "rationale": "This audiobook is sitting loose at the library root; move it into \"Aldous Huxley/Island\".",
+      "rule_id": "loose-root-books",
+      "confidence": "high",
+      "byte_size": 120000
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Yuval Noah Harari",
+      "rationale": "Create the folder \"Yuval Noah Harari\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Yuval Noah Harari/Sapiens",
+      "rationale": "Create the folder \"Sapiens\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "move",
+      "source_path": "library/Sapiens by Yuval Noah Harari.m4b",
+      "target_path": "library/Yuval Noah Harari/Sapiens/Sapiens by Yuval Noah Harari.m4b",
+      "rationale": "This audiobook is sitting loose at the library root; move it into \"Yuval Noah Harari/Sapiens\".",
+      "rule_id": "loose-root-books",
+      "confidence": "high",
+      "byte_size": 180000
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Gene Kim",
+      "rationale": "Create the folder \"Gene Kim\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Gene Kim/The Phoenix Project",
+      "rationale": "Create the folder \"The Phoenix Project\" so books can be moved into it.",
+      "rule_id": "loose-root-books-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "loose-root-books",
+      "kind": "move",
+      "source_path": "library/The Phoenix Project by Gene Kim.m4b",
+      "target_path": "library/Gene Kim/The Phoenix Project/The Phoenix Project by Gene Kim.m4b",
+      "rationale": "This audiobook is sitting loose at the library root; move it into \"Gene Kim/The Phoenix Project\".",
+      "rule_id": "loose-root-books",
+      "confidence": "high",
+      "byte_size": 150000
+    },
+    {
+      "op_group": "split-multi-book",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Unicode Twins Same Dir/Café Society.m4b",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "split-multi-book-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "split-multi-book",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Unicode Twins Same Dir/Café Society.m4b",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "split-multi-book-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Chris Dixon",
+      "rationale": "Create the folder \"Chris Dixon\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - Business/Chris_Dixon_-_Read_Write_Own",
+      "target_path": "library/Chris Dixon/Read Write Own",
+      "rationale": "Extract this book from the collection bundle \"Genre - Business\" into \"Chris Dixon/Read Write Own\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 120000,
+      "provenance_json": "{\"pack_name\":\"Genre - Business\",\"pack_path\":\"library/Genre - Business\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Michael Easter",
+      "rationale": "Create the folder \"Michael Easter\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - Business/Michael_Easter_-_Scarcity_Brain",
+      "target_path": "library/Michael Easter/Scarcity Brain",
+      "rationale": "Extract this book from the collection bundle \"Genre - Business\" into \"Michael Easter/Scarcity Brain\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 125000,
+      "provenance_json": "{\"pack_name\":\"Genre - Business\",\"pack_path\":\"library/Genre - Business\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - Children/Chronicles of Narnia",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - Children/Harry Potter",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Roald Dahl",
+      "rationale": "Create the folder \"Roald Dahl\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - Children/Roald Dahl - Charlie and the Chocolate Factory",
+      "target_path": "library/Roald Dahl/Charlie and the Chocolate Factory",
+      "rationale": "Extract this book from the collection bundle \"Genre - Children\" into \"Roald Dahl/Charlie and the Chocolate Factory\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 60000,
+      "provenance_json": "{\"pack_name\":\"Genre - Children\",\"pack_path\":\"library/Genre - Children\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - Children/Wings of Fire",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Adam Savage",
+      "rationale": "Create the folder \"Adam Savage\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - Non-Fiction/Every Tool's a Hammer - Life Is What You Make It by Adam Savage",
+      "target_path": "library/Adam Savage/Every Tool's a Hammer",
+      "rationale": "Extract this book from the collection bundle \"Genre - Non-Fiction\" into \"Adam Savage/Every Tool's a Hammer\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 170000,
+      "provenance_json": "{\"pack_name\":\"Genre - Non-Fiction\",\"pack_path\":\"library/Genre - Non-Fiction\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Richard Susskind",
+      "rationale": "Create the folder \"Richard Susskind\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - Non-Fiction/How to Think About AI - A Guide for the Perplexe by Richard Susskind",
+      "target_path": "library/Richard Susskind/How to Think About AI",
+      "rationale": "Extract this book from the collection bundle \"Genre - Non-Fiction\" into \"Richard Susskind/How to Think About AI\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 160000,
+      "provenance_json": "{\"pack_name\":\"Genre - Non-Fiction\",\"pack_path\":\"library/Genre - Non-Fiction\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - Non-Fiction/Rework",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - Non-Fiction/Verbal Advantage",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Andy Weir",
+      "rationale": "Create the folder \"Andy Weir\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - SciFI/Andy Weir - Project Hail Mary",
+      "target_path": "library/Andy Weir/Project Hail Mary",
+      "rationale": "Extract this book from the collection bundle \"Genre - SciFI\" into \"Andy Weir/Project Hail Mary\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 175000,
+      "provenance_json": "{\"pack_name\":\"Genre - SciFI\",\"pack_path\":\"library/Genre - SciFI\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Backup Copy",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Frank Herbert-Dune-#1-Chronicles[1-8}",
+      "target_path": "",
+      "rationale": "No title could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Hugo Collection",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Jim Butcher",
+      "rationale": "Create the folder \"Jim Butcher\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - SciFI/Jim Butcher - Dresden Files 22GB",
+      "target_path": "library/Jim Butcher/Dresden Files",
+      "rationale": "Extract this book from the collection bundle \"Genre - SciFI\" into \"Jim Butcher/Dresden Files\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 210000,
+      "provenance_json": "{\"pack_name\":\"Genre - SciFI\",\"pack_path\":\"library/Genre - SciFI\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Mixed Example Folder",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Out of the Silent Planet",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Parallel Format Example",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Hugo Collection/0 Series Books",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Charles Stross",
+      "rationale": "Create the folder \"Charles Stross\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Charles Stross/Freyaverse",
+      "rationale": "Create the folder \"Freyaverse\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - SciFI/Hugo Collection/2014 - Charles Stross - Neptune's Brood (Freyaverse #2) [64k 12;00;34 660MB]",
+      "target_path": "library/Charles Stross/Freyaverse/Book 2 - 2014 - Neptune's Brood",
+      "rationale": "Extract this book from the collection bundle \"Hugo Collection\" into \"Charles Stross/Freyaverse/Book 2 - 2014 - Neptune's Brood\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 165000,
+      "provenance_json": "{\"pack_name\":\"Hugo Collection\",\"pack_path\":\"library/Genre - SciFI/Hugo Collection\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/N.K. Jemisin",
+      "rationale": "Create the folder \"N.K. Jemisin\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/N.K. Jemisin/The Broken Earth",
+      "rationale": "Create the folder \"The Broken Earth\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - SciFI/Hugo Collection/2016^ - N.K. Jemisin - The Fifth Season (The Broken Earth Book 1) [64k 15;27;29 426MB]",
+      "target_path": "library/N.K. Jemisin/The Broken Earth/Book 1 - 2016 - The Fifth Season",
+      "rationale": "Extract this book from the collection bundle \"Hugo Collection\" into \"N.K. Jemisin/The Broken Earth/Book 1 - 2016 - The Fifth Season\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 187000,
+      "provenance_json": "{\"award_marker\":\"^\",\"pack_name\":\"Hugo Collection\",\"pack_path\":\"library/Genre - SciFI/Hugo Collection\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Hugo Collection/0 Series Books/Jim Butcher - Dresden Files 22GB",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Genre - SciFI/Hugo Collection/0 Series Books/Robert Jordan - Wheel of Time",
+      "target_path": "",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
+      "rule_id": "flatten-packs-nested",
+      "confidence": "medium",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Orson Scott Card",
+      "rationale": "Create the folder \"Orson Scott Card\" so books can be moved into it.",
+      "rule_id": "flatten-packs-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books/1 - Ender's Game - Orson Scott Card - 1985",
+      "target_path": "library/Orson Scott Card/Ender's Game (1985)",
+      "rationale": "Extract this book from the collection bundle \"Top 100 Sci-Fi Books\" into \"Orson Scott Card/Ender's Game (1985)\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 98000,
+      "provenance_json": "{\"pack_name\":\"Top 100 Sci-Fi Books\",\"pack_path\":\"library/Genre - SciFI/Top 100 Sci-Fi Books\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "move",
+      "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books/16 - Brave New World - Aldous Huxley - 1932",
+      "target_path": "library/Aldous Huxley/Brave New World (1932)",
+      "rationale": "Extract this book from the collection bundle \"Top 100 Sci-Fi Books\" into \"Aldous Huxley/Brave New World (1932)\".",
+      "rule_id": "flatten-packs",
+      "confidence": "high",
+      "byte_size": 99000,
+      "provenance_json": "{\"pack_name\":\"Top 100 Sci-Fi Books\",\"pack_path\":\"library/Genre - SciFI/Top 100 Sci-Fi Books\"}"
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Trailing Dot Or Space/Some Book.",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Unicode Twins/Café Society (NFD)",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "no-op",
+      "kind_reason": "manual-review",
+      "source_path": "library/Unicode Twins/Café Society (NFC)",
+      "target_path": "",
+      "rationale": "No author could be read from the name, so a safe destination cannot be chosen.",
+      "rule_id": "flatten-packs-manual",
+      "confidence": "low",
+      "byte_size": 0
+    },
+    {
+      "op_group": "normalize-series",
+      "kind": "rename",
+      "source_path": "library/Genre - Non-Fiction/Verbal Advantage/CD3",
+      "target_path": "library/Genre - Non-Fiction/Verbal Advantage/CD 3",
+      "rationale": "Rename this disc folder to the standard \"CD 3\" shape so it is recognized as a disc of one book.",
+      "rule_id": "normalize-series-disc",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "normalize-series",
+      "kind": "rename",
+      "source_path": "library/Genre - Non-Fiction/Verbal Advantage/Disk_04",
+      "target_path": "library/Genre - Non-Fiction/Verbal Advantage/Disk 04",
+      "rationale": "Rename this disc folder to the standard \"Disk 04\" shape so it is recognized as a disc of one book.",
+      "rule_id": "normalize-series-disc",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "empty-cleanup",
+      "kind": "mkdir",
+      "source_path": "",
+      "target_path": "library/Set Aside",
+      "rationale": "Create the \"Set Aside\" folder so items can be set aside without deleting anything.",
+      "rule_id": "empty-cleanup-mkdir",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "empty-cleanup",
+      "kind": "quarantine",
+      "source_path": "library/Genre - Business",
+      "target_path": "library/Set Aside/Genre - Business",
+      "rationale": "The collection bundle \"Genre - Business\" is empty after its books were extracted; set the empty shell aside (never deleted).",
+      "rule_id": "flatten-packs-shell",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "empty-cleanup",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books",
+      "target_path": "library/Set Aside/Top 100 Sci-Fi Books",
+      "rationale": "The collection bundle \"Top 100 Sci-Fi Books\" is empty after its books were extracted; set the empty shell aside (never deleted).",
+      "rule_id": "flatten-packs-shell",
+      "confidence": "high",
+      "byte_size": 0
+    },
+    {
+      "op_group": "dedupe-quarantine",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Parallel Format Example/track01.mp3",
+      "target_path": "library/Set Aside/track01.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted).",
+      "rule_id": "parallel-format-quarantine",
+      "confidence": "high",
+      "byte_size": 40000
+    },
+    {
+      "op_group": "dedupe-quarantine",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Parallel Format Example/track02.mp3",
+      "target_path": "library/Set Aside/track02.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track02.mp3\" copy is set aside (never deleted).",
+      "rule_id": "parallel-format-quarantine",
+      "confidence": "high",
+      "byte_size": 40000
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Hugo Collection/release.nfo",
+      "target_path": "library/Set Aside/release.nfo",
+      "rationale": "\"release.nfo\" is not an audiobook file; set it aside (never deleted).",
+      "rule_id": "clutter-quarantine",
+      "confidence": "high",
+      "byte_size": 500
+    },
+    {
+      "op_group": "empty-cleanup",
+      "kind": "rmdir-empty",
+      "source_path": "library/Empty Folder",
+      "target_path": "library/Empty Folder",
+      "rationale": "This folder holds no audiobooks and no other content; remove the empty folder.",
+      "rule_id": "empty-cleanup",
+      "confidence": "high",
+      "byte_size": 0
+    }
+  ],
+  "stats": {
+    "total_ops": 69,
+    "manual_review_ops": 21,
+    "per_group": [
+      {
+        "group": "staging",
+        "ops": 1
+      },
+      {
+        "group": "loose books",
+        "ops": 16
+      },
+      {
+        "group": "messy names",
+        "ops": 2
+      },
+      {
+        "group": "box sets",
+        "ops": 2
+      },
+      {
+        "group": "bundles",
+        "ops": 42
+      },
+      {
+        "group": "copies",
+        "ops": 2
+      },
+      {
+        "group": "empty folders",
+        "ops": 4
+      }
+    ]
+  }
+}

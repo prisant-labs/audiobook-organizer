@@ -268,6 +268,7 @@ CREATE TABLE settings (
 Extensions in detail:
 
 - Provenance (FD-01, D-14): `plan_ops.provenance_json` records source-pack membership per book (Hugo, Nebula, Top 100, Dune Universe, and similar) captured at plan/flatten time. Shape: `{ packs: [{ name, kind: "award"|"collection"|"bundle", evidence }] }`. The provenance travels into `journal.detail_json` and the exported `manifests` (v0.5.0), so it survives apply. The provenance report exports beside the plan at v0.3.0 and is re-emitted post-apply at v0.5.0. Pack shells after a successful extraction go to quarantine by default, with a policy toggle to leave-in-place (F-402 structure policies).
+- Set-aside folder naming (FD-31): the physical folder that holds set-aside items (emptied pack shells, non-preferred-format copies, clutter) is named `Set Aside` on disk (the plain-language rule extends to disk artifacts the family can see). "quarantine" stays internal-only vocabulary: the `settings.quarantine_root` column, the `quarantine` op kind, and internal type/module names keep it, but it never appears in an on-disk name, a stored rationale sentence, or report copy.
 - Theme (FD-09): `settings.theme` stores `day` or `evening` (the canonical `data-theme` values). Default `day`, persisted via F-803. UI labels are Day / Evening.
 - Snapshot retention (FD-20): `settings.snapshot_retention_n` (default 10) bounds DB growth by keeping the last N scans. A retention sweep drops older `scans` and their `entries`/`classifications`. 20k entries is comfortably in range; no server DB ever.
 

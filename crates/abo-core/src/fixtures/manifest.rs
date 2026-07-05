@@ -412,6 +412,11 @@ pub fn standard_library_manifest() -> FixtureManifest {
                                     ),
                                 ],
                             ),
+                            // FD-31: pack-internal clutter. An .nfo sitting
+                            // directly in the collection bundle's shell (not in
+                            // any member) is set aside as part of unpacking, so
+                            // its set-aside op rides the Bundles group.
+                            file("release.nfo", 500),
                         ],
                     ),
                     // Parallel-format `0 M4B`: chapter mp3s plus an m4b

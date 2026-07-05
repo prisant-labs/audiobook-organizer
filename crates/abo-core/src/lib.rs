@@ -47,10 +47,14 @@
 //! adds `ruleset`: the F-402 structure policies plus the F-801
 //! schema-versioned ruleset model (validation, default seed, and the pure
 //! policy helpers the plan builder calls), with no `cfg`-gating (see `ruleset`
-//! module docs).
+//! module docs). Phase 4 adds `plan::builder`: the F-403 plan builder that
+//! turns a snapshot + classifications + merged fields + a ruleset into the
+//! ordered, immutable, deterministic operation list grouped by the FD-26
+//! campaign groups (see `plan::builder` module docs), also `cfg`-free.
 
 pub mod classify;
 pub mod db;
+pub mod dupes;
 pub mod error;
 pub mod ipc;
 pub mod job;
