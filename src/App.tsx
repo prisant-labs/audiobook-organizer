@@ -71,7 +71,13 @@ function App() {
       if (result.status === "ok") {
         setState({ phase: "done", jobId: job_id, scanId: scan_id, entries: result.data });
       } else {
-        setState({ phase: "failed", jobId: job_id, code: result.error["scan-failed"]?.detail ?? "scan-failed" });
+        // AppError serializes externally tagged ({ "some-code": { ... } }); the
+        // union's exclusion markers forbid indexing a fixed key, so read the
+        // tag generically. Disposable tracer only; real surfaces are v0.4.0.
+        const err: unknown = result.error;
+        const code =
+          typeof err === "string" ? err : (Object.keys(err as object)[0] ?? "unknown-error");
+        setState({ phase: "failed", jobId: job_id, code });
       }
     });
 
