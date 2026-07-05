@@ -51,6 +51,22 @@
 //! turns a snapshot + classifications + merged fields + a ruleset into the
 //! ordered, immutable, deterministic operation list grouped by the FD-26
 //! campaign groups (see `plan::builder` module docs), also `cfg`-free.
+//!
+//! v0.3.0 Phase 7 adds `plan::export` (F-505: pure CSV/JSON/Markdown plan
+//! export generators) and `reports` (F-1002: the thin, `cfg`-free
+//! filesystem-writing step that lands those exports, plus the Phase 6
+//! `plan::provenance` report, in the Reports folder beside the app data - see
+//! `reports` module docs for the platform-seam and deterministic-naming
+//! contract).
+//!
+//! v0.3.0 Phase 8 adds `plan::report` (F-506: the pure, self-contained dry-run
+//! HTML report generator, with the Literata font baked in via `include_str!` so
+//! the report makes zero network requests), plus the one impure full-chain
+//! orchestration `plan::report::generate_and_report` (read snapshot -> classify
+//! -> extract -> build -> detect duplicates -> validate -> persist -> export ->
+//! render HTML), which writes every artifact through `reports` into the Reports
+//! folder. The report's `reports::write_html_report` sibling lands the HTML
+//! beside the F-505/F-507 exports.
 
 pub mod classify;
 pub mod db;
@@ -61,6 +77,7 @@ pub mod job;
 pub mod parse;
 pub mod paths;
 pub mod plan;
+pub mod reports;
 pub mod ruleset;
 pub mod scan;
 

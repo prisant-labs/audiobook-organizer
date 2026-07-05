@@ -79,7 +79,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::classify::engine::{ClassifyInput, FolderClass, FolderClassification};
 use crate::parse::extract::{Confidence, FieldSource, MergedEntry, NodeKind};
@@ -261,14 +261,19 @@ impl PlannedOp {
 }
 
 /// A per-group operation count (deterministic, in [`CampaignGroup::ALL`] order).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// `Deserialize` (added Phase 7, F-505) round-trips `plans.stats_json` back
+/// into a value the exporter can read without recomputing counts; `group` is
+/// already the FD-26 user-facing label, so this type carries no internal
+/// vocabulary an export ever needs to scrub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupCount {
     pub group: String,
     pub ops: u64,
 }
 
 /// Plan-level aggregate counts, serialized into `plans.stats_json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanStats {
     pub total_ops: u64,
     /// Operations that are `no-op(manual-review)` (a book/folder the plan
@@ -1068,6 +1073,18 @@ fn pass_flatten_packs(b: &mut Builder) {
         .iter()
         .filter(|n| b.class_of(n.id) == Some(FolderClass::PackContainer))
         .map(|n| n.id)
+        // Parity with the other content passes: never touch a pack an earlier
+        // pass already claimed, and never reach INTO a staging area. The staging
+        // no-op (pass_staging) promises nothing under a `_sort`/inbox folder
+        // moves now; without this guard a pack sitting inside staging would be
+        // flattened anyway, leaking books out of the pile the report says is
+        // left alone. A pack nested inside ANOTHER pack is deliberately NOT
+        // skipped here (no `inside_pack` guard): flatten processes packs at
+        // every depth, because an outer pack only emits a "nested collection,
+        // needs manual review" no-op for an inner pack and never recurses into
+        // it. Skipping nested packs would strand their members and drop their
+        // F-507 provenance (e.g. the Hugo Collection pack under Genre - SciFI).
+        .filter(|&id| !b.handled.contains(&id) && !b.inside_staging(id))
         .collect();
     packs.sort_by(|&a, &c| b.node(a).path.cmp(&b.node(c).path));
 
@@ -2232,6 +2249,73 @@ mod tests {
         assert_eq!(staging.len(), 1);
         assert_eq!(staging[0].kind, "no-op");
         assert_eq!(staging[0].kind_reason.as_deref(), Some("staging"));
+    }
+
+    /// Staging-leak regression: a pack (collection bundle) nested inside a
+    /// `_sort` staging area must NOT be flattened. The staging no-op promises
+    /// nothing under the pile moves now, so the only op the plan emits is that
+    /// single staging no-op: no flatten member moves, and no empty-cleanup of
+    /// the pack shell. Before the `inside_staging` guard on `pass_flatten_packs`,
+    /// the pack's members were flattened out of the pile the report leaves alone.
+    #[test]
+    fn pack_nested_under_staging_is_left_alone() {
+        let nodes = vec![
+            dir(0, None, "lib/_sort"),
+            dir(1, Some(0), "lib/_sort/Hugo Collection"),
+            dir(
+                2,
+                Some(1),
+                "lib/_sort/Hugo Collection/N.K. Jemisin - The Fifth Season",
+            ),
+            aud(
+                3,
+                Some(2),
+                "lib/_sort/Hugo Collection/N.K. Jemisin - The Fifth Season/The Fifth Season.m4b",
+                187_000,
+            ),
+            dir(
+                4,
+                Some(1),
+                "lib/_sort/Hugo Collection/Charles Stross - Neptune's Brood",
+            ),
+            aud(
+                5,
+                Some(4),
+                "lib/_sort/Hugo Collection/Charles Stross - Neptune's Brood/Neptune's Brood.m4b",
+                165_000,
+            ),
+        ];
+        // The nested pack really is a pack (guard precondition), so the skip is
+        // meaningful and not an artifact of misclassification.
+        let (cs, _) = analyze(&nodes);
+        assert_eq!(
+            cs.iter().find(|c| c.id == 1).map(|c| c.class),
+            Some(FolderClass::PackContainer),
+            "the nested folder must classify as a pack for this test to bite"
+        );
+
+        let plan = build(&nodes);
+
+        assert!(
+            ops_of(&plan, "flatten-packs").is_empty(),
+            "a pack inside staging must not be flattened: {:?}",
+            ops_of(&plan, "flatten-packs")
+        );
+        assert!(
+            !plan
+                .ops
+                .iter()
+                .any(|o| o.source_path.contains("Hugo Collection")),
+            "nothing under the staging pile may be touched: {:?}",
+            plan.ops
+                .iter()
+                .map(|o| (&o.op_group, &o.kind, &o.source_path))
+                .collect::<Vec<_>>()
+        );
+        // Exactly the one staging no-op, nothing else.
+        assert_eq!(plan.ops.len(), 1, "only the staging no-op: {:?}", plan.ops);
+        assert_eq!(plan.ops[0].op_group, "staging-separation");
+        assert_eq!(plan.ops[0].kind, "no-op");
     }
 
     // ---- F-205 parallel-format (AC-33) -------------------------------------
