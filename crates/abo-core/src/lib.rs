@@ -51,6 +51,13 @@
 //! turns a snapshot + classifications + merged fields + a ruleset into the
 //! ordered, immutable, deterministic operation list grouped by the FD-26
 //! campaign groups (see `plan::builder` module docs), also `cfg`-free.
+//!
+//! v0.3.0 Phase 7 adds `plan::export` (F-505: pure CSV/JSON/Markdown plan
+//! export generators) and `reports` (F-1002: the thin, `cfg`-free
+//! filesystem-writing step that lands those exports, plus the Phase 6
+//! `plan::provenance` report, in the Reports folder beside the app data - see
+//! `reports` module docs for the platform-seam and deterministic-naming
+//! contract).
 
 pub mod classify;
 pub mod db;
@@ -61,6 +68,7 @@ pub mod job;
 pub mod parse;
 pub mod paths;
 pub mod plan;
+pub mod reports;
 pub mod ruleset;
 pub mod scan;
 
