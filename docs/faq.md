@@ -59,3 +59,13 @@ Why (D-08, rename-first executor): the real library is 297 GB on a drive at roug
 What the user actually selects (v0.4.0 first-run and settings, F-909 and F-803): the library folder (one root per tidy-up; multiple libraries is deferred, F-1107); where the Set Aside holding folder lives (defaults to beside the library, outside it so Audiobookshelf never scans it); and where Reports go.
 
 Two honest exceptions where real copying occurs: a move that crosses drives becomes copy, verify, then remove, explicitly marked in the plan and checked against free space before it is allowed (F-404); and the backup itself, if a copy-based option is chosen.
+
+## How do new audiobooks get added to an already-tidied library?
+
+Two answers: one that works by design already, and one planned refinement awaiting an operator decision.
+
+Built into the design: the pipeline is re-runnable, and repeatability is a ratified success criterion (the tool "prevents re-messification rather than performing a one-time miracle"). Drop new books anywhere in the library, re-scan (sub-second at this library's scale), and the new plan contains only the new mess: five new loose files produce a five-change plan with the same review, report, and undo ceremony. Once v0.5.0 lands the apply step, adding books is simply drop-then-small-tidy-up. Small plans are the intended steady state after the M-1 campaign.
+
+The planned refinement, F-1105 (intake mode), the discovery docs' "anti-re-messification play": a designated Intake folder outside the scanned library, with a focused "file these new books" flow that classifies just the newcomers, proposes each one's shelf destination, and files them per-book with accept-or-fix. Two flavors: check-on-launch (recommended; fits the launch-when-needed identity, reuses nearly all existing machinery, roughly one release-sized effort) versus a watched always-on folder (a residency change to a tray app, a bigger identity shift). Either flavor must solve duplicate detection against the existing library (a new copy of an owned book flags as a copy across snapshots) and cross-volume arrivals (Intake on another drive means real copy-verify-remove, space-checked).
+
+Status: deferred to v1.1 pending the operator's posture decision (strategy brief open question 4, one of the ledger's standing human-only items). The re-scan loop covers the need in the meantime.
