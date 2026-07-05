@@ -214,7 +214,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - Business/Chris_Dixon_-_Read_Write_Own",
       "target_path": "library/Chris Dixon/Read Write Own",
-      "rationale": "Extract this book from the box set \"Genre - Business\" into \"Chris Dixon/Read Write Own\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - Business\" into \"Chris Dixon/Read Write Own\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 120000,
@@ -235,7 +235,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - Business/Michael_Easter_-_Scarcity_Brain",
       "target_path": "library/Michael Easter/Scarcity Brain",
-      "rationale": "Extract this book from the box set \"Genre - Business\" into \"Michael Easter/Scarcity Brain\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - Business\" into \"Michael Easter/Scarcity Brain\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 125000,
@@ -278,7 +278,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - Children/Roald Dahl - Charlie and the Chocolate Factory",
       "target_path": "library/Roald Dahl/Charlie and the Chocolate Factory",
-      "rationale": "Extract this book from the box set \"Genre - Children\" into \"Roald Dahl/Charlie and the Chocolate Factory\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - Children\" into \"Roald Dahl/Charlie and the Chocolate Factory\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 60000,
@@ -310,7 +310,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - Non-Fiction/Every Tool's a Hammer - Life Is What You Make It by Adam Savage",
       "target_path": "library/Adam Savage/Every Tool's a Hammer",
-      "rationale": "Extract this book from the box set \"Genre - Non-Fiction\" into \"Adam Savage/Every Tool's a Hammer\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - Non-Fiction\" into \"Adam Savage/Every Tool's a Hammer\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 170000,
@@ -331,7 +331,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - Non-Fiction/How to Think About AI - A Guide for the Perplexe by Richard Susskind",
       "target_path": "library/Richard Susskind/How to Think About AI",
-      "rationale": "Extract this book from the box set \"Genre - Non-Fiction\" into \"Richard Susskind/How to Think About AI\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - Non-Fiction\" into \"Richard Susskind/How to Think About AI\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 160000,
@@ -374,7 +374,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - SciFI/Andy Weir - Project Hail Mary",
       "target_path": "library/Andy Weir/Project Hail Mary",
-      "rationale": "Extract this book from the box set \"Genre - SciFI\" into \"Andy Weir/Project Hail Mary\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - SciFI\" into \"Andy Weir/Project Hail Mary\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 175000,
@@ -408,7 +408,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Hugo Collection",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -428,7 +428,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - SciFI/Jim Butcher - Dresden Files 22GB",
       "target_path": "library/Jim Butcher/Dresden Files",
-      "rationale": "Extract this book from the box set \"Genre - SciFI\" into \"Jim Butcher/Dresden Files\".",
+      "rationale": "Extract this book from the collection bundle \"Genre - SciFI\" into \"Jim Butcher/Dresden Files\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 210000,
@@ -440,7 +440,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Mixed Example Folder",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -462,7 +462,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Parallel Format Example",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -473,7 +473,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -484,7 +484,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Hugo Collection/0 Series Books",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -514,7 +514,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - SciFI/Hugo Collection/2014 - Charles Stross - Neptune's Brood (Freyaverse #2) [64k 12;00;34 660MB]",
       "target_path": "library/Charles Stross/Freyaverse/Book 2 - 2014 - Neptune's Brood",
-      "rationale": "Extract this book from the box set \"Hugo Collection\" into \"Charles Stross/Freyaverse/Book 2 - 2014 - Neptune's Brood\".",
+      "rationale": "Extract this book from the collection bundle \"Hugo Collection\" into \"Charles Stross/Freyaverse/Book 2 - 2014 - Neptune's Brood\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 165000,
@@ -545,7 +545,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - SciFI/Hugo Collection/2016^ - N.K. Jemisin - The Fifth Season (The Broken Earth Book 1) [64k 15;27;29 426MB]",
       "target_path": "library/N.K. Jemisin/The Broken Earth/Book 1 - 2016 - The Fifth Season",
-      "rationale": "Extract this book from the box set \"Hugo Collection\" into \"N.K. Jemisin/The Broken Earth/Book 1 - 2016 - The Fifth Season\".",
+      "rationale": "Extract this book from the collection bundle \"Hugo Collection\" into \"N.K. Jemisin/The Broken Earth/Book 1 - 2016 - The Fifth Season\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 187000,
@@ -557,7 +557,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Hugo Collection/0 Series Books/Jim Butcher - Dresden Files 22GB",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -568,7 +568,7 @@ expression: plan.to_canonical_json()
       "kind_reason": "manual-review",
       "source_path": "library/Genre - SciFI/Hugo Collection/0 Series Books/Robert Jordan - Wheel of Time",
       "target_path": "",
-      "rationale": "This item inside the box set is itself a collection; it needs manual review before it can be extracted.",
+      "rationale": "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted.",
       "rule_id": "flatten-packs-nested",
       "confidence": "medium",
       "byte_size": 0
@@ -588,7 +588,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books/1 - Ender's Game - Orson Scott Card - 1985",
       "target_path": "library/Orson Scott Card/Ender's Game (1985)",
-      "rationale": "Extract this book from the box set \"Top 100 Sci-Fi Books\" into \"Orson Scott Card/Ender's Game (1985)\".",
+      "rationale": "Extract this book from the collection bundle \"Top 100 Sci-Fi Books\" into \"Orson Scott Card/Ender's Game (1985)\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 98000,
@@ -599,7 +599,7 @@ expression: plan.to_canonical_json()
       "kind": "move",
       "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books/16 - Brave New World - Aldous Huxley - 1932",
       "target_path": "library/Aldous Huxley/Brave New World (1932)",
-      "rationale": "Extract this book from the box set \"Top 100 Sci-Fi Books\" into \"Aldous Huxley/Brave New World (1932)\".",
+      "rationale": "Extract this book from the collection bundle \"Top 100 Sci-Fi Books\" into \"Aldous Huxley/Brave New World (1932)\".",
       "rule_id": "flatten-packs",
       "confidence": "high",
       "byte_size": 99000,
@@ -662,8 +662,8 @@ expression: plan.to_canonical_json()
       "op_group": "empty-cleanup",
       "kind": "mkdir",
       "source_path": "",
-      "target_path": "library/_Quarantine",
-      "rationale": "Create the quarantine folder so items can be set aside without deleting anything.",
+      "target_path": "library/Set Aside",
+      "rationale": "Create the \"Set Aside\" folder so items can be set aside without deleting anything.",
       "rule_id": "empty-cleanup-mkdir",
       "confidence": "high",
       "byte_size": 0
@@ -672,8 +672,8 @@ expression: plan.to_canonical_json()
       "op_group": "empty-cleanup",
       "kind": "quarantine",
       "source_path": "library/Genre - Business",
-      "target_path": "library/_Quarantine/Genre - Business",
-      "rationale": "The box set \"Genre - Business\" is empty after its books were extracted; set the shell aside in quarantine (never deleted).",
+      "target_path": "library/Set Aside/Genre - Business",
+      "rationale": "The collection bundle \"Genre - Business\" is empty after its books were extracted; set the empty shell aside (never deleted).",
       "rule_id": "flatten-packs-shell",
       "confidence": "high",
       "byte_size": 0
@@ -682,31 +682,41 @@ expression: plan.to_canonical_json()
       "op_group": "empty-cleanup",
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books",
-      "target_path": "library/_Quarantine/Top 100 Sci-Fi Books",
-      "rationale": "The box set \"Top 100 Sci-Fi Books\" is empty after its books were extracted; set the shell aside in quarantine (never deleted).",
+      "target_path": "library/Set Aside/Top 100 Sci-Fi Books",
+      "rationale": "The collection bundle \"Top 100 Sci-Fi Books\" is empty after its books were extracted; set the empty shell aside (never deleted).",
       "rule_id": "flatten-packs-shell",
       "confidence": "high",
       "byte_size": 0
     },
     {
-      "op_group": "empty-cleanup",
+      "op_group": "dedupe-quarantine",
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Parallel Format Example/track01.mp3",
-      "target_path": "library/_Quarantine/track01.mp3",
-      "rationale": "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside in quarantine (never deleted).",
+      "target_path": "library/Set Aside/track01.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted).",
       "rule_id": "parallel-format-quarantine",
       "confidence": "high",
       "byte_size": 40000
     },
     {
-      "op_group": "empty-cleanup",
+      "op_group": "dedupe-quarantine",
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Parallel Format Example/track02.mp3",
-      "target_path": "library/_Quarantine/track02.mp3",
-      "rationale": "This book keeps a preferred m4b copy, so the extra \"track02.mp3\" copy is set aside in quarantine (never deleted).",
+      "target_path": "library/Set Aside/track02.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track02.mp3\" copy is set aside (never deleted).",
       "rule_id": "parallel-format-quarantine",
       "confidence": "high",
       "byte_size": 40000
+    },
+    {
+      "op_group": "flatten-packs",
+      "kind": "quarantine",
+      "source_path": "library/Genre - SciFI/Hugo Collection/release.nfo",
+      "target_path": "library/Set Aside/release.nfo",
+      "rationale": "\"release.nfo\" is not an audiobook file; set it aside (never deleted).",
+      "rule_id": "clutter-quarantine",
+      "confidence": "high",
+      "byte_size": 500
     },
     {
       "op_group": "empty-cleanup",
@@ -720,7 +730,7 @@ expression: plan.to_canonical_json()
     }
   ],
   "stats": {
-    "total_ops": 68,
+    "total_ops": 69,
     "manual_review_ops": 21,
     "per_group": [
       {
@@ -737,19 +747,19 @@ expression: plan.to_canonical_json()
       },
       {
         "group": "box sets",
-        "ops": 41
-      },
-      {
-        "group": "bundles",
         "ops": 2
       },
       {
+        "group": "bundles",
+        "ops": 42
+      },
+      {
         "group": "copies",
-        "ops": 0
+        "ops": 2
       },
       {
         "group": "empty folders",
-        "ops": 6
+        "ops": 4
       }
     ]
   }

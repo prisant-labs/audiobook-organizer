@@ -8,11 +8,15 @@
 //! a confidence, and a byte size (AC-9). Nothing here touches the filesystem or
 //! a database: it is pure logic over already-decided inputs (the snapshot
 //! entries, the F-201 classifications, the F-303 merged fields, and the F-801
-//! ruleset). Persistence is a thin, separate step ([`persist_plan`]) so the
-//! pure builder stays trivially testable and deterministic. Like the rest of
-//! `crate::plan`, this module has no `cfg`-gating of any kind (the CFG RULE):
-//! path handling is string SEMANTICS keyed off the library root's own
-//! separator, so a plan built on one host serializes identically on another.
+//! ruleset). Persistence for real callers is a thin, separate step in
+//! [`crate::plan::validate::persist_validated_plan`] (validate-before-insert),
+//! so the pure builder stays trivially testable and deterministic. Like the
+//! rest of `crate::plan`, this module's production logic has no `cfg`-gating
+//! (the CFG RULE): path handling is string SEMANTICS keyed off the library
+//! root's own separator, so a plan built on one host serializes identically on
+//! another. (The one `cfg(test)` item is `persist_plan_for_tests`, a
+//! persistence shim used only by unit tests; production never persists a plan
+//! that way.)
 //!
 //! # The eight internal passes and the seven user-facing groups (FD-26, AC-11)
 //!
@@ -88,10 +92,13 @@ use crate::ruleset::{
 };
 use crate::scan::typing::FileClass;
 
-/// The folder name new quarantined shells and clutter land under, relative to
+/// The folder name new set-aside shells and clutter land under, relative to
 /// the library root. Never deletes: the never-delete-audio invariant means a
-/// pack shell or non-preferred copy is MOVED here, not removed.
-pub const QUARANTINE_DIRNAME: &str = "_Quarantine";
+/// pack shell or non-preferred copy is MOVED here, not removed. The on-disk
+/// name is the plain-language "Set Aside" (FD-31); "quarantine" stays internal
+/// vocabulary (the const name, the op kind, type names) and never appears on
+/// disk or in a stored rationale sentence.
+pub const QUARANTINE_DIRNAME: &str = "Set Aside";
 
 /// One of the eight internal plan passes. The order of [`InternalPass::ALL`]
 /// is the order passes run in, which (together with per-pass source-path
@@ -149,8 +156,11 @@ impl InternalPass {
             InternalPass::StagingSeparation => CampaignGroup::Staging,
             InternalPass::LooseRootBooks => CampaignGroup::LooseBooks,
             InternalPass::StripNoise | InternalPass::NormalizeSeries => CampaignGroup::MessyNames,
-            InternalPass::SplitMultiBook => CampaignGroup::Bundles,
-            InternalPass::FlattenPacks => CampaignGroup::BoxSets,
+            // A multi-book folder is a "box set" the user splits into separate
+            // books; a pack/collection container is a "collection bundle" the
+            // user unpacks (prototype canon, FD-26).
+            InternalPass::SplitMultiBook => CampaignGroup::BoxSets,
+            InternalPass::FlattenPacks => CampaignGroup::Bundles,
             InternalPass::DedupeQuarantine => CampaignGroup::Copies,
             InternalPass::EmptyCleanup => CampaignGroup::EmptyFolders,
         }
@@ -214,7 +224,8 @@ pub struct PlanNode {
 
 /// One planned operation, owned. Mirrors the descriptive `plan_ops` columns the
 /// caller freezes at insert time (see [`crate::db::plans::NewPlanOp`]); the
-/// builder assigns every field here, and [`persist_plan`] copies them verbatim.
+/// builder assigns every field here, and the persistence step copies them
+/// verbatim.
 /// `validation_state` is `"pending"` at build time (F-404 validation is Phase
 /// 5); the field is present so the persisted shape is complete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -512,6 +523,13 @@ struct Builder<'a> {
     created_dirs: HashSet<String>,
     /// Folder ids already claimed by an earlier pass (never re-handled).
     handled: HashSet<usize>,
+    /// Folder ids that an earlier pass MOVED or RENAMED as a unit (flatten-packs
+    /// members, strip-noise renames, normalize-series disc renames). Their
+    /// contents (including any clutter) travel with the folder, so clutter under
+    /// them is not separately set aside (its stored path would be stale). Split
+    /// multi-book folders are deliberately NOT here: they are emptied in place,
+    /// so their leftover clutter IS set aside (FD-31, riding Box sets).
+    relocated: HashSet<usize>,
     ops: Vec<PlannedOp>,
     /// Pack shells to quarantine in `empty-cleanup` (path, byte total = 0).
     quarantine_shells: Vec<(usize, String)>,
@@ -576,6 +594,71 @@ impl<'a> Builder<'a> {
             cur = self.node(p).parent;
         }
         false
+    }
+
+    /// Whether any ancestor of `id` was MOVED or RENAMED as a unit (in the
+    /// [`Builder::relocated`] set). Clutter under such a folder rides along with
+    /// it, so it is never separately set aside.
+    fn ancestor_relocated(&self, id: usize) -> bool {
+        let mut cur = self.node(id).parent;
+        let mut steps = 0;
+        while let Some(p) = cur {
+            if steps > self.nodes.len() {
+                break;
+            }
+            steps += 1;
+            if self.relocated.contains(&p) {
+                return true;
+            }
+            cur = self.node(p).parent;
+        }
+        false
+    }
+
+    /// Whether any ancestor of `id` is a multi-book folder (the split-multi-book
+    /// pass owns its transformation, FD-31 Box sets).
+    fn inside_multibook(&self, id: usize) -> bool {
+        let mut cur = self.node(id).parent;
+        let mut steps = 0;
+        while let Some(p) = cur {
+            if steps > self.nodes.len() {
+                break;
+            }
+            steps += 1;
+            if self.class_of(p) == Some(FolderClass::MultiBookSuspect) {
+                return true;
+            }
+            cur = self.node(p).parent;
+        }
+        false
+    }
+
+    /// Whether `id` sits directly at the library root (its parent is the single
+    /// scan root, or it is parentless in the multi-root fixture convention). Such
+    /// root-side clutter rides the loose-root-books transformation (FD-31 Loose
+    /// books).
+    fn is_root_side(&self, id: usize) -> bool {
+        match self.node(id).parent {
+            None => true,
+            Some(p) => scan_root_id(self.nodes) == Some(p),
+        }
+    }
+
+    /// The internal pass whose user-facing group a clutter set-aside op inherits
+    /// (FD-31): pack clutter rides Bundles (flatten-packs), multi-book clutter
+    /// rides Box sets (split-multi-book), root-side clutter rides Loose books
+    /// (loose-root-books), and standalone/unowned clutter joins the empty-cleanup
+    /// pile. Precedence is pack > multi-book > root > standalone.
+    fn clutter_owning_pass(&self, id: usize) -> InternalPass {
+        if self.inside_pack(id) {
+            InternalPass::FlattenPacks
+        } else if self.inside_multibook(id) {
+            InternalPass::SplitMultiBook
+        } else if self.is_root_side(id) {
+            InternalPass::LooseRootBooks
+        } else {
+            InternalPass::EmptyCleanup
+        }
     }
 
     fn node(&self, id: usize) -> &PlanNode {
@@ -681,6 +764,7 @@ pub fn build_plan(
         folder_bytes,
         created_dirs,
         handled: HashSet::new(),
+        relocated: HashSet::new(),
         ops: Vec::new(),
         quarantine_shells: Vec::new(),
         emptied_sources: BTreeSet::new(),
@@ -871,6 +955,7 @@ fn pass_strip_noise(b: &mut Builder) {
             continue;
         }
         b.handled.insert(id);
+        b.relocated.insert(id);
         let parent = parent_dir(&src, b.sep).to_string();
         let target = join_path(&parent, b.sep, &[cleaned.as_str()]);
         b.ops.push(PlannedOp {
@@ -1026,7 +1111,7 @@ fn pass_flatten_packs(b: &mut Builder) {
                     source_path: src,
                     target_path: String::new(),
                     rationale:
-                        "This item inside the box set is itself a collection; it needs manual review before it can be extracted."
+                        "This item inside the collection bundle is itself a collection; it needs manual review before it can be extracted."
                             .to_string(),
                     rule_id: "flatten-packs-nested".to_string(),
                     confidence: "medium".to_string(),
@@ -1047,6 +1132,7 @@ fn pass_flatten_packs(b: &mut Builder) {
             match render_path(preset, &fields.as_template(), width) {
                 RenderOutcome::Rendered(components) => {
                     b.handled.insert(item_id);
+                    b.relocated.insert(item_id);
                     let chain = b.dir_chain(&components, false);
                     b.ensure_dirs(&chain, pass, "flatten-packs-mkdir");
                     let comp_refs: Vec<&str> = components.iter().map(|s| s.as_str()).collect();
@@ -1064,7 +1150,7 @@ fn pass_flatten_packs(b: &mut Builder) {
                         source_path: src,
                         target_path: target,
                         rationale: format!(
-                            "Extract this book from the box set \"{pack_name}\" into \"{}\".",
+                            "Extract this book from the collection bundle \"{pack_name}\" into \"{}\".",
                             components.join(&b.sep.to_string())
                         ),
                         rule_id: "flatten-packs".to_string(),
@@ -1134,6 +1220,7 @@ fn pass_normalize_series(b: &mut Builder) {
             continue; // already conformant: leave untouched (AC-32)
         };
         b.handled.insert(id);
+        b.relocated.insert(id);
         let src = b.node(id).path.clone();
         let parent = parent_dir(&src, b.sep).to_string();
         let target = join_path(&parent, b.sep, &[target_name.as_str()]);
@@ -1289,10 +1376,13 @@ fn detect_parallel_format_losers(b: &Builder) -> Vec<usize> {
     losers
 }
 
-/// F-402: the non-audio clutter files the ruleset quarantines
+/// F-402: the non-audio clutter files the ruleset sets aside
 /// (nfo/sfv/playlist/weblink by default; ebook/cover are kept). Skips files in a
-/// staging area or under a folder already relocated by an earlier pass (that
-/// clutter rides along with the move). Returns file ids sorted by path.
+/// staging area or under a folder MOVED/RENAMED as a unit by an earlier pass
+/// (that clutter rides along physically, so a separate set-aside from its stale
+/// path would be wrong). Clutter under a split multi-book folder (emptied in
+/// place, not relocated) is NOT skipped: it is left behind and set aside,
+/// riding the Box sets group per FD-31. Returns file ids sorted by path.
 fn detect_clutter_quarantine(b: &Builder) -> Vec<usize> {
     let mut out: Vec<usize> = Vec::new();
     for n in b.nodes {
@@ -1306,7 +1396,7 @@ fn detect_clutter_quarantine(b: &Builder) -> Vec<usize> {
         if b.ruleset.structure.clutter.action_for(kind) != ClutterAction::Quarantine {
             continue;
         }
-        if b.inside_staging(id) || b.ancestor_handled(id) {
+        if b.inside_staging(id) || b.ancestor_relocated(id) {
             continue;
         }
         out.push(id);
@@ -1315,10 +1405,10 @@ fn detect_clutter_quarantine(b: &Builder) -> Vec<usize> {
     out
 }
 
-/// Ensure the library-root `_Quarantine` directory is scheduled for creation
-/// (emitting one `mkdir` the first time any quarantine op in `pass` needs it),
+/// Ensure the library-root `Set Aside` directory is scheduled for creation
+/// (emitting one `mkdir` the first time any set-aside op in `pass` needs it),
 /// and return its path. Deduplicated via the shared `created_dirs` set, so the
-/// mkdir appears exactly once and always before the first quarantine into it.
+/// mkdir appears exactly once and always before the first move into it.
 fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) -> String {
     let quarantine_dir = join_path(&b.library_root, b.sep, &[QUARANTINE_DIRNAME]);
     if !b.created_dirs.contains(&quarantine_dir) {
@@ -1330,7 +1420,7 @@ fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) -> String {
             source_path: String::new(),
             target_path: quarantine_dir.clone(),
             rationale:
-                "Create the quarantine folder so items can be set aside without deleting anything."
+                "Create the \"Set Aside\" folder so items can be set aside without deleting anything."
                     .to_string(),
             rule_id: "empty-cleanup-mkdir".to_string(),
             confidence: "high".to_string(),
@@ -1358,7 +1448,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             source_path: shell_path,
             target_path: target,
             rationale: format!(
-                "The box set \"{name}\" is empty after its books were extracted; set the shell aside in quarantine (never deleted)."
+                "The collection bundle \"{name}\" is empty after its books were extracted; set the empty shell aside (never deleted)."
             ),
             rule_id: "flatten-packs-shell".to_string(),
             confidence: "high".to_string(),
@@ -1368,7 +1458,9 @@ fn pass_empty_cleanup(b: &mut Builder) {
     }
 
     // 2. F-205 parallel-format losers: set aside the non-preferred copy (keep
-    // the m4b, AC-33). Detected here so the quarantine follows every move.
+    // the m4b, AC-33). Detected here so the set-aside follows every move, but
+    // grouped under Copies (FD-31: the non-preferred format is a copy of the
+    // book), which is the dedupe-quarantine pass's user-facing group.
     let losers = detect_parallel_format_losers(b);
     for id in losers {
         let src = b.node(id).path.clone();
@@ -1377,13 +1469,13 @@ fn pass_empty_cleanup(b: &mut Builder) {
         let quarantine_dir = ensure_quarantine_dir(b, pass);
         let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
         b.ops.push(PlannedOp {
-            op_group: pass.as_str().to_string(),
+            op_group: InternalPass::DedupeQuarantine.as_str().to_string(),
             kind: "quarantine".to_string(),
             kind_reason: None,
             source_path: src,
             target_path: target,
             rationale: format!(
-                "This book keeps a preferred {} copy, so the extra \"{name}\" copy is set aside in quarantine (never deleted).",
+                "This book keeps a preferred {} copy, so the extra \"{name}\" copy is set aside (never deleted).",
                 preferred_ext(b.ruleset.structure.preferred_format)
             ),
             rule_id: "parallel-format-quarantine".to_string(),
@@ -1400,16 +1492,21 @@ fn pass_empty_cleanup(b: &mut Builder) {
         let src = b.node(id).path.clone();
         let name = base_name(&src, b.sep).to_string();
         let size = b.node(id).size;
+        // FD-31: the set-aside op inherits the user-facing group of the pass
+        // that owns its parent folder's transformation. The op still executes in
+        // empty-cleanup order (strictly after every move); only its op_group tag
+        // (the display fold) reflects the owning pass.
+        let owning = b.clutter_owning_pass(id);
         let quarantine_dir = ensure_quarantine_dir(b, pass);
         let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
         b.ops.push(PlannedOp {
-            op_group: pass.as_str().to_string(),
+            op_group: owning.as_str().to_string(),
             kind: "quarantine".to_string(),
             kind_reason: None,
             source_path: src,
             target_path: target,
             rationale: format!(
-                "\"{name}\" is not an audiobook file; set it aside in quarantine (never deleted)."
+                "\"{name}\" is not an audiobook file; set it aside (never deleted)."
             ),
             rule_id: "clutter-quarantine".to_string(),
             confidence: "high".to_string(),
@@ -1529,11 +1626,17 @@ pub fn group_for_op_group(op_group: &str) -> Option<CampaignGroup> {
 
 // ---- persistence (thin, separate from the pure builder) ----
 
-/// Persist a built plan via [`crate::db::plans::insert_plan`], returning the new
-/// plan id. Serializes [`PlanStats`] into `plans.stats_json`. The pure build and
-/// this persistence are deliberately separate so the determinism golden tests
-/// the builder without a database.
-pub async fn persist_plan(
+/// TEST-ONLY persistence shim: insert a built plan with every op's
+/// `validation_state` frozen at `"pending"` and NO update path, via
+/// [`crate::db::plans::insert_plan`]. Because migration 0002 freezes the
+/// descriptive/validation columns at insert time, a plan persisted this way is
+/// stuck `pending` forever. That is acceptable for a round-trip unit test but
+/// would be a foot-gun in production, so this is `#[cfg(test)]` and named with a
+/// `_for_tests` suffix: the ONLY production persistence path is
+/// [`crate::plan::validate::persist_validated_plan`], which writes real verdicts
+/// once. Serializes [`PlanStats`] into `plans.stats_json`.
+#[cfg(test)]
+pub async fn persist_plan_for_tests(
     pool: &sqlx::SqlitePool,
     scan_id: i64,
     ruleset_id: i64,
@@ -1729,6 +1832,39 @@ mod tests {
                 "empty folders",
             ]
         );
+    }
+
+    /// SPEC guard (PR-B regression): the EXACT pass-to-group fold for every
+    /// internal pass, not just the label set. The prior label-set-only test let
+    /// an inverted SplitMultiBook<->FlattenPacks mapping sail through, so this
+    /// pins each pass to its FD-26 group by identity.
+    #[test]
+    fn every_internal_pass_folds_to_its_exact_group() {
+        use CampaignGroup::*;
+        use InternalPass::*;
+        let expected: &[(InternalPass, CampaignGroup)] = &[
+            (StagingSeparation, Staging),
+            (LooseRootBooks, LooseBooks),
+            (StripNoise, MessyNames),
+            // A multi-book folder is the "box set" the user splits.
+            (SplitMultiBook, BoxSets),
+            // A pack/collection container is the "collection bundle" unpacked.
+            (FlattenPacks, Bundles),
+            (NormalizeSeries, MessyNames),
+            (DedupeQuarantine, Copies),
+            (EmptyCleanup, EmptyFolders),
+        ];
+        // Every pass is covered exactly once.
+        assert_eq!(expected.len(), InternalPass::ALL.len());
+        for &(pass, group) in expected {
+            assert_eq!(
+                pass.group(),
+                group,
+                "{} must fold into {:?}",
+                pass.as_str(),
+                group.label()
+            );
+        }
     }
 
     // ---- AC-8: determinism (same input twice = byte-identical plan). -------
@@ -2027,7 +2163,7 @@ mod tests {
         let q = quarantines[0];
         assert_eq!(q.source_path, "lib/Hugo Collection");
         assert!(
-            q.target_path.starts_with("lib/_Quarantine/"),
+            q.target_path.starts_with("lib/Set Aside/"),
             "target: {}",
             q.target_path
         );
@@ -2134,9 +2270,16 @@ mod tests {
         assert_eq!(quarantines.len(), 2, "both mp3 losers set aside");
         for q in &quarantines {
             assert_eq!(q.kind, "quarantine");
-            assert_eq!(q.op_group, "empty-cleanup");
+            // FD-31: a parallel-format loser is a copy of the book, so it folds
+            // into the Copies group (the dedupe-quarantine pass), not the
+            // empty-cleanup pile, even though it is emitted in empty-cleanup.
+            assert_eq!(q.op_group, "dedupe-quarantine");
+            assert_eq!(
+                group_for_op_group(&q.op_group).map(|g| g.label()),
+                Some("copies")
+            );
             assert!(q.source_path.ends_with(".mp3"), "loser is an mp3");
-            assert!(q.target_path.starts_with("lib/_Quarantine/"));
+            assert!(q.target_path.starts_with("lib/Set Aside/"));
         }
         // The m4b is never a quarantine source anywhere in the plan.
         assert!(
@@ -2238,6 +2381,168 @@ mod tests {
             && (o.source_path.ends_with(".jpg") || o.source_path.ends_with(".epub"))));
     }
 
+    // ---- FD-31: clutter set-aside ops inherit the owning pass's group -------
+
+    /// The single clutter set-aside op in a plan, for the group-inheritance
+    /// tests below (each fixture is built to produce exactly one).
+    fn only_clutter_op(plan: &BuiltPlan) -> &PlannedOp {
+        let clutter: Vec<&PlannedOp> = plan
+            .ops
+            .iter()
+            .filter(|o| o.rule_id == "clutter-quarantine")
+            .collect();
+        assert_eq!(
+            clutter.len(),
+            1,
+            "expected exactly one clutter op: {clutter:?}"
+        );
+        clutter[0]
+    }
+
+    /// FD-31: clutter sitting directly in a pack/collection container rides the
+    /// Bundles group (the flatten-packs pass), because unpacking owns that
+    /// folder's transformation. The pack here is partially extracted (a bare
+    /// member), so the shell is not itself set aside and the nfo is a distinct
+    /// clutter op.
+    #[test]
+    fn pack_internal_clutter_rides_bundles() {
+        let nodes = vec![
+            dir(0, None, "lib/Hugo Collection"),
+            dir(
+                1,
+                Some(0),
+                "lib/Hugo Collection/N.K. Jemisin - The Fifth Season",
+            ),
+            aud(
+                2,
+                Some(1),
+                "lib/Hugo Collection/N.K. Jemisin - The Fifth Season/The Fifth Season.m4b",
+                187_000,
+            ),
+            dir(
+                3,
+                Some(0),
+                "lib/Hugo Collection/Charles Stross - Neptune's Brood",
+            ),
+            aud(
+                4,
+                Some(3),
+                "lib/Hugo Collection/Charles Stross - Neptune's Brood/Neptune's Brood.m4b",
+                165_000,
+            ),
+            // A bare-title member keeps the extraction partial (shell stays).
+            dir(5, Some(0), "lib/Hugo Collection/Some Bare Title"),
+            aud(
+                6,
+                Some(5),
+                "lib/Hugo Collection/Some Bare Title/Some Bare Title.m4b",
+                90_000,
+            ),
+            // Clutter directly in the pack container.
+            file(7, Some(0), "lib/Hugo Collection/release.nfo", 500),
+        ];
+        let plan = build(&nodes);
+        let op = only_clutter_op(&plan);
+        assert_eq!(op.op_group, "flatten-packs");
+        assert_eq!(
+            group_for_op_group(&op.op_group).map(|g| g.label()),
+            Some("bundles")
+        );
+        assert!(op.target_path.starts_with("lib/Set Aside/"));
+    }
+
+    /// FD-31: clutter left behind in a multi-book folder (which is emptied in
+    /// place, not relocated) rides the Box sets group (the split-multi-book
+    /// pass). This case was previously SKIPPED because the folder was marked
+    /// handled; it must now be set aside and grouped under box sets.
+    #[test]
+    fn multibook_internal_clutter_rides_box_sets() {
+        let nodes = vec![
+            dir(0, None, "lib/Chronicles of Narnia"),
+            aud(
+                1,
+                Some(0),
+                "lib/Chronicles of Narnia/The Lion, the Witch and the Wardrobe.m4b",
+                90_000,
+            ),
+            aud(
+                2,
+                Some(0),
+                "lib/Chronicles of Narnia/Prince Caspian.m4b",
+                75_000,
+            ),
+            aud(
+                3,
+                Some(0),
+                "lib/Chronicles of Narnia/The Voyage of the Dawn Treader.m4b",
+                80_000,
+            ),
+            file(4, Some(0), "lib/Chronicles of Narnia/release.nfo", 500),
+        ];
+        let plan = build(&nodes);
+        // Precondition: the folder really is a multi-book suspect (so this test
+        // exercises the SplitMultiBook inheritance branch, not a fallback).
+        let (cs, _) = analyze(&nodes);
+        assert_eq!(
+            cs.iter().find(|c| c.id == 0).map(|c| c.class),
+            Some(FolderClass::MultiBookSuspect),
+            "fixture must be a multi-book suspect"
+        );
+        let op = only_clutter_op(&plan);
+        assert_eq!(op.op_group, "split-multi-book");
+        assert_eq!(
+            group_for_op_group(&op.op_group).map(|g| g.label()),
+            Some("box sets")
+        );
+    }
+
+    /// FD-31: clutter sitting loose at the library root rides the Loose books
+    /// group (the loose-root-books pass).
+    #[test]
+    fn root_side_clutter_rides_loose_books() {
+        let nodes = vec![
+            aud(0, None, "lib/Sapiens by Yuval Noah Harari.m4b", 180_000),
+            file(1, None, "lib/notes.nfo", 500),
+        ];
+        let plan = build(&nodes);
+        let op = only_clutter_op(&plan);
+        assert_eq!(op.op_group, "loose-root-books");
+        assert_eq!(
+            group_for_op_group(&op.op_group).map(|g| g.label()),
+            Some("loose books")
+        );
+    }
+
+    /// FD-31: standalone clutter with no owning transformation (a plain kept
+    /// book folder that is not at the root, not in a pack, not a multi-book, and
+    /// not renamed) joins the empty-cleanup pile (Empty folders group). Two
+    /// top-level book folders keep the snapshot multi-rooted so neither book is
+    /// mistaken for the scan root (which would make its contents read root-side).
+    #[test]
+    fn standalone_clutter_joins_the_empty_cleanup_pile() {
+        let nodes = vec![
+            dir(0, None, "lib/Book One"),
+            aud(1, Some(0), "lib/Book One/Book One.m4b", 100_000),
+            file(2, Some(0), "lib/Book One/release.nfo", 500),
+            dir(3, None, "lib/Book Two"),
+            aud(4, Some(3), "lib/Book Two/Book Two.m4b", 100_000),
+        ];
+        let plan = build(&nodes);
+        // Precondition: Book One is a plain book leaf, not a container/pack.
+        let (cs, _) = analyze(&nodes);
+        assert_eq!(
+            cs.iter().find(|c| c.id == 0).map(|c| c.class),
+            Some(FolderClass::Book),
+            "fixture must be a plain book folder"
+        );
+        let op = only_clutter_op(&plan);
+        assert_eq!(op.op_group, "empty-cleanup");
+        assert_eq!(
+            group_for_op_group(&op.op_group).map(|g| g.label()),
+            Some("empty folders")
+        );
+    }
+
     // ---- stats --------------------------------------------------------------
 
     #[test]
@@ -2288,7 +2593,7 @@ mod tests {
         .await
         .unwrap();
 
-        let plan_id = persist_plan(
+        let plan_id = persist_plan_for_tests(
             &pool,
             scan_id,
             ruleset_id,

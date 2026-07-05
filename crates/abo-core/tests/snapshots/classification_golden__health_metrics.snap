@@ -6,7 +6,7 @@ expression: out
 per-class (folders, bytes):
   book               folders=23  bytes=3141000
   series-container   folders=2   bytes=0
-  pack-container     folders=8   bytes=0
+  pack-container     folders=8   bytes=500
   staging            folders=1   bytes=100000
   mixed              folders=2   bytes=110000
   multi-book-suspect folders=4   bytes=2447000
@@ -19,4 +19,4 @@ problems:
   deep-nesting                 count=3   unit=folders  bytes=0
   duplicate-candidate-groups   count=2   unit=groups   bytes=420000
   empty-folders                count=1   unit=folders  bytes=0
-total-bytes=6920200
+total-bytes=6920700

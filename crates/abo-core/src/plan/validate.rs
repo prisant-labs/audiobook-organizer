@@ -637,9 +637,10 @@ pub fn summarize(verdicts: &[OpVerdict]) -> ValidationSummary {
 /// This is the F-404 "validation runs before a plan is ever persisted" path
 /// (migration 0002's freeze note): each op's `validation_state` /
 /// `validation_reason` is written ONCE at insert time from `verdicts`, so no
-/// scoped UPDATE of the frozen descriptive columns is ever needed. (Contrast
-/// [`crate::plan::builder::persist_plan`], which writes `pending` for callers
-/// that validate separately.) `verdicts` must align by index with `plan.ops`.
+/// scoped UPDATE of the frozen descriptive columns is ever needed. (The
+/// builder's test-only `persist_plan_for_tests` shim writes `pending` with no
+/// update path and is `#[cfg(test)]`; this is the sole production path.)
+/// `verdicts` must align by index with `plan.ops`.
 pub async fn persist_validated_plan(
     pool: &sqlx::SqlitePool,
     scan_id: i64,
