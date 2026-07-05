@@ -84,11 +84,14 @@ pub struct MultiBookVerdict {
 }
 
 /// A file whose ENTIRE name is a part marker (`track01`, `Disc 2`, `Part 1`,
-/// `01`, `1-02`): one book's part, dropped before counting distinct titles.
-/// Anchored to the whole stem so a real title that merely ends in `- Part 1`
-/// is NOT caught here (that case is handled by [`normalize_title`]).
+/// `01`, `1-02`, `part 01 of 12`, `01 of 12`, `1/12`): one book's part, dropped
+/// before counting distinct titles. Anchored to the whole stem so a real title
+/// that merely ends in `- Part 1` is NOT caught here (that case is handled by
+/// [`normalize_title`]). The `of M` / `/M` tail mirrors the same family in
+/// [`PART_SUFFIX_RE`], so a bare `01 of 12` whole name is dropped just as a
+/// trailing ` part 01 of 12` suffix is stripped.
 static WHOLE_PART_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*(?:(?:track|chapter|part|disc|disk|cd|section|file|pt|vol|volume)[\s_\-.]*\d+|\d{1,4}|\d{1,3}[\s_\-.]+\d{1,3})\s*$")
+    Regex::new(r"(?i)^\s*(?:(?:track|chapter|part|disc|disk|cd|section|file|pt|vol|volume)[\s_\-.]*\d+(?:\s*(?:of|/)\s*\d+)?|\d{1,4}|\d{1,3}[\s_\-.]+\d{1,3}|\d{1,3}\s*(?:of|/)\s*\d{1,3})\s*$")
         .expect("valid whole-part regex")
 });
 
@@ -100,10 +103,15 @@ static BONUS_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// A trailing part suffix on an OTHERWISE-real title (`Goblet of Fire - Part
-/// 1`, `Deathly Hallows Part 2`, `Title - Disc 3`): stripped so the parts of
-/// one title collapse to a single distinct title, without dropping the file.
+/// 1`, `Deathly Hallows Part 2`, `Title - Disc 3`, `Title part 01 of 12`,
+/// `Title 01 of 12`, `Title 1/12`): stripped so the parts of one title collapse
+/// to a single distinct title, without dropping the file. Two alternatives: a
+/// labeled marker (`part`/`disc`/... N) with an optional `of M` / `/M` tail, and
+/// a bare-numeric `N of M` / `N/M` tail with no label at all (the chapter-file
+/// family `... part 01 of 12`, `... 01 of 12`, `... 1/12`). Both anchored to the
+/// end, so an interior `of` (e.g. `Goblet of Fire`) is never touched.
 static PART_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)[\s\-]+(?:part|pt|disc|disk|cd|vol|volume|chapter)\s*\.?\s*\d+\s*$")
+    Regex::new(r"(?i)(?:[\s\-]+(?:part|pt|disc|disk|cd|vol|volume|chapter)\s*\.?\s*\d+(?:\s*(?:of|/)\s*\d+)?|[\s\-]+\d+\s*(?:of|/)\s*\d+)\s*$")
         .expect("valid part-suffix regex")
 });
 
@@ -435,6 +443,88 @@ mod tests {
         let v = detect_multibook(&files);
         assert!(!v.is_multi, "one title in two parts is a single book");
         assert_eq!(v.distinct_titles, vec!["the stand".to_string()]);
+    }
+
+    /// The `N of M` chapter-file family every trailing suffix form normalizes
+    /// off to the same real title. This is the case the earlier suffix regex
+    /// missed (`part 01 of 12`, bare `01 of 12`, `disc 1 of 3`, `1/12`), so a
+    /// twelve-chapter single book read as twelve distinct books.
+    #[test]
+    fn n_of_m_suffix_families_normalize_off() {
+        for (input, expected) in [
+            ("The Long Winter part 01 of 12", "the long winter"),
+            ("The Long Winter 01 of 12", "the long winter"),
+            ("The Long Winter disc 1 of 3", "the long winter"),
+            ("The Long Winter 1/12", "the long winter"),
+            ("The Long Winter - Part 2", "the long winter"),
+            ("The Long Winter Disc 3", "the long winter"),
+        ] {
+            assert_eq!(normalize_title(input), expected, "input {input:?}");
+        }
+    }
+
+    /// The reported regression: twelve `X part NN of 12` chapter files are ONE
+    /// book, not twelve. Before the `of M` tail was added they counted as twelve
+    /// distinct books and the folder was wrongly split.
+    #[test]
+    fn twelve_parts_of_twelve_is_one_book() {
+        let owned: Vec<(String, String)> = (1..=12)
+            .map(|n| {
+                let stem = format!("The Long Winter part {n:02} of 12");
+                (format!("{stem}.m4a"), stem)
+            })
+            .collect();
+        let files: Vec<BookFile> = owned
+            .iter()
+            .map(|(name, stem)| bf(name, Some(stem), 90_000))
+            .collect();
+        let v = detect_multibook(&files);
+        assert!(
+            !v.is_multi,
+            "twelve 'part NN of 12' chapters are one book: {:?}",
+            v.distinct_titles
+        );
+        assert_eq!(v.distinct_titles, vec!["the long winter".to_string()]);
+    }
+
+    /// A genuine box set where ONE member is itself split into `of M` parts
+    /// still counts its real distinct books: the split member collapses to a
+    /// single title, and the set is still multi-book with the right count (not
+    /// inflated by the parts, not collapsed to one by the new tail).
+    #[test]
+    fn boxset_with_one_part_suffixed_member_still_counts_real_books() {
+        let files = [
+            bf(
+                "Foundation part 1 of 2.m4b",
+                Some("Foundation part 1 of 2"),
+                100_000,
+            ),
+            bf(
+                "Foundation part 2 of 2.m4b",
+                Some("Foundation part 2 of 2"),
+                100_000,
+            ),
+            bf(
+                "Foundation and Empire.m4b",
+                Some("Foundation and Empire"),
+                95_000,
+            ),
+            bf("Second Foundation.m4b", Some("Second Foundation"), 90_000),
+        ];
+        let v = detect_multibook(&files);
+        assert!(
+            v.is_multi,
+            "a genuine three-book set is still multi-book: {:?}",
+            v.distinct_titles
+        );
+        assert_eq!(
+            v.distinct_titles,
+            vec![
+                "foundation".to_string(),
+                "foundation and empire".to_string(),
+                "second foundation".to_string(),
+            ]
+        );
     }
 
     /// F-203, the Wings of Fire fixture (a series distinguished PRIMARILY by

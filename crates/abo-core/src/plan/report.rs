@@ -360,7 +360,19 @@ fn displayed_count(input: &ReportInput, group: CampaignGroup) -> u64 {
 fn group_headline(input: &ReportInput, group: CampaignGroup) -> String {
     let n = displayed_count(input, group);
     match group {
-        CampaignGroup::Staging => "Move the sorting piles out of the library".to_string(),
+        CampaignGroup::Staging => {
+            // The staging group is a deliberate 0-change no-op: the piles are
+            // left alone now and tidied in a later step. The headline counts the
+            // PILES found (a meaningful number) rather than changes made (always
+            // 0 here), so the row reads coherently beside its 0 in the Changes
+            // column.
+            let piles = group_ops(input.export, group.label()).len();
+            if piles == 1 {
+                "Leave the 1 sorting pile for a later step".to_string()
+            } else {
+                format!("Leave the {piles} sorting piles for a later step")
+            }
+        }
         CampaignGroup::LooseBooks => format!("Give {n} loose books their own folders"),
         CampaignGroup::MessyNames => format!("Clean up {n} messy folder names"),
         CampaignGroup::BoxSets => {
@@ -380,7 +392,7 @@ fn group_headline(input: &ReportInput, group: CampaignGroup) -> String {
 fn group_description(group: CampaignGroup) -> &'static str {
     match group {
         CampaignGroup::Staging => {
-            "sorting and inbox areas become a Staging area beside the library"
+            "the sorting piles are left alone for now; their books are tidied in a later step once you have reviewed them"
         }
         CampaignGroup::LooseBooks => "each file moves into a folder named for its author and title",
         CampaignGroup::MessyNames => "removes leftover labels; the books do not move",
@@ -394,7 +406,7 @@ fn group_description(group: CampaignGroup) -> &'static str {
 /// The section heading for a group's before/after table.
 fn group_section_title(group: CampaignGroup) -> &'static str {
     match group {
-        CampaignGroup::Staging => "The sorting piles move aside",
+        CampaignGroup::Staging => "The sorting piles wait for a later step",
         CampaignGroup::LooseBooks => "Loose books get their own folders",
         CampaignGroup::MessyNames => "Messy names come clean",
         CampaignGroup::BoxSets => "Box sets become separate books",
@@ -650,10 +662,13 @@ fn push_summary_table(h: &mut String, input: &ReportInput) {
     for &group in CampaignGroup::ALL {
         let count = displayed_count(input, group);
         let size = group_size_cell(input, group);
-        let (chip_class, chip_text) = if group == CampaignGroup::Copies {
-            ("hold", "checking")
-        } else {
-            ("in", "included")
+        // Staging is a 0-change no-op held for a later step, so its row carries a
+        // "later" hold chip rather than the "included" chip: that makes the 0 in
+        // the Changes column read as a deliberate deferral, not an empty result.
+        let (chip_class, chip_text) = match group {
+            CampaignGroup::Copies => ("hold", "checking"),
+            CampaignGroup::Staging => ("hold", "later"),
+            _ => ("in", "included"),
         };
         h.push_str(&format!(
             "<tr><td><b>{}</b><br>{}</td><td class=\"num\">{}</td><td class=\"num\">{}</td><td class=\"r\"><span class=\"chip {}\">{}</span></td></tr>\n",
