@@ -18,12 +18,16 @@
 //! beside the plan); F-701 duplicate detection lands in `crate::dupes`. v0.3.0
 //! Phase 7 adds [`export`] (F-505: CSV/JSON/Markdown plan exports), pure and
 //! path-agnostic like `provenance`; the reports-folder file-writing that lands
-//! both beside the plan is `crate::reports` (F-1002). A later phase adds
-//! `report` (F-506, Phase 8).
+//! both beside the plan is `crate::reports` (F-1002). v0.3.0 Phase 8 adds
+//! [`report`] (F-506): the pure self-contained dry-run HTML report generator
+//! ([`report::build_html_report`]) plus the one impure full-chain orchestration
+//! ([`report::generate_and_report`]) that reads a stored scan, persists the
+//! validated plan, and writes every artifact into the Reports folder.
 
 pub mod builder;
 pub mod disc;
 pub mod export;
 pub mod provenance;
+pub mod report;
 pub mod templates;
 pub mod validate;

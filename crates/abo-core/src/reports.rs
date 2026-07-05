@@ -149,6 +149,17 @@ pub fn write_plan_reports_to(
     write_all(dir, plan, provenance)
 }
 
+/// Write the F-506 self-contained HTML dry-run report into `dir` (creating it if
+/// missing) under the stable [`crate::plan::report::PLAN_HTML_BASENAME`], and
+/// return its path. Kept separate from [`write_plan_reports`]'s five-file set
+/// because the HTML is rendered from a wider input (duplicate candidates, the
+/// dateline) than the plan/provenance exports; the orchestrator
+/// ([`crate::plan::report::generate_and_report`]) calls both against the same
+/// deterministic subfolder.
+pub fn write_html_report(dir: &Path, html: &str) -> io::Result<PathBuf> {
+    write_file(dir, crate::plan::report::PLAN_HTML_BASENAME, html)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
