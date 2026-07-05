@@ -79,7 +79,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::classify::engine::{ClassifyInput, FolderClass, FolderClassification};
 use crate::parse::extract::{Confidence, FieldSource, MergedEntry, NodeKind};
@@ -261,14 +261,19 @@ impl PlannedOp {
 }
 
 /// A per-group operation count (deterministic, in [`CampaignGroup::ALL`] order).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// `Deserialize` (added Phase 7, F-505) round-trips `plans.stats_json` back
+/// into a value the exporter can read without recomputing counts; `group` is
+/// already the FD-26 user-facing label, so this type carries no internal
+/// vocabulary an export ever needs to scrub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroupCount {
     pub group: String,
     pub ops: u64,
 }
 
 /// Plan-level aggregate counts, serialized into `plans.stats_json`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanStats {
     pub total_ops: u64,
     /// Operations that are `no-op(manual-review)` (a book/folder the plan
