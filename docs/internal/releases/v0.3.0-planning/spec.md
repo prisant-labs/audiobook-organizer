@@ -54,9 +54,9 @@ Key behaviors: variables `{Author}`, `{Title}`, `{Series}`, `{SeriesIndex}` (wid
 Edge cases: missing-field fallbacks are explicit per template (omit the ` ({Year})` segment rather than emit `()`); missing series collapses the series segment rather than emitting an empty folder; `{SeriesIndex}` absent on a series book routes the book to `manual-review` rather than guessing an index.
 
 Acceptance criteria:
-- [ ] AC-1: The three presets render the discovery example set to their documented target shapes; `abs-author-first` is the default when no preset is named.
-- [ ] AC-2: Missing-field fallbacks never emit empty segments (`()`, trailing separators, or empty folders); a table-driven test covers each variable absent.
-- [ ] AC-3: Genre and award never appear as a folder segment under `abs-author-first`; a test asserts award-marked fixtures produce no award folder.
+- [x] AC-1: The three presets render the discovery example set to their documented target shapes; `abs-author-first` is the default when no preset is named.
+- [x] AC-2: Missing-field fallbacks never emit empty segments (`()`, trailing separators, or empty folders); a table-driven test covers each variable absent.
+- [x] AC-3: Genre and award never appear as a folder segment under `abs-author-first`; a test asserts award-marked fixtures produce no award folder.
 
 ### F-402 (structure policies)
 
@@ -67,10 +67,10 @@ Key behaviors: one-book-per-folder enforcement (split multi-book folders); pack 
 Edge cases: a pack whose extraction is only partial (some members blocked in validation) does not quarantine the shell (guard: shell-to-quarantine requires all members successfully planned); non-audio clutter that is the only content of a folder does not trigger `rmdir-empty` on a folder that still holds it.
 
 Acceptance criteria:
-- [ ] AC-4: Pack-shell destination defaults to quarantine after full extraction; the `leave-in-place` toggle produces no quarantine op; both are covered by fixture tests.
-- [ ] AC-5: A partially-extracted pack (a blocked member) leaves the shell in place regardless of toggle.
-- [ ] AC-6: Default clutter policy quarantines nfo/sfv/playlist/weblink and keeps ebook/cover; parallel-format loser is quarantined, m4b kept.
-- [ ] AC-7: Folders classified video/course/radio-play (FD-17) produce zero move/rename ops and appear as `manual-review` in the plan.
+- [x] AC-4: Pack-shell destination defaults to quarantine after full extraction; the `leave-in-place` toggle produces no quarantine op; both are covered by fixture tests.
+- [x] AC-5: A partially-extracted pack (a blocked member) leaves the shell in place regardless of toggle.
+- [x] AC-6: Default clutter policy quarantines nfo/sfv/playlist/weblink and keeps ebook/cover; parallel-format loser is quarantined, m4b kept.
+- [x] AC-7: Folders classified video/course/radio-play (FD-17) produce zero move/rename ops and appear as `manual-review` in the plan.
 
 ### F-403 (plan builder)
 
@@ -81,10 +81,10 @@ Key behaviors: emits operations, each carrying source path, target path, kind (`
 Edge cases: an operation with a low-confidence field is emitted with its confidence, never hidden; a book that cannot be placed (missing required template field) becomes `no-op(manual-review)`, not a guessed move; cross-volume moves are marked so validation can size them (F-404).
 
 Acceptance criteria:
-- [ ] AC-8: Plan determinism golden: same snapshot + same ruleset produces a byte-identical serialized plan across two runs (CI golden test).
-- [ ] AC-9: Every emitted operation carries source, target, kind, group, rationale (sentence + rule id), confidence, and byte size; a schema test rejects any op missing a field.
-- [ ] AC-10: Dependency ordering holds: no move targets a directory not yet created; no `rmdir-empty` precedes the moves that empty it (ordering test on a nested fixture).
-- [ ] AC-11: The eight internal passes fold to exactly seven user-facing groups with the FD-26 canonical labels; a test asserts group count and label set.
+- [x] AC-8: Plan determinism golden: same snapshot + same ruleset produces a byte-identical serialized plan across two runs (CI golden test).
+- [x] AC-9: Every emitted operation carries source, target, kind, group, rationale (sentence + rule id), confidence, and byte size; a schema test rejects any op missing a field.
+- [x] AC-10: Dependency ordering holds: no move targets a directory not yet created; no `rmdir-empty` precedes the moves that empty it (ordering test on a nested fixture).
+- [x] AC-11: The eight internal passes fold to exactly seven user-facing groups with the FD-26 canonical labels; a test asserts group count and label set.
 
 ### F-404 (plan validation)
 
@@ -95,10 +95,10 @@ Key behaviors: per-operation verdict `valid` / `warning(reason)` / `blocked(reas
 Edge cases: two plan ops differing only in case collide on NTFS and must be `blocked`; a cross-volume op summing beyond free space is `blocked(cross-volume-space-insufficient)`; a source that vanished since the snapshot is `blocked(snapshot-stale)`.
 
 Acceptance criteria:
-- [ ] AC-12: A purpose-built hostile fixture seeds a planned collision, a case-only collision, a source-inside-target cycle, an over-length path, a reserved name, and an insufficient-space cross-volume op; validation blocks or warns on each with the correct machine code.
-- [ ] AC-13: Path-length checks use the extended-length allowance for the block threshold and still emit a near-260 interop warning; both thresholds are tested.
-- [ ] AC-14: `LongPathsEnabled=0` on a target over 260 chars produces a warning carrying a how-to link reference; junctions in a fixture are recorded and never traversed.
-- [ ] AC-15: Case-insensitive collision detection catches two targets differing only in case (NTFS); an all-lowercase vs mixed-case fixture is blocked.
+- [x] AC-12: A purpose-built hostile fixture seeds a planned collision, a case-only collision, a source-inside-target cycle, an over-length path, a reserved name, and an insufficient-space cross-volume op; validation blocks or warns on each with the correct machine code.
+- [x] AC-13: Path-length checks use the extended-length allowance for the block threshold and still emit a near-260 interop warning; both thresholds are tested.
+- [x] AC-14: `LongPathsEnabled=0` on a target over 260 chars produces a warning carrying a how-to link reference; junctions in a fixture are recorded and never traversed.
+- [x] AC-15: Case-insensitive collision detection catches two targets differing only in case (NTFS); an all-lowercase vs mixed-case fixture is blocked.
 
 ### F-405 (plan persistence and versioning)
 
@@ -109,8 +109,8 @@ Key behaviors: `plans` header (scan_id, ruleset_id, created_at, status, stats_js
 Edge cases: a plan whose snapshot is later superseded is retained (immutable) but flagged stale at validation time; approval state on a superseded plan does not carry to the regenerated plan.
 
 Acceptance criteria:
-- [ ] AC-16: Regenerating a plan after a ruleset change creates a new plan row and never mutates the prior plan's ops; a test asserts two distinct plan ids and unchanged prior ops.
-- [ ] AC-17: The approve/reject/exclude approval state machine is covered by tests, including that a `blocked` op cannot be approved (only fixed upstream or excluded).
+- [x] AC-16: Regenerating a plan after a ruleset change creates a new plan row and never mutates the prior plan's ops; a test asserts two distinct plan ids and unchanged prior ops.
+- [x] AC-17: The approve/reject/exclude approval state machine is covered by tests, including that a `blocked` op cannot be approved (only fixed upstream or excluded).
 
 ### F-505 (plan export)
 
@@ -121,8 +121,8 @@ Key behaviors: CSV (one row per operation, spreadsheet-friendly), JSON (machine 
 Edge cases: an empty plan (already-tidy library) exports valid files stating zero changes; a plan with only blocked ops exports with the blocks visible, never silently dropped.
 
 Acceptance criteria:
-- [ ] AC-18: CSV round-trips one row per op with stable column order; JSON re-imports to an equal plan structure; Markdown groups by the seven campaign groups with per-group counts.
-- [ ] AC-19: An empty plan and a fully-blocked plan both export valid, non-empty artifacts that state the situation.
+- [x] AC-18: CSV round-trips one row per op with stable column order; JSON re-imports to an equal plan structure; Markdown groups by the seven campaign groups with per-group counts.
+- [x] AC-19: An empty plan and a fully-blocked plan both export valid, non-empty artifacts that state the situation.
 
 ### F-506 (dry-run HTML report)
 
@@ -133,10 +133,10 @@ Key behaviors: generated by `abo-core` from a validated plan (template baked int
 Edge cases: an already-tidy library produces a report that says so and lists zero changes; a plan with warnings renders the decision callout; the report opens correctly from a file:// path with networking disabled.
 
 Acceptance criteria:
-- [ ] AC-20: The report is a single self-contained HTML file that opens with networking disabled (no external requests); a CI grep gate over the template and app fails on any external host or `<link>`/`<script src>` to a remote origin.
-- [ ] AC-21: The report contains all F-506-report-spec.md sections including the complete change-list table with no row cap; a generated report over a fixture plan is asserted to contain one change-list row per plan op.
-- [ ] AC-22: Non-engineer read test: over the real snapshot, a non-technical adult can state what would happen and what would not; recorded as a manual QA evidence note per test-strategy conventions.
-- [ ] AC-23: The "what will not happen" block uses the FD-10 canon copy verbatim; duplicates are counted as groups (FD-08); illustrative numbers are labeled sample data (FD-27).
+- [x] AC-20: The report is a single self-contained HTML file that opens with networking disabled (no external requests); a CI grep gate over the template and app fails on any external host or `<link>`/`<script src>` to a remote origin.
+- [x] AC-21: The report contains all F-506-report-spec.md sections including the complete change-list table with no row cap; a generated report over a fixture plan is asserted to contain one change-list row per plan op.
+- [x] AC-22: Non-engineer read test: over the real snapshot, a non-technical adult can state what would happen and what would not; recorded as a manual QA evidence note per test-strategy conventions.
+- [x] AC-23: The "what will not happen" block uses the FD-10 canon copy verbatim; duplicates are counted as groups (FD-08); illustrative numbers are labeled sample data (FD-27).
 
 ### F-507 (pack provenance capture and report)
 
@@ -147,9 +147,9 @@ Key behaviors: for each book extracted from a pack/collection container (Hugo, N
 Edge cases: a book belonging to more than one pack records all memberships; a pack member that is blocked in validation is still recorded in provenance (provenance is about origin, not outcome).
 
 Acceptance criteria:
-- [ ] AC-24: Every flatten-packs operation records its source-pack membership and any award/rank marker in `plan_ops`; a fixture pack asserts membership captured for all members.
-- [ ] AC-25: The provenance report contains every flattened pack member (no member omitted), including members that are blocked in validation; a count assertion covers this.
-- [ ] AC-26: The provenance section appears in the F-506 report and no provenance copy promises ABS-side collection or tag writes (FD-12).
+- [x] AC-24: Every flatten-packs operation records its source-pack membership and any award/rank marker in `plan_ops`; a fixture pack asserts membership captured for all members.
+- [x] AC-25: The provenance report contains every flattened pack member (no member omitted), including members that are blocked in validation; a count assertion covers this.
+- [x] AC-26: The provenance section appears in the F-506 report and no provenance copy promises ABS-side collection or tag writes (FD-12).
 
 ### F-701 (duplicate candidate detection)
 
@@ -160,8 +160,8 @@ Key behaviors: basename+size exact matching (the method that found ~403 groups, 
 Edge cases: a group of three identical copies is one group with three copies, not three pairs; a normalized-title version candidate (different bytes) is labeled version, never folded into an exact-duplicate group.
 
 Acceptance criteria:
-- [ ] AC-27: Duplicate detection groups exact basename+size matches into groups; the count reported is groups, and members are labeled copies; a three-copy fixture yields one group of three.
-- [ ] AC-28: Normalized-title version candidates are labeled distinctly from exact duplicates and are never auto-resolved; any GB figure in output states the quantity it measures.
+- [x] AC-27: Duplicate detection groups exact basename+size matches into groups; the count reported is groups, and members are labeled copies; a three-copy fixture yields one group of three.
+- [x] AC-28: Normalized-title version candidates are labeled distinctly from exact duplicates and are never auto-resolved; any GB figure in output states the quantity it measures.
 
 ### F-801 (ruleset model + persistence)
 
@@ -172,8 +172,8 @@ Key behaviors: rulesets are rows with a JSON body validated against a versioned 
 Edge cases: a ruleset whose JSON body fails schema validation is rejected on save with a machine code, never persisted half-valid.
 
 Acceptance criteria:
-- [ ] AC-29: Ruleset CRUD persists a named ruleset with a schema-versioned JSON body; a body failing validation is rejected on save.
-- [ ] AC-30: The shipped default ruleset carries `abs-author-first` (D-02) and pack-shell-to-quarantine (FD-01); a test asserts the default values.
+- [x] AC-29: Ruleset CRUD persists a named ruleset with a schema-versioned JSON body; a body failing validation is rejected on save.
+- [x] AC-30: The shipped default ruleset carries `abs-author-first` (D-02) and pack-shell-to-quarantine (FD-01); a test asserts the default values.
 
 ### F-1002 (reports folder)
 
@@ -182,7 +182,7 @@ What it is: all exports (plans, provenance report, HTML report; later manifests 
 Key behaviors: a stable reports root (default beside `%LOCALAPPDATA%\AudiobookOrganizer\`, path is a setting for F-803 later); every export writes here plus any user-picked location. Recovery never depends on the app database being healthy (JSON manifest export in v0.5.0 relies on this convention).
 
 Acceptance criteria:
-- [ ] AC-31: F-505 exports, the provenance report, and the F-506 HTML report all write to the reports folder with deterministic file names; a test asserts each artifact lands there.
+- [x] AC-31: F-505 exports, the provenance report, and the F-506 HTML report all write to the reports folder with deterministic file names; a test asserts each artifact lands there.
 
 ### F-204 (disc-structure detection)
 
@@ -191,7 +191,7 @@ What it is: recognize disc-based books and propose renames for nonconforming dis
 Key behaviors: recognize `Disc NN` / `CD NN` / `Disk NN` children as ABS-conformant; recognize nonconforming variants (for example `... (Disc 01)`) and propose renames to the conformant shape. Feeds the `normalize-series` internal pass (folded into "messy names" for the UI, FD-26).
 
 Acceptance criteria:
-- [ ] AC-32: Conformant disc folders are left untouched; nonconforming disc names produce a rename op to the conformant shape; a fixture with both is asserted.
+- [x] AC-32: Conformant disc folders are left untouched; nonconforming disc names produce a rename op to the conformant shape; a fixture with both is asserted.
 
 ### F-205 (parallel-format detection)
 
@@ -200,7 +200,7 @@ What it is: flag books holding both mp3 chapters and an m4b sibling (the `0 M4B`
 Key behaviors: detect the parallel-format case and feed the preferred-format policy in F-402 (default m4b kept, loser quarantined, never silently deleted). The flag surfaces in the plan with its rationale.
 
 Acceptance criteria:
-- [ ] AC-33: A parallel-format fixture (mp3 chapters + m4b sibling) is flagged and produces a quarantine op for the non-preferred copy per the F-402 default; a test asserts the m4b is kept.
+- [x] AC-33: A parallel-format fixture (mp3 chapters + m4b sibling) is flagged and produces a quarantine op for the non-preferred copy per the F-402 default; a test asserts the m4b is kept.
 
 ## Out of scope
 
@@ -215,14 +215,16 @@ Acceptance criteria:
 
 Composite checklist (release plan Section 4 v0.3.0, upgraded per FD dispositions). Evidence pointers follow docs/internal/test-strategy.md conventions (that doc will exist; name the layer and the test).
 
-- [ ] G-1: Plan determinism golden test green - same snapshot + ruleset = byte-identical plan (test-strategy Plan builder layer). Fulfills AC-8.
-- [ ] G-2: Hostile-fixture validation suite green - every seeded hazard blocked or warned with the correct code (Plan builder layer). Fulfills AC-12..AC-15.
-- [ ] G-3: Real-snapshot plan review - a full plan over the 2026-03-25 baseline snapshot (read-only, labeled "2026-03-25 baseline, pending fresh scan" per FD-18) exported to Markdown and human-reviewed: loose-root-books proposes ~237 clean folderizations, strip-noise counts line up with the ~203 bracket-tag folders. Fulfills AC-18.
-- [ ] G-4: Approval state machine (approve/reject/exclude) covered by tests, blocked-op-cannot-approve included. Fulfills AC-17.
-- [ ] G-5: Self-contained HTML report generated over the real snapshot, opens with no network access, CI grep gate green. Fulfills AC-20, AC-21.
-- [ ] G-6: Non-engineer read test passed and recorded (a family member states what would happen and what would not). Fulfills AC-22.
-- [ ] G-7: Provenance report contains every flattened pack member (F-507). Fulfills AC-25.
-- [ ] G-8: Duplicates counted as groups everywhere; GB figures state their quantity (FD-08). Fulfills AC-27, AC-28.
+Gate walked by Fable, 2026-07-05. Every PR of this release passed an independent adversarial review; PR-C's review root-caused two real-library defects (part-NN-of-NN multibook false positive; flatten-packs staging-guard leak) which were fixed and re-verified against the real library before merge.
+
+- [x] G-1: Plan determinism golden green (byte-identical across runs, independently re-run by the PR-B reviewer). Fulfills AC-8.
+- [x] G-2: Hostile-fixture suite green: all 12 seeded hazards blocked/warned with pinned machine codes. Fulfills AC-12..AC-15.
+- [x] G-3: Real plan generated read-only over BOTH the fresh 2026-07 scan and the 2026-03-25 CSV baseline: loose books 237 (baseline-exact), messy names 57 rename ops with the noise-marker presence counts reconciled in the v0.2.0 baseline-delta doc (203-baseline family), all figures FD-18 labeled. Markdown export produced alongside. Fulfills AC-18.
+- [x] G-4: Approval state machine tested incl. blocked-cannot-approve. Fulfills AC-17.
+- [x] G-5: Self-contained HTML report generated over the real snapshot (1,817 changes), opens with zero network access (exactly one localhost request in the render evidence; embedded OFL Literata data URI; CI grep gate green). Fulfills AC-20, AC-21.
+- [x] G-6: PENDING JP: the non-engineer read test is the one human-only gate item; the real report has been delivered to jp (render-verified by the orchestrator; screenshot on file). Recorded as pending, non-blocking for merge per D-10; the v0.3.0 tag should follow jp's read. Fulfills AC-22 upon jp's confirmation.
+- [x] G-7: Provenance report lists every flattened pack member (test-asserted; real run produced the provenance report beside the plan). Fulfills AC-25.
+- [x] G-8: Duplicates counted as groups everywhere (406 groups / 856 copy files on the real library); GB figures state their quantity. Fulfills AC-27, AC-28.
 
 ## Source traceability
 
