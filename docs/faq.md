@@ -49,3 +49,13 @@ Yes. This is a built, tested capability at the engine level as of v0.3.0; the po
 - **Structure policy toggles** (F-402), each with a safe default: one-book-per-folder enforcement; what happens to emptied bundle shells (set aside by default, leave-in-place available, FD-01); sidecars (covers, ebooks) travel with their book; per-file-type clutter handling; preferred format when a book exists in two formats (m4b by default); empty-folder sweeping; name cleanup on or off.
 - **Everything bundles into named, saved rulesets** (F-801): versioned, strictly validated (unknown fields rejected), stored locally in SQLite. Changing a ruleset regenerates the plan; plans are immutable, so it is always "the plan under ruleset A" versus "under ruleset B", never a mutated plan. The v0.4.0 settings and ruleset editor (F-906) adds live re-plan counts as switches flip; portable ruleset files for sharing land in v0.6.0 (F-802).
 - **The honest boundary:** v1 ships presets plus knobs, not a freeform template language for typing arbitrary patterns. The variables exist internally, so a custom template editor is a straightforward later addition if wanted; it would enter through a spec like everything else.
+
+## Does the user pick source folders and an output folder where everything is copied?
+
+Neither; the model is deliberately different. The user selects one library folder, and the tidy-up reorganizes it in place. Files are renamed and moved within the same drive, a metadata-only operation on Windows: instant per book, no bytes duplicated, no second copy of the library ever created. The "after" structure in the report materializes inside the selected library, not in a separate destination.
+
+Why (D-08, rename-first executor): the real library is 297 GB on a drive at roughly 93% capacity. A copy-to-output model would demand another ~300 GB and hours of disk I/O per tidy-up and leave two libraries to reconcile. Renames cost seconds, are atomic per entry, and make full undo cheap, since reversing a rename is just another rename. The one full copy the drive can afford is reserved for the optional pre-tidy backup, which is the user's choice (D-17).
+
+What the user actually selects (v0.4.0 first-run and settings, F-909 and F-803): the library folder (one root per tidy-up; multiple libraries is deferred, F-1107); where the Set Aside holding folder lives (defaults to beside the library, outside it so Audiobookshelf never scans it); and where Reports go.
+
+Two honest exceptions where real copying occurs: a move that crosses drives becomes copy, verify, then remove, explicitly marked in the plan and checked against free space before it is allowed (F-404); and the backup itself, if a copy-based option is chosen.
