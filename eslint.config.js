@@ -1,10 +1,15 @@
 import js from "@eslint/js";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import reactHooks from "eslint-plugin-react-hooks";
+import reactRefresh from "eslint-plugin-react-refresh";
 
-// v0.1.0 spine, Phase 5. A lean flat config: the typescript-eslint recommended
-// baseline plus the no-raw-invoke rule (FD-29). src-tauri (Rust) and build
-// outputs are ignored; the frontend is the only lint surface.
+// v0.1.0 spine, Phase 5, extended in v0.4.0 Phase 1 with the react-hooks and
+// react-refresh presets (D-01 common-stack posture, matching repo-sync-tool's
+// eslint.config.js) now that the tree has real components with hooks. A lean
+// flat config: the typescript-eslint recommended baseline plus the
+// no-raw-invoke rule (FD-29). src-tauri (Rust) and build outputs are ignored;
+// the frontend is the only lint surface.
 export default tseslint.config(
   {
     ignores: ["dist", "src-tauri", "node_modules"],
@@ -16,7 +21,11 @@ export default tseslint.config(
       ecmaVersion: 2022,
       globals: globals.browser,
     },
+    plugins: {
+      "react-hooks": reactHooks,
+    },
     rules: {
+      ...reactHooks.configs["recommended-latest"].rules,
       // no-raw-invoke (FD-29 typed-IPC-only): the frontend MUST call the
       // tauri-specta generated bindings in src/lib/bindings.ts, never `invoke`
       // directly. Forbid importing `invoke` from @tauri-apps/api/core (and the
@@ -75,4 +84,5 @@ export default tseslint.config(
       "no-restricted-syntax": "off",
     },
   },
+  reactRefresh.configs.vite,
 );
