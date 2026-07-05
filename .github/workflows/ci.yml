@@ -132,6 +132,11 @@ jobs:
       # error, never auto-fetched). Both are narrowly allowlisted by exact prefix below;
       # any OTHER https/http reference still fails the gate. ci-plan.md Section 2
       # records this fix and the allowlist.
+      #
+      # v0.4.0 Phase 1 addition: Tailwind CSS's compiled output carries a one-line
+      # license banner comment `/*! tailwindcss v4.x.x | MIT License | https://tailwindcss.com */`.
+      # Like the w3.org namespace URIs, this is a static string in a CSS comment, never
+      # fetched at runtime; allowlisted by exact host below.
       - name: Assert zero external network references
         run: |
           set -eu
@@ -141,6 +146,7 @@ jobs:
             | grep -viE 'https?://(localhost|127\.0\.0\.1)' \
             | grep -v 'https://react\.dev/errors/' \
             | grep -v 'http://www\.w3\.org/' \
+            | grep -v 'https://tailwindcss\.com' \
             && hits=1
           grep -HnEi 'fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.|unpkg\.com|jsdelivr' $targets 2>/dev/null && hits=1
           if [ "$hits" -eq 1 ]; then
@@ -219,10 +225,13 @@ jobs:
         shell: bash
         run: pnpm bindings:check
 
-      # pnpm test: no `test` script exists in package.json at v0.1.0 (spine) - Vitest
-      # and the axe-core accessibility smoke land with the real UI work (v0.4.0, per
-      # ci-plan.md Section 5). Skipped here per this phase's brief rather than adding a
-      # placeholder script that tests nothing; re-add this step when `pnpm test` exists.
+      # pnpm test: Vitest component tests land with v0.4.0 Phase 1 (test-strategy.md
+      # Frontend layer). Runs on both matrix platforms since it needs no Tauri runtime
+      # (jsdom + mocked bindings). The axe-core accessibility smoke joins this suite in
+      # Phase 8 (ci-plan.md Section 5); no separate step is needed for it then, it is
+      # just more specs `pnpm test` picks up.
+      - name: pnpm test
+        run: pnpm test
 
   # --- build: bundle on both platforms; Windows is the GA bar -------------------------
   build:
