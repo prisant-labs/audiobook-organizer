@@ -114,7 +114,11 @@ function App() {
   }
 
   return (
-    <main style={{ fontFamily: "sans-serif", padding: "1rem" }}>
+    // A plain <div>, not <main>: this tracer now mounts inside AppShell's
+    // ScreenContainer (v0.4.0 Phase 1), which already owns the page's one
+    // <main> landmark. Nesting two <main> elements is invalid; this is the
+    // only change made to this disposable file for that reason.
+    <div style={{ fontFamily: "sans-serif", padding: "1rem" }}>
       <h1>Audiobook Organizer - spine scaffold</h1>
       <p style={{ fontWeight: "bold" }}>
         Tracer slice - disposable, deleted at v0.4.0 (seeing)
@@ -144,7 +148,7 @@ function App() {
           </pre>
         </>
       )}
-    </main>
+    </div>
   );
 }
 

@@ -1,7 +1,14 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "FD-29 minimal capability baseline for the v0.1.0 spine main window. Grants only event emission/listening and webview default APIs; explicitly NO fs, NO shell, NO dialog. Folder access is mediated by the backend from v0.4.0 (F-909, tauri-plugin-dialog); the frontend never touches the filesystem directly.",
+  "description": "FD-29 minimal capability baseline for the main window. Grants only event emission/listening, webview default APIs, and (added in v0.4.0 Phase 1, F-901) the four narrow core:window permissions the custom titlebar's window-caption buttons need over decorations:false: allow-minimize, allow-toggle-maximize, allow-close, allow-start-dragging. Deliberately NOT core:window:default, which is much broader (monitor/cursor queries, resizability, visibility, etc.) than this window ever calls; only the exact commands src/components/shell/WindowControls.tsx and Titlebar.tsx's drag region invoke are allowed. Explicitly still NO fs, NO shell, NO dialog. Folder access is mediated by the backend from v0.4.0 (F-909, tauri-plugin-dialog); the frontend never touches the filesystem directly.",
   "windows": ["main"],
-  "permissions": ["core:event:default", "core:webview:default"]
+  "permissions": [
+    "core:event:default",
+    "core:webview:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
 }

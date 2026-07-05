@@ -13,10 +13,11 @@
     "windows": [
       {
         "label": "main",
-        "title": "Audiobook Organizer (v0.1.0 spine, throwaway UI)",
+        "title": "Audiobook Organizer",
         "width": 900,
         "height": 600,
-        "visible": true
+        "visible": true,
+        "decorations": false
       }
     ],
     "security": {
