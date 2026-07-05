@@ -163,10 +163,15 @@ impl ProvenanceReport {
             out.push_str(&format!("## {}\n\n", pack.pack_name));
             for m in &pack.members {
                 let award = match &m.award_marker {
-                    Some(marker) => format!(" (award {marker} kept in this report, not in the folder name)"),
+                    Some(marker) => {
+                        format!(" (award {marker} kept in this report, not in the folder name)")
+                    }
                     None => String::new(),
                 };
-                out.push_str(&format!("- {} -> {}{}\n", m.source_path, m.target_path, award));
+                out.push_str(&format!(
+                    "- {} -> {}{}\n",
+                    m.source_path, m.target_path, award
+                ));
             }
             out.push('\n');
         }
@@ -179,9 +184,7 @@ mod tests {
     use super::*;
     use crate::classify::classify;
     use crate::parse::extract::{extract, EntryInput, MergedEntry, NodeKind};
-    use crate::plan::builder::{
-        build_plan, classify_inputs_from_plan_nodes, PlanNode,
-    };
+    use crate::plan::builder::{build_plan, classify_inputs_from_plan_nodes, PlanNode};
     use crate::ruleset::default_ruleset;
     use crate::scan::typing::FileClass;
 
@@ -212,7 +215,9 @@ mod tests {
             size,
         }
     }
-    fn analyze(nodes: &[PlanNode]) -> (Vec<crate::classify::FolderClassification>, Vec<MergedEntry>) {
+    fn analyze(
+        nodes: &[PlanNode],
+    ) -> (Vec<crate::classify::FolderClassification>, Vec<MergedEntry>) {
         let inputs = classify_inputs_from_plan_nodes(nodes);
         let cs = classify(&inputs);
         let entry_inputs: Vec<EntryInput> = nodes
@@ -228,7 +233,8 @@ mod tests {
     }
 
     fn hugo_plan() -> BuiltPlan {
-        let nodes = vec![
+        let nodes =
+            vec![
             dir(0, None, "lib/Hugo Collection"),
             dir(1, Some(0), "lib/Hugo Collection/2016^ - N.K. Jemisin - The Fifth Season"),
             aud(

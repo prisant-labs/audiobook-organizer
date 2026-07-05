@@ -239,7 +239,10 @@ fn nonconforming_disc_folders_are_normalized() {
             op.source_path
         );
     }
-    let targets: Vec<&str> = disc_renames.iter().map(|o| o.target_path.as_str()).collect();
+    let targets: Vec<&str> = disc_renames
+        .iter()
+        .map(|o| o.target_path.as_str())
+        .collect();
     assert!(
         targets.iter().any(|t| t.ends_with("/CD 3")),
         "CD3 -> CD 3 expected, got {targets:?}"
@@ -271,7 +274,11 @@ fn parallel_format_losers_are_set_aside_and_m4b_kept() {
         .iter()
         .filter(|o| o.rule_id == "parallel-format-quarantine")
         .collect();
-    assert_eq!(losers.len(), 2, "the two mp3 chapters are set aside: {losers:?}");
+    assert_eq!(
+        losers.len(),
+        2,
+        "the two mp3 chapters are set aside: {losers:?}"
+    );
     for op in &losers {
         assert_eq!(op.kind, "quarantine");
         assert!(op.source_path.contains("Parallel Format Example"));

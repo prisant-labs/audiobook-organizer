@@ -660,15 +660,27 @@ mod tests {
     /// never clutter.
     #[test]
     fn clutter_kind_maps_extensions_and_excludes_sidecars_and_audio() {
-        assert_eq!(clutter_kind_from_name("release.nfo"), Some(ClutterKind::Nfo));
+        assert_eq!(
+            clutter_kind_from_name("release.nfo"),
+            Some(ClutterKind::Nfo)
+        );
         assert_eq!(clutter_kind_from_name("check.sfv"), Some(ClutterKind::Sfv));
         assert_eq!(
             clutter_kind_from_name("tracks.m3u"),
             Some(ClutterKind::Playlist)
         );
-        assert_eq!(clutter_kind_from_name("buy.url"), Some(ClutterKind::Weblink));
-        assert_eq!(clutter_kind_from_name("book.epub"), Some(ClutterKind::Ebook));
-        assert_eq!(clutter_kind_from_name("cover.JPG"), Some(ClutterKind::Cover));
+        assert_eq!(
+            clutter_kind_from_name("buy.url"),
+            Some(ClutterKind::Weblink)
+        );
+        assert_eq!(
+            clutter_kind_from_name("book.epub"),
+            Some(ClutterKind::Ebook)
+        );
+        assert_eq!(
+            clutter_kind_from_name("cover.JPG"),
+            Some(ClutterKind::Cover)
+        );
         // A .txt description is a sidecar, not clutter this policy governs.
         assert_eq!(clutter_kind_from_name("read me.txt"), None);
         // Audio and video are never clutter.

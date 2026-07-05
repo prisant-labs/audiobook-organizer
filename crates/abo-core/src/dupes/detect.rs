@@ -110,10 +110,7 @@ pub fn detect_exact_duplicates(entries: &[DupeEntry]) -> Vec<DuplicateGroup> {
         if e.is_dir {
             continue;
         }
-        buckets
-            .entry((e.name.clone(), e.size))
-            .or_default()
-            .push(e);
+        buckets.entry((e.name.clone(), e.size)).or_default().push(e);
     }
 
     let mut groups = Vec::new();
@@ -293,7 +290,10 @@ mod tests {
         assert_eq!(groups[0].total_bytes, 300, "sum of all member bytes");
         // Members sorted by path.
         let paths: Vec<&str> = groups[0].members.iter().map(|m| m.path.as_str()).collect();
-        assert_eq!(paths, vec!["lib/a/Book.m4b", "lib/b/Book.m4b", "lib/c/Book.m4b"]);
+        assert_eq!(
+            paths,
+            vec!["lib/a/Book.m4b", "lib/b/Book.m4b", "lib/c/Book.m4b"]
+        );
     }
 
     /// Same basename but different size is NOT an exact duplicate (size must

@@ -119,7 +119,10 @@ fn every_detected_group_has_at_least_two_copies() {
     let entries = dupe_entries_from_plan_nodes(&nodes, &merged);
 
     let groups = detect_duplicates(&entries);
-    assert!(!groups.is_empty(), "the fixture has at least the Island pair");
+    assert!(
+        !groups.is_empty(),
+        "the fixture has at least the Island pair"
+    );
     for g in &groups {
         assert!(g.copies() >= 2, "a group has >= 2 copies: {}", g.group_key);
     }
@@ -145,5 +148,8 @@ fn fixture_nodes_classify_without_panic() {
     let nodes = nodes_from_manifest();
     let inputs: Vec<ClassifyInput> = classify_inputs_from_plan_nodes(&nodes);
     let cs = classify(&inputs);
-    assert_eq!(cs.len(), nodes.iter().filter(|n| n.kind == NodeKind::Folder).count());
+    assert_eq!(
+        cs.len(),
+        nodes.iter().filter(|n| n.kind == NodeKind::Folder).count()
+    );
 }

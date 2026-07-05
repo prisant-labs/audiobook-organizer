@@ -1122,12 +1122,7 @@ fn pass_normalize_series(b: &mut Builder) {
         .nodes
         .iter()
         .filter(|n| n.kind == NodeKind::Folder)
-        .filter(|n| {
-            b.class_by_id
-                .get(&n.id)
-                .and_then(|c| c.evidence.detected)
-                == Some("disc-part")
-        })
+        .filter(|n| b.class_by_id.get(&n.id).and_then(|c| c.evidence.detected) == Some("disc-part"))
         .map(|n| n.id)
         .filter(|&id| !b.handled.contains(&id) && !b.ancestor_handled(id))
         .collect();
@@ -1334,7 +1329,9 @@ fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) -> String {
             kind_reason: None,
             source_path: String::new(),
             target_path: quarantine_dir.clone(),
-            rationale: "Create the quarantine folder so items can be set aside without deleting anything.".to_string(),
+            rationale:
+                "Create the quarantine folder so items can be set aside without deleting anything."
+                    .to_string(),
             rule_id: "empty-cleanup-mkdir".to_string(),
             confidence: "high".to_string(),
             byte_size: 0,
@@ -2110,7 +2107,9 @@ mod tests {
             name: leaf(path),
             path: path.to_string(),
             kind: NodeKind::File,
-            file_class: Some(crate::scan::typing::classify_path(std::path::Path::new(&leaf(path)))),
+            file_class: Some(crate::scan::typing::classify_path(std::path::Path::new(
+                &leaf(path),
+            ))),
             size,
         }
     }
