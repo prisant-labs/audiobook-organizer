@@ -43,6 +43,11 @@ use serde::{Deserialize, Serialize};
 /// reachable under `abo_core::ipc` (AC-4). Defined in [`crate::error`].
 pub use crate::error::AppError;
 
+/// Re-exported so [`LibraryOverview`]'s embedded health report is reachable
+/// under `abo_core::ipc` (AC-4), same pattern as [`AppError`] above. Defined in
+/// [`crate::classify`], where the pure `health_metrics` computation lives.
+pub use crate::classify::{ClassMetric, FolderClass, HealthMetrics, MetricUnit, ProblemMetric};
+
 /// The category of a [`ScanWarning`].
 ///
 /// The two per-entry kinds ([`JunctionSkipped`](ScanWarningKind::JunctionSkipped)
@@ -250,6 +255,114 @@ pub struct CoverImage {
     pub base64: String,
 }
 
+// ---- Phase 4 shell payloads (F-902 library home) ----
+
+/// Which register a [`BookReason`] chip reads in (design-system Section 4.6):
+/// a soft, tidy-adjacent note (`warn`, e.g. "loose file", "messy name") versus
+/// a structural flag that needs a decision (`alert`, e.g. "7 books, 1 folder",
+/// "2 copies"). Icon-plus-label always accompanies the kind; color is never
+/// the only signal (Section 8 accessibility).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReasonKind {
+    Warn,
+    Alert,
+}
+
+/// The plain-language "why this book is worth a look" chip under one
+/// [`BookExample`] (design-system Section 4.6 `.bookslot` / `.why`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct BookReason {
+    pub kind: ReasonKind,
+    /// Plain-language chip text, e.g. "loose file", "messy name",
+    /// "7 books, 1 folder", "2 copies". Never a raw class/rule id (Section 6).
+    pub text: String,
+}
+
+/// One example book on the "Worth a look first" shelf (F-902, v0.4.0 Phase 4,
+/// design-system Section 4.6). `entry_id` names a book WITHIN the snapshot that
+/// produced the enclosing [`LibraryOverview`] (its `scan_id`), so the frontend
+/// can pass `(scan_id, entry_id)` straight to `cover_get` for the book's cover
+/// - the same snapshot-scoped identity [`EntryRow`] already uses.
+///
+/// `title` is never absent (a book the shelf shows always parsed a title, own
+/// or derived); `author` is [`None`] when no author could be read, which the
+/// frontend's `Cover`/`FallbackTile` already render gracefully (AC-23).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct BookExample {
+    pub entry_id: i64,
+    pub title: String,
+    pub author: Option<String>,
+    pub reason: BookReason,
+}
+
+/// One series cluster on the "Series on your shelves" shelf (design-system
+/// Section 4.8). `name` is the series name (falling back to the container
+/// folder's own name when no series field parsed, so a real series-container
+/// never disappears from the shelf for want of a label); `book_count` is the
+/// number of book-like children the classifier folded into this container
+/// (`Evidence::book_children`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct SeriesCluster {
+    pub name: String,
+    pub author: Option<String>,
+    pub book_count: u64,
+}
+
+/// The home's "good news" line (design-system Section 4, `.goodline`): what is
+/// ALREADY tidy, stated in the same sentence-with-a-unit register as every
+/// other home number (FD-08, AC-7). Every field is a plain count/byte total
+/// read from the current snapshot's [`HealthMetrics`], never a hardcoded
+/// sample (FD-27).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct GoodNews {
+    pub already_tidy_books: u64,
+    pub series_shelved: u64,
+    pub empty_folders: u64,
+    pub duplicate_groups: u64,
+    pub duplicate_bytes: u64,
+}
+
+/// The full library home payload (F-902, v0.4.0 Phase 4), returned by the
+/// `classify_overview` command. [`None`] from that command means no scan has
+/// ever completed - the honest pre-first-scan state (AC-6) - in which case the
+/// frontend shows the empty-library state and the scan affordance rather than
+/// any of this shape's zeroed fields (a real zero and "never scanned" must
+/// never be confused).
+///
+/// Every count and byte figure here is computed from the snapshot named by
+/// `scan_id` at render time (AC-7): nothing is a literal/sample value. See
+/// [`crate::classify::build_overview`] for the derivation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct LibraryOverview {
+    /// The snapshot this overview was computed from (`scans.id`); the frontend
+    /// passes this alongside a [`BookExample::entry_id`] to `cover_get`.
+    pub scan_id: i64,
+    /// Every book the library holds: one per `book`-class folder (a disc-split
+    /// book still counts once) plus one per loose-root audio file plus the
+    /// distinct titles F-203 found inside each `multi-book-suspect` folder.
+    pub total_books: u64,
+    /// Sum of file sizes across the whole snapshot (equals
+    /// [`HealthMetrics::total_bytes`]).
+    pub total_bytes: u64,
+    /// How many of `total_books` carry at least one "worth a look" problem
+    /// (loose file, messy folder name, a multi-book/box-set folder, or a
+    /// duplicate copy). `total_books - needs_tidy_books` is already tidy.
+    pub needs_tidy_books: u64,
+    /// A bounded set of example books for the "Worth a look first" shelf
+    /// (design-system Section 4.6-4.7): curated examples, not the exhaustive
+    /// list - the full list is the Phase 5 review surface and the exported
+    /// report (D-16).
+    pub worth_a_look: Vec<BookExample>,
+    /// Real series containers on the shelves (design-system Section 4.8).
+    pub series: Vec<SeriesCluster>,
+    pub good_news: GoodNews,
+    /// The full per-class/per-problem health report this overview was built
+    /// from, so the sidebar's Duplicates badge (FD-08 GROUP count) and any
+    /// other per-group count reads the same numbers the home prose does.
+    pub metrics: HealthMetrics,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -361,6 +474,18 @@ mod contract {
         assert_ipc_ready::<AppSettings>();
         // F-907 cover art (v0.4.0 Phase 3).
         assert_ipc_ready::<CoverImage>();
+        // F-902 library home (v0.4.0 Phase 4).
+        assert_ipc_ready::<ReasonKind>();
+        assert_ipc_ready::<BookReason>();
+        assert_ipc_ready::<BookExample>();
+        assert_ipc_ready::<SeriesCluster>();
+        assert_ipc_ready::<GoodNews>();
+        assert_ipc_ready::<MetricUnit>();
+        assert_ipc_ready::<FolderClass>();
+        assert_ipc_ready::<ClassMetric>();
+        assert_ipc_ready::<ProblemMetric>();
+        assert_ipc_ready::<HealthMetrics>();
+        assert_ipc_ready::<LibraryOverview>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();

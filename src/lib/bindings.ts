@@ -78,6 +78,62 @@ export const commands = {
 	base64: string,
 } | null, AppError>(__TAURI_INVOKE("cover_get", { scanId, entryId })),
 	/**
+	 *  Read the library home's data (F-902, v0.4.0 Phase 4): the health facts, the
+	 *  "Worth a look first" examples, the series clusters, and the good-news line,
+	 *  all computed from the most recently COMPLETED scan.
+	 * 
+	 *  Returns `None` when no scan has ever completed - the honest pre-first-scan
+	 *  state (AC-6): the frontend shows the empty-library state and the scan
+	 *  affordance rather than treating an absent scan as a library of zero books.
+	 *  The frontend never names a `scan_id` itself; this command is how it finds
+	 *  "the library, right now."
+	 * 
+	 *  Classifying is cheap pure logic (no I/O beyond the one snapshot read), so
+	 *  this command re-derives the classification and health metrics on every
+	 *  call rather than caching them - the same freshness guarantee AC-7 asks for
+	 *  (every count read at render time, never a stale cached one).
+	 */
+	classifyOverview: () => typedError<{
+	/**
+	 *  The snapshot this overview was computed from (`scans.id`); the frontend
+	 *  passes this alongside a [`BookExample::entry_id`] to `cover_get`.
+	 */
+	scan_id: number,
+	/**
+	 *  Every book the library holds: one per `book`-class folder (a disc-split
+	 *  book still counts once) plus one per loose-root audio file plus the
+	 *  distinct titles F-203 found inside each `multi-book-suspect` folder.
+	 */
+	total_books: number,
+	/**
+	 *  Sum of file sizes across the whole snapshot (equals
+	 *  [`HealthMetrics::total_bytes`]).
+	 */
+	total_bytes: number,
+	/**
+	 *  How many of `total_books` carry at least one "worth a look" problem
+	 *  (loose file, messy folder name, a multi-book/box-set folder, or a
+	 *  duplicate copy). `total_books - needs_tidy_books` is already tidy.
+	 */
+	needs_tidy_books: number,
+	/**
+	 *  A bounded set of example books for the "Worth a look first" shelf
+	 *  (design-system Section 4.6-4.7): curated examples, not the exhaustive
+	 *  list - the full list is the Phase 5 review surface and the exported
+	 *  report (D-16).
+	 */
+	worth_a_look: BookExample[],
+	/**  Real series containers on the shelves (design-system Section 4.8). */
+	series: SeriesCluster[],
+	good_news: GoodNews,
+	/**
+	 *  The full per-class/per-problem health report this overview was built
+	 *  from, so the sidebar's Duplicates badge (FD-08 GROUP count) and any
+	 *  other per-group count reads the same numbers the home prose does.
+	 */
+	metrics: HealthMetrics,
+} | null, AppError>(__TAURI_INVOKE("classify_overview")),
+	/**
 	 *  Report whether startup had to recover a corrupt database (P2).
 	 * 
 	 *  Reads the [`DbOpenOutcome`] captured at startup out of managed state and maps
@@ -339,6 +395,48 @@ export type AppSettings = {
 };
 
 /**
+ *  One example book on the "Worth a look first" shelf (F-902, v0.4.0 Phase 4,
+ *  design-system Section 4.6). `entry_id` names a book WITHIN the snapshot that
+ *  produced the enclosing [`LibraryOverview`] (its `scan_id`), so the frontend
+ *  can pass `(scan_id, entry_id)` straight to `cover_get` for the book's cover
+ *  - the same snapshot-scoped identity [`EntryRow`] already uses.
+ * 
+ *  `title` is never absent (a book the shelf shows always parsed a title, own
+ *  or derived); `author` is [`None`] when no author could be read, which the
+ *  frontend's `Cover`/`FallbackTile` already render gracefully (AC-23).
+ */
+export type BookExample = {
+	entry_id: number,
+	title: string,
+	author: string | null,
+	reason: BookReason,
+};
+
+/**
+ *  The plain-language "why this book is worth a look" chip under one
+ *  [`BookExample`] (design-system Section 4.6 `.bookslot` / `.why`).
+ */
+export type BookReason = {
+	kind: ReasonKind,
+	/**
+	 *  Plain-language chip text, e.g. "loose file", "messy name",
+	 *  "7 books, 1 folder", "2 copies". Never a raw class/rule id (Section 6).
+	 */
+	text: string,
+};
+
+/**
+ *  A per-class metric: how many folders carry the class, and how many bytes are
+ *  attributed to it. `folder_count` is in folders; `byte_total` is in bytes
+ *  (the units are stated by the field names, FD-08).
+ */
+export type ClassMetric = {
+	class: FolderClass,
+	folder_count: number,
+	byte_total: number,
+};
+
+/**
  *  One book's cover art (F-907, v0.4.0 Phase 3), the wire form returned by the
  *  `cover_get` command. `None` from that command means "no cover" and the
  *  frontend renders the deterministic fallback tile instead (AC-23).
@@ -414,6 +512,68 @@ export type EntryRow = {
 	mtime: string | null,
 	/**  Depth below the scan root (root is 0). */
 	depth: number,
+};
+
+/**
+ *  The nine F-201 folder classes (the Codex taxonomy plus `docs-resources`).
+ *  [`FolderClass::as_str`] is the stable kebab-case string used in evidence,
+ *  snapshots, and (later) IPC; serialization uses the same string.
+ * 
+ *  Derives `serde`/`specta::Type` (v0.4.0 Phase 4, F-902 library home): the
+ *  health metrics this class feeds into (`HealthMetrics`, `crate::classify::metrics`)
+ *  now cross the IPC boundary inside `LibraryOverview` (`crate::ipc`), so this
+ *  type must itself be wire-ready. `#[serde(rename_all = "kebab-case")]`
+ *  reproduces exactly the strings [`FolderClass::as_str`] already returns (e.g.
+ *  `SeriesContainer` -> `"series-container"`), so the wire format is unchanged
+ *  from the hand-written `Serialize` impl this replaces.
+ */
+export type FolderClass = 
+/**  One book's audio (leaf folder of audio, or a disc-split single book). */
+"book" | 
+/**  A folder whose book-like children cohere into one author/series. */
+"series-container" | 
+/**  A collection of distinct books: a genre shelf, source pack, or list. */
+"pack-container" | 
+/**  A staging area (`_sort`, `_process`). */
+"staging" | 
+/**  Direct audio files AND child folders together. */
+"mixed" | 
+/**  Several complete books sitting as sibling audio files (F-203). */
+"multi-book-suspect" | 
+/**  No audio anywhere beneath and no non-audio content either. */
+"empty" | 
+/**  Non-audio content only (ebooks / images / release info), no audio. */
+"docs-resources" | 
+/**
+ *  Not auto-classifiable, or FD-17 non-book media (video / comics / radio
+ *  play). A first-class outcome, never an error.
+ */
+"manual-review";
+
+/**
+ *  The home's "good news" line (design-system Section 4, `.goodline`): what is
+ *  ALREADY tidy, stated in the same sentence-with-a-unit register as every
+ *  other home number (FD-08, AC-7). Every field is a plain count/byte total
+ *  read from the current snapshot's [`HealthMetrics`], never a hardcoded
+ *  sample (FD-27).
+ */
+export type GoodNews = {
+	already_tidy_books: number,
+	series_shelved: number,
+	empty_folders: number,
+	duplicate_groups: number,
+	duplicate_bytes: number,
+};
+
+/**
+ *  The full health report: per-class metrics (all nine classes, always present,
+ *  zeroed where a class is absent), per-problem metrics, and the library total
+ *  in bytes.
+ */
+export type HealthMetrics = {
+	per_class: ClassMetric[],
+	problems: ProblemMetric[],
+	total_bytes: number,
 };
 
 /**  Typed `job:completed` event, emitted when a spawned scan finishes cleanly. */
@@ -499,6 +659,113 @@ export type JobStarted = {
 	 *  `job:completed` / `job:failed` event back to this call.
 	 */
 	job_id: number,
+};
+
+/**
+ *  The full library home payload (F-902, v0.4.0 Phase 4), returned by the
+ *  `classify_overview` command. [`None`] from that command means no scan has
+ *  ever completed - the honest pre-first-scan state (AC-6) - in which case the
+ *  frontend shows the empty-library state and the scan affordance rather than
+ *  any of this shape's zeroed fields (a real zero and "never scanned" must
+ *  never be confused).
+ * 
+ *  Every count and byte figure here is computed from the snapshot named by
+ *  `scan_id` at render time (AC-7): nothing is a literal/sample value. See
+ *  [`crate::classify::build_overview`] for the derivation.
+ */
+export type LibraryOverview = {
+	/**
+	 *  The snapshot this overview was computed from (`scans.id`); the frontend
+	 *  passes this alongside a [`BookExample::entry_id`] to `cover_get`.
+	 */
+	scan_id: number,
+	/**
+	 *  Every book the library holds: one per `book`-class folder (a disc-split
+	 *  book still counts once) plus one per loose-root audio file plus the
+	 *  distinct titles F-203 found inside each `multi-book-suspect` folder.
+	 */
+	total_books: number,
+	/**
+	 *  Sum of file sizes across the whole snapshot (equals
+	 *  [`HealthMetrics::total_bytes`]).
+	 */
+	total_bytes: number,
+	/**
+	 *  How many of `total_books` carry at least one "worth a look" problem
+	 *  (loose file, messy folder name, a multi-book/box-set folder, or a
+	 *  duplicate copy). `total_books - needs_tidy_books` is already tidy.
+	 */
+	needs_tidy_books: number,
+	/**
+	 *  A bounded set of example books for the "Worth a look first" shelf
+	 *  (design-system Section 4.6-4.7): curated examples, not the exhaustive
+	 *  list - the full list is the Phase 5 review surface and the exported
+	 *  report (D-16).
+	 */
+	worth_a_look: BookExample[],
+	/**  Real series containers on the shelves (design-system Section 4.8). */
+	series: SeriesCluster[],
+	good_news: GoodNews,
+	/**
+	 *  The full per-class/per-problem health report this overview was built
+	 *  from, so the sidebar's Duplicates badge (FD-08 GROUP count) and any
+	 *  other per-group count reads the same numbers the home prose does.
+	 */
+	metrics: HealthMetrics,
+};
+
+/**
+ *  The quantity a metric counts (FD-08: no bare number without its unit).
+ * 
+ *  Derives `serde`/`specta::Type` (v0.4.0 Phase 4): `HealthMetrics` crosses the
+ *  IPC boundary inside `LibraryOverview` (`crate::ipc`), so every type it
+ *  contains must be wire-ready. `#[serde(rename_all = "lowercase")]` reproduces
+ *  exactly the strings [`MetricUnit::as_str`] already returns, so the wire
+ *  format is unchanged from the hand-written `Serialize` impl this replaces.
+ */
+export type MetricUnit = "folders" | "files" | "bytes" | 
+/**  Duplicate GROUPS (one book, N copies = one group; FD-08). */
+"groups";
+
+/**
+ *  A per-problem metric, carrying its own explicit unit (FD-08). `count` is in
+ *  the stated `unit`; `byte_total` is always bytes (0 where a size is not
+ *  meaningful for the problem, e.g. deep nesting).
+ */
+export type ProblemMetric = {
+	/**
+	 *  Stable kebab-case problem id (e.g. `"loose-root-books"`). `String` (not
+	 *  `&'static str`) so this struct can derive `Deserialize` for the IPC
+	 *  contract test (v0.4.0 Phase 4): every value this crate ever constructs
+	 *  is still one of the fixed string-literal ids below.
+	 */
+	problem: string,
+	unit: MetricUnit,
+	count: number,
+	byte_total: number,
+};
+
+/**
+ *  Which register a [`BookReason`] chip reads in (design-system Section 4.6):
+ *  a soft, tidy-adjacent note (`warn`, e.g. "loose file", "messy name") versus
+ *  a structural flag that needs a decision (`alert`, e.g. "7 books, 1 folder",
+ *  "2 copies"). Icon-plus-label always accompanies the kind; color is never
+ *  the only signal (Section 8 accessibility).
+ */
+export type ReasonKind = "warn" | "alert";
+
+/**
+ *  One series cluster on the "Series on your shelves" shelf (design-system
+ *  Section 4.8). `name` is the series name (falling back to the container
+ *  folder's own name when no series field parsed, so a real series-container
+ *  never disappears from the shelf for want of a label); `book_count` is the
+ *  number of book-like children the classifier folded into this container
+ *  (`Evidence::book_children`).
+ */
+export type SeriesCluster = {
+	name: string,
+	author: string | null,
+	book_count: number,
 };
 
 /* Tauri Specta runtime */

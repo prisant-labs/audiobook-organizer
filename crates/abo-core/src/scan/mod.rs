@@ -34,4 +34,6 @@ pub mod walk;
 pub use cover::{get_cover, read_cover, CoverArt};
 pub use csv_import::run_csv_import;
 pub use exclude::ExcludeSet;
-pub use persist::{get_scan_entries, run_scan, run_scan_with_job, ScanOutcome};
+pub use persist::{
+    get_scan_entries, latest_completed_scan_id, run_scan, run_scan_with_job, ScanOutcome,
+};

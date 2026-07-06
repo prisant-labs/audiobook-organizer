@@ -84,7 +84,18 @@ use crate::scan::typing::FileClass;
 /// The nine F-201 folder classes (the Codex taxonomy plus `docs-resources`).
 /// [`FolderClass::as_str`] is the stable kebab-case string used in evidence,
 /// snapshots, and (later) IPC; serialization uses the same string.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Derives `serde`/`specta::Type` (v0.4.0 Phase 4, F-902 library home): the
+/// health metrics this class feeds into (`HealthMetrics`, `crate::classify::metrics`)
+/// now cross the IPC boundary inside `LibraryOverview` (`crate::ipc`), so this
+/// type must itself be wire-ready. `#[serde(rename_all = "kebab-case")]`
+/// reproduces exactly the strings [`FolderClass::as_str`] already returns (e.g.
+/// `SeriesContainer` -> `"series-container"`), so the wire format is unchanged
+/// from the hand-written `Serialize` impl this replaces.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, specta::Type,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum FolderClass {
     /// One book's audio (leaf folder of audio, or a disc-split single book).
     Book,
@@ -135,12 +146,6 @@ impl FolderClass {
         FolderClass::DocsResources,
         FolderClass::ManualReview,
     ];
-}
-
-impl serde::Serialize for FolderClass {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(self.as_str())
-    }
 }
 
 /// One entry the classifier operates over: a stable `id`, its containing
@@ -731,6 +736,19 @@ fn decide_container(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `FolderClass`'s derived `serde` wire format must reproduce
+    /// [`FolderClass::as_str`] exactly (the hand-written `Serialize` impl this
+    /// derive replaced), since `crate::classify::metrics::ClassMetric` (and, via
+    /// `LibraryOverview`, the `classify_overview` IPC command) carries this enum
+    /// across the wire.
+    #[test]
+    fn wire_format_matches_as_str_for_every_variant() {
+        for class in FolderClass::ALL {
+            let json = serde_json::to_string(class).expect("FolderClass serializes");
+            assert_eq!(json, format!("\"{}\"", class.as_str()));
+        }
+    }
 
     fn folder(id: usize, parent: Option<usize>, name: &str) -> ClassifyInput {
         ClassifyInput {
