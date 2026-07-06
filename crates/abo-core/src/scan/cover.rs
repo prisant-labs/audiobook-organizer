@@ -91,16 +91,20 @@ impl CoverArt {
 ///
 /// WebP is matched specially (RIFF....WEBP) in [`sniff_mime`]; the others are a
 /// plain leading-bytes match.
-const IMAGE_MAGICS: &[(&[u8], &'static str, &'static str)] = &[
+const IMAGE_MAGICS: &[(&[u8], &str, &str)] = &[
     (&[0xFF, 0xD8, 0xFF], "image/jpeg", "jpg"),
-    (&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A], "image/png", "png"),
-    (&[b'G', b'I', b'F', b'8'], "image/gif", "gif"),
-    (&[b'B', b'M'], "image/bmp", "bmp"),
+    (
+        &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A],
+        "image/png",
+        "png",
+    ),
+    (b"GIF8", "image/gif", "gif"),
+    (b"BM", "image/bmp", "bmp"),
 ];
 
 /// The extensions [`find_cached`] probes for on a cache lookup, paired with the
 /// mime they map back to. Kept in step with [`IMAGE_MAGICS`].
-const CACHE_EXTS: &[(&str, &'static str)] = &[
+const CACHE_EXTS: &[(&str, &str)] = &[
     ("jpg", "image/jpeg"),
     ("png", "image/png"),
     ("gif", "image/gif"),
@@ -239,11 +243,7 @@ fn find_cached(cache_dir: &Path, key: &str) -> Option<CoverArt> {
         let path = cache_dir.join(format!("{key}.{ext}"));
         if let Ok(bytes) = std::fs::read(&path) {
             if !bytes.is_empty() {
-                return Some(CoverArt {
-                    bytes,
-                    mime,
-                    ext,
-                });
+                return Some(CoverArt { bytes, mime, ext });
             }
         }
     }
@@ -520,7 +520,11 @@ mod tests {
     fn read_sidecar_ignores_a_non_image_sidecar() {
         let dir = tempfile::TempDir::new().expect("tempdir");
         std::fs::write(dir.path().join("cover.jpg"), b"this is not a jpeg").unwrap();
-        assert_eq!(read_sidecar(dir.path()), None, "a corrupt sidecar is no cover");
+        assert_eq!(
+            read_sidecar(dir.path()),
+            None,
+            "a corrupt sidecar is no cover"
+        );
     }
 
     #[test]

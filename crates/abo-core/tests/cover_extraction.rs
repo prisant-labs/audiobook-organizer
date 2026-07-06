@@ -117,8 +117,14 @@ fn embedded_art_returns_the_exact_bytes() {
     std::fs::write(&audio, mp3_with_cover(JPEG)).unwrap();
 
     let art = read_cover(book.path(), &[audio]).expect("embedded art is found");
-    assert_eq!(art.mime, "image/jpeg", "mime is sniffed from the picture bytes");
-    assert_eq!(art.bytes, JPEG, "the exact embedded picture bytes are returned");
+    assert_eq!(
+        art.mime, "image/jpeg",
+        "mime is sniffed from the picture bytes"
+    );
+    assert_eq!(
+        art.bytes, JPEG,
+        "the exact embedded picture bytes are returned"
+    );
 }
 
 #[test]
@@ -156,7 +162,10 @@ fn embedded_art_wins_over_a_sidecar() {
     std::fs::write(book.path().join("cover.jpg"), PNG).unwrap();
 
     let art = read_cover(book.path(), &[audio]).expect("a cover is found");
-    assert_eq!(art.bytes, JPEG, "embedded art takes priority over the sidecar");
+    assert_eq!(
+        art.bytes, JPEG,
+        "embedded art takes priority over the sidecar"
+    );
 }
 
 // ---- The read-only proof + cache, over a real snapshot (get_cover) ----
