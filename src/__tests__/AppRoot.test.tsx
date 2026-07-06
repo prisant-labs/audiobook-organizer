@@ -7,17 +7,19 @@ import { pickLibraryFolder } from "@/lib/dialog";
 
 vi.mock("@/lib/settings", () => ({ getSettings: vi.fn(), saveSettings: vi.fn() }));
 vi.mock("@/lib/dialog", () => ({ pickLibraryFolder: vi.fn() }));
-// The tracer behind the Library route needs the IPC bindings mocked to render
+// The Library route behind the shell needs the IPC bindings mocked to render
 // in jsdom (see AppShell.test).
 vi.mock("@/lib/bindings", () => ({
   commands: {
     dbStatus: vi.fn().mockResolvedValue({ recovered: false, backup_path: null }),
     scanStart: vi.fn(),
     scanEntries: vi.fn(),
+    classifyOverview: vi.fn().mockResolvedValue({ status: "ok", data: null }),
   },
   events: {
     jobCompleted: { listen: vi.fn().mockResolvedValue(() => {}) },
     jobFailed: { listen: vi.fn().mockResolvedValue(() => {}) },
+    jobProgress: { listen: vi.fn().mockResolvedValue(() => {}) },
   },
 }));
 

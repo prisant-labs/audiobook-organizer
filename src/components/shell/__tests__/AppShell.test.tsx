@@ -4,21 +4,25 @@ import userEvent from "@testing-library/user-event";
 import { AppShell } from "../AppShell";
 import type { AppSettings } from "@/lib/settings";
 
-// The tracer (mounted behind the "Library" route, see AppShell.tsx) calls
-// through src/lib/bindings.ts, which needs a real Tauri webview
-// (`window.__TAURI_INTERNALS__`) to resolve. Mocked here so the shell can be
-// rendered in jsdom without an unhandled rejection; this is the "mocked
-// binding" pattern the implementation plan uses throughout. vi.mock calls are
-// hoisted above imports by Vitest's transform.
+// The Library route (default, see AppShell.tsx) calls through
+// src/lib/bindings.ts (via useHealthMetrics/classify_overview and the scan
+// affordance), which needs a real Tauri webview (`window.__TAURI_INTERNALS__`)
+// to resolve. Mocked here so the shell can be rendered in jsdom without an
+// unhandled rejection; this is the "mocked binding" pattern the implementation
+// plan uses throughout. vi.mock calls are hoisted above imports by Vitest's
+// transform. `classifyOverview` resolves to no scan yet (`data: null`), the
+// simplest state that lets the shell render without a scan_id in play.
 vi.mock("../../../lib/bindings", () => ({
   commands: {
     dbStatus: vi.fn().mockResolvedValue({ recovered: false, backup_path: null }),
     scanStart: vi.fn(),
     scanEntries: vi.fn(),
+    classifyOverview: vi.fn().mockResolvedValue({ status: "ok", data: null }),
   },
   events: {
     jobCompleted: { listen: vi.fn().mockResolvedValue(() => {}) },
     jobFailed: { listen: vi.fn().mockResolvedValue(() => {}) },
+    jobProgress: { listen: vi.fn().mockResolvedValue(() => {}) },
   },
 }));
 

@@ -54,4 +54,33 @@ export const STRINGS = {
     retentionLabel: "Scans to keep",
     retentionHelp: "The app remembers this many recent scans, then lets the oldest go.",
   },
+
+  // Library home (F-902, v0.4.0 Phase 4, design-system Sections 4.6-4.8 and 6).
+  // Numbers are NEVER literals here (FD-27, AC-7): every count/byte figure is
+  // composed at render time from `classify_overview` by `Library.tsx`'s own
+  // sentence-building helpers, not stored as a fixed string in this module.
+  library: {
+    heading: "Your library",
+    worthALookHeading: "Worth a look first",
+    worthALookSubline: "a few examples of what the tidy-up would fix",
+    seriesHeading: "Series on your shelves",
+    seriesSubline: "the tidy-up keeps each series together",
+    scanAgain: "Scan again",
+    startTidyUp: "Start a tidy-up",
+    scanNow: "Scan your library",
+    // AC-9: the FD-10 deletion-guarantee copy, verbatim. This is the exact
+    // sanctioned string; do not paraphrase it here or at any call site.
+    reassurance:
+      "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone.",
+    // The honest pre-first-scan state (design-system Section 5.2 "Empty
+    // library root" family; AC-6 forbids treating "never scanned" as a
+    // library of zero books).
+    noScanYet: {
+      heading: "Let's take a first look",
+      body: "Scan your library to see what's there. The app only reads it - nothing is moved or changed until you review and approve it.",
+    },
+    scanning: {
+      heading: "Reading your library...",
+    },
+  },
 } as const;
