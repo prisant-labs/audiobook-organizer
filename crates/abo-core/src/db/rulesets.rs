@@ -108,6 +108,41 @@ pub async fn count_rulesets(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
         .await
 }
 
+/// Atomically seed a single active `Default` ruleset IF the table is empty,
+/// returning how many rows were inserted (1 when this call seeded, 0 when a
+/// row already existed - including one a concurrent caller just seeded).
+///
+/// The `INSERT ... SELECT ... WHERE NOT EXISTS` is ONE statement, so SQLite
+/// evaluates the emptiness check and performs the insert under the same write
+/// lock: two concurrent first callers can never both insert, so a brand-new
+/// database always ends with exactly one seeded row. This closes the F-906
+/// bootstrap race the earlier check-then-insert left open (P6 review): a
+/// plain "is it empty? no -> insert" pair could interleave so both callers
+/// saw an empty table and both inserted a `Default` row. The seeded row is
+/// marked active in the same statement (there is no prior active row to clear,
+/// precisely because the table was empty), preserving the at-most-one-active
+/// invariant without a second UPDATE.
+pub async fn seed_default_active_ruleset(
+    pool: &SqlitePool,
+    name: &str,
+    body_json: &str,
+    schema_version: i64,
+    now: &str,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "INSERT INTO rulesets (name, body_json, schema_version, created_at, updated_at, is_active) \
+         SELECT ?, ?, ?, ?, ?, 1 WHERE NOT EXISTS (SELECT 1 FROM rulesets)",
+    )
+    .bind(name)
+    .bind(body_json)
+    .bind(schema_version)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Fetch the one ACTIVE ruleset (`is_active = 1`), or `None` if no ruleset has
 /// ever been activated yet (a brand-new database before the first seed/save).
 /// At most one row is ever active (see [`set_active_ruleset`]), so `LIMIT 1`
@@ -417,6 +452,65 @@ mod tests {
         delete_ruleset(&pool, id).await.expect("delete again");
         // Deleting an id that never existed is likewise a tolerated no-op.
         delete_ruleset(&pool, 999).await.expect("delete unknown");
+    }
+
+    /// The atomic seed inserts exactly one active `Default` row on an empty
+    /// table, and is a no-op once any row exists.
+    #[tokio::test]
+    async fn seed_default_active_ruleset_seeds_once_then_no_ops() {
+        let (_db, pool) = fresh_pool().await;
+
+        let inserted = seed_default_active_ruleset(&pool, "Default", "{}", 1, "2026-07-06T00:00:00Z")
+            .await
+            .expect("seed");
+        assert_eq!(inserted, 1, "the first seed inserts one row");
+        let active = get_active_ruleset(&pool)
+            .await
+            .expect("query")
+            .expect("one active row");
+        assert_eq!(active.name, "Default");
+        assert!(active.is_active);
+
+        let again = seed_default_active_ruleset(&pool, "Default", "{}", 1, "2026-07-06T00:00:01Z")
+            .await
+            .expect("seed again");
+        assert_eq!(again, 0, "a second seed on a non-empty table inserts nothing");
+        assert_eq!(count_rulesets(&pool).await.expect("count"), 1);
+    }
+
+    /// The F-906 bootstrap race (P6 review): two concurrent first callers seed
+    /// exactly ONE `Default` active row, never two. The atomic
+    /// `INSERT ... WHERE NOT EXISTS` serializes under SQLite's write lock, so
+    /// the second caller's emptiness check is false and it inserts nothing.
+    #[tokio::test]
+    async fn concurrent_seed_produces_exactly_one_row() {
+        let (_db, pool) = fresh_pool().await;
+        let p1 = pool.clone();
+        let p2 = pool.clone();
+        let now = "2026-07-06T00:00:00Z";
+        let (a, b) = tokio::join!(
+            async move { seed_default_active_ruleset(&p1, "Default", "{}", 1, now).await },
+            async move { seed_default_active_ruleset(&p2, "Default", "{}", 1, now).await },
+        );
+        let inserted_a = a.expect("seed a");
+        let inserted_b = b.expect("seed b");
+        assert_eq!(
+            inserted_a + inserted_b,
+            1,
+            "exactly one of the two concurrent seeds inserts a row"
+        );
+        assert_eq!(
+            count_rulesets(&pool).await.expect("count"),
+            1,
+            "the table holds exactly one row after concurrent bootstrap"
+        );
+        let all = list_rulesets(&pool).await.expect("list");
+        assert_eq!(
+            all.iter().filter(|r| r.is_active).count(),
+            1,
+            "exactly one row is active"
+        );
+        assert_eq!(all[0].name, "Default");
     }
 
     /// `count_rulesets` tracks inserts and deletes.

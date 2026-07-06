@@ -15,13 +15,13 @@
 
 use abo_core::db::rulesets::{
     count_rulesets, delete_ruleset, get_active_ruleset, get_ruleset, insert_ruleset, list_rulesets,
-    set_active_ruleset, update_ruleset_body, NewRuleset,
+    seed_default_active_ruleset, set_active_ruleset, update_ruleset_body, NewRuleset,
 };
 use abo_core::ipc::{
     AppError, PresetExampleView, RulesetDetail, RulesetSaveRequest, RulesetSummary,
 };
 use abo_core::plan::templates::{example_path, Preset};
-use abo_core::ruleset::{parse_and_validate, Ruleset};
+use abo_core::ruleset::{parse_and_validate, Ruleset, RULESET_SCHEMA_VERSION};
 use abo_core::scan::walk::now_iso8601_utc;
 
 use crate::AppState;
@@ -80,41 +80,42 @@ pub async fn ensure_active_ruleset(
         return Ok(row);
     }
     let now = now_iso8601_utc();
-    // A pre-F-906 database may already hold a ruleset row (from the old
-    // `ensure_default_ruleset` bootstrap) with none marked active yet;
-    // activate the first one rather than seeding a redundant second row.
-    if let Some(first) = list_rulesets(pool)
+    // Atomic seed (F-906 bootstrap race, P6 review): a single
+    // `INSERT ... WHERE NOT EXISTS` guarantees exactly one active `Default`
+    // row even if two callers reach here concurrently on a brand-new database
+    // - the previous check-then-insert could interleave and seed two rows.
+    // A 0-row result means the table was NOT empty, which splits two ways,
+    // both handled just below by re-reading and falling back: either a
+    // concurrent caller seeded the active row, or this is a pre-F-906 database
+    // whose rows predate `is_active` and none is marked active yet.
+    let body = Ruleset::default().to_body_json();
+    seed_default_active_ruleset(pool, "Default", &body, RULESET_SCHEMA_VERSION, &now)
+        .await
+        .map_err(db_err)?;
+    if let Some(row) = get_active_ruleset(pool).await.map_err(db_err)? {
+        return Ok(row);
+    }
+    // Non-empty table with no active row (a pre-F-906 database whose rows
+    // predate `is_active`): activate the first. Not a bootstrap race - the
+    // rows already exist - and concurrent callers converge on the same first
+    // row (activation is idempotent for a fixed id).
+    let first = list_rulesets(pool)
         .await
         .map_err(db_err)?
         .into_iter()
         .next()
-    {
-        set_active_ruleset(pool, first.id, &now)
-            .await
-            .map_err(db_err)?;
-        return get_ruleset(pool, first.id).await.map_err(db_err)?.ok_or(
-            AppError::RulesetNotFound {
-                ruleset_id: first.id,
-            },
-        );
-    }
-    let body = Ruleset::default().to_body_json();
-    let id = insert_ruleset(
-        pool,
-        &NewRuleset {
-            name: "Default",
-            body_json: &body,
-            schema_version: abo_core::ruleset::RULESET_SCHEMA_VERSION,
-        },
-        &now,
-    )
-    .await
-    .map_err(db_err)?;
-    set_active_ruleset(pool, id, &now).await.map_err(db_err)?;
-    get_ruleset(pool, id)
+        .ok_or_else(|| AppError::RulesetOperationFailed {
+            detail: "ruleset bootstrap seeded no row and found none to activate".to_string(),
+        })?;
+    set_active_ruleset(pool, first.id, &now)
+        .await
+        .map_err(db_err)?;
+    get_ruleset(pool, first.id)
         .await
         .map_err(db_err)?
-        .ok_or(AppError::RulesetNotFound { ruleset_id: id })
+        .ok_or(AppError::RulesetNotFound {
+            ruleset_id: first.id,
+        })
 }
 
 /// Read the active ruleset's full editable detail, seeding the shipped
@@ -243,5 +244,68 @@ pub fn ruleset_preset_examples(series_index_width: usize) -> Vec<PresetExampleVi
 fn db_err(e: sqlx::Error) -> AppError {
     AppError::RulesetOperationFailed {
         detail: e.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use abo_core::db::open_db;
+    use tempfile::TempDir;
+
+    /// F-906 bootstrap race (P6 review): two concurrent first callers of
+    /// `ensure_active_ruleset` on a brand-new database produce exactly ONE
+    /// `Default` active row, and both observe the same active ruleset. The
+    /// atomic seed inside `ensure_active_ruleset` is what makes this hold; the
+    /// prior check-then-insert could interleave and leave two `Default` rows.
+    #[tokio::test]
+    async fn concurrent_bootstrap_produces_exactly_one_default_row() {
+        let dir = TempDir::new().expect("tempdir");
+        let (pool, _outcome) = open_db(dir.path()).await.expect("open_db");
+
+        let p1 = pool.clone();
+        let p2 = pool.clone();
+        let (a, b) = tokio::join!(
+            async move { ensure_active_ruleset(&p1).await },
+            async move { ensure_active_ruleset(&p2).await },
+        );
+        let row_a = a.expect("caller a bootstraps");
+        let row_b = b.expect("caller b bootstraps");
+
+        assert_eq!(
+            row_a.id, row_b.id,
+            "both concurrent callers see the same active ruleset"
+        );
+        assert!(row_a.is_active && row_b.is_active);
+
+        let all = list_rulesets(&pool).await.expect("list");
+        assert_eq!(
+            all.len(),
+            1,
+            "exactly one ruleset row exists after concurrent bootstrap"
+        );
+        assert_eq!(all[0].name, "Default");
+        assert_eq!(
+            all.iter().filter(|r| r.is_active).count(),
+            1,
+            "exactly one row is active"
+        );
+
+        pool.close().await;
+    }
+
+    /// A second `ensure_active_ruleset` after the first has bootstrapped is a
+    /// plain read of the already-active row (no second row, no re-seed).
+    #[tokio::test]
+    async fn ensure_active_ruleset_is_idempotent() {
+        let dir = TempDir::new().expect("tempdir");
+        let (pool, _outcome) = open_db(dir.path()).await.expect("open_db");
+
+        let first = ensure_active_ruleset(&pool).await.expect("first");
+        let second = ensure_active_ruleset(&pool).await.expect("second");
+        assert_eq!(first.id, second.id);
+        assert_eq!(count_rulesets(&pool).await.expect("count"), 1);
+
+        pool.close().await;
     }
 }
