@@ -31,7 +31,7 @@ pub mod persist;
 pub mod typing;
 pub mod walk;
 
-pub use cover::{get_cover, read_cover, CoverArt};
+pub use cover::{get_cover, read_cover, sweep_cover_cache, CoverArt};
 pub use csv_import::run_csv_import;
 pub use exclude::ExcludeSet;
 pub use persist::{

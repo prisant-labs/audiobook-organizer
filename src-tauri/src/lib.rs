@@ -188,6 +188,18 @@ pub fn run() {
                 log::info!("re-allowed persisted library root: {}", root.display());
             }
 
+            // Best-effort cover-cache sweep (F-907): reclaim cover thumbnails
+            // whose books were deleted or renamed on disk (the content-addressed
+            // key already keeps a rescan from orphaning files, but a vanished
+            // book still leaves its old file behind). Never touches the library;
+            // any failure is swallowed inside the sweep and only defers reclaim
+            // to the next launch.
+            let cover_cache_dir = app_data_dir.join("covers");
+            let swept = abo_core::scan::sweep_cover_cache(&cover_cache_dir);
+            if swept > 0 {
+                log::info!("swept {swept} stale cover cache file(s) at startup");
+            }
+
             app.manage(AppState {
                 pool,
                 db_outcome,

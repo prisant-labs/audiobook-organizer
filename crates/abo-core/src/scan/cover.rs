@@ -216,23 +216,74 @@ pub fn read_cover(book_dir: &Path, audio_files: &[PathBuf]) -> Option<CoverArt> 
 //
 // The cache lives in the app's own data area, NEVER under the library root, so
 // caching never violates the read-only-over-the-library invariant. A cache file
-// is named `<key>.<ext>` where `key` is a stable, content-ish digest of the
-// entry id, its stored path, and its mtime (plan T-11: "entry id + mtime"), so
-// the same book yields the same file and a changed mtime yields a fresh key. The
+// is named `<key>.<ext>` where `key` is a CONTENT-ADDRESSED digest of the
+// entry's stored path and its source-file mtime - deliberately NOT the entry
+// id. The entry id is a per-scan autoincrement, so keying on it would mint a
+// fresh key on every rescan and orphan every prior cache file forever; keying
+// on identity that survives a rescan (same book, same file, same mtime) means a
+// rescan reuses the same cache file, and only a re-tag (changed mtime) yields a
+// fresh key. Files that do outlive their book are reclaimed by
+// [`sweep_cover_cache`] (a best-effort age sweep wired in at startup). The
 // extension lets the mime be recovered on a hit without a sidecar record.
 
-/// A stable, content-ish cache key from the entry id, its stored path, and its
-/// mtime. FNV-1a over the joined fields, rendered hex - deterministic, no crate,
-/// and collision-safe enough for a per-entry cache. A `None` mtime contributes
-/// an empty field, so an unstattable entry still gets a stable key.
-fn cache_key(entry_id: i64, stored_path: &str, mtime: Option<&str>) -> String {
-    let material = format!("{entry_id}|{stored_path}|{}", mtime.unwrap_or(""));
+/// A stable, content-addressed cache key from the entry's stored path and its
+/// source-file mtime (NOT the entry id, so the key is rescan-stable; see the
+/// section comment above). FNV-1a over the joined fields, rendered hex -
+/// deterministic, no crate, and collision-safe enough for a per-entry cache. A
+/// `None` mtime contributes an empty field, so an unstattable entry still gets a
+/// stable key.
+fn cache_key(stored_path: &str, mtime: Option<&str>) -> String {
+    let material = format!("{stored_path}|{}", mtime.unwrap_or(""));
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325; // FNV offset basis
     for b in material.as_bytes() {
         hash ^= *b as u64;
         hash = hash.wrapping_mul(0x0000_0100_0000_01B3); // FNV prime
     }
     format!("{hash:016x}")
+}
+
+/// How old a cover cache file may get (by its OWN filesystem mtime) before
+/// [`sweep_cover_cache`] reclaims it. A cover the user still sees is re-read and
+/// re-cached on next access, so an entry that outlives its book costs only one
+/// re-read after a sweep; 60 days keeps the cache from growing without bound
+/// across many rescans while never disturbing art for books still on the shelf.
+const COVER_CACHE_MAX_AGE_DAYS: u64 = 60;
+
+/// Best-effort sweep of the cover cache: delete every cache file whose own
+/// filesystem mtime is older than [`COVER_CACHE_MAX_AGE_DAYS`]. This is what
+/// bounds the cache across many rescans (the content-addressed key keeps a
+/// rescan from orphaning files, but a book that is deleted or renamed on disk
+/// still leaves its old cache file behind; this reclaims it).
+///
+/// Never touches the library: the cache lives in app-data, and only cache files
+/// are considered. Fully best-effort - a missing cache directory is a no-op,
+/// and any per-file error (unreadable metadata, a delete race) is logged and
+/// skipped rather than propagated, since a failed sweep only leaves a stale file
+/// for the next run. Returns the number of files removed (for logging/tests).
+pub fn sweep_cover_cache(cache_dir: &Path) -> usize {
+    let max_age = std::time::Duration::from_secs(COVER_CACHE_MAX_AGE_DAYS * 24 * 60 * 60);
+    let now = std::time::SystemTime::now();
+    let Ok(entries) = std::fs::read_dir(cache_dir) else {
+        return 0; // no cache directory yet (or unreadable): nothing to sweep
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(mtime) = meta.modified() else { continue };
+        // `duration_since` errors only if `mtime` is in the future (clock skew);
+        // treat that as "fresh" (zero age), never as "ancient".
+        if now.duration_since(mtime).unwrap_or_default() > max_age {
+            if let Err(e) = std::fs::remove_file(entry.path()) {
+                tracing::warn!(error = %e, "cover: could not sweep an old cover cache file");
+            } else {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 
 /// Look for a cached cover for `key` under `cache_dir`, probing each known image
@@ -312,8 +363,9 @@ pub async fn get_cover(
         return Ok(None);
     };
 
-    // ---- Cache first, keyed by (entry id, stored path, mtime) ----
-    let key = cache_key(entry_id, &entry.path, entry.mtime.as_deref());
+    // ---- Cache first, keyed content-addressed by (stored path, mtime) so a
+    // rescan reuses this file instead of orphaning it (never by entry id) ----
+    let key = cache_key(&entry.path, entry.mtime.as_deref());
     if let Some(art) = find_cached(cache_dir, &key) {
         return Ok(Some(art.to_cover_image()));
     }
@@ -478,22 +530,103 @@ mod tests {
     }
 
     #[test]
-    fn cache_key_is_stable_and_mtime_sensitive() {
-        let a = cache_key(7, r"E:\Books\A Book", Some("2026-01-01T00:00:00Z"));
-        let a_again = cache_key(7, r"E:\Books\A Book", Some("2026-01-01T00:00:00Z"));
-        assert_eq!(a, a_again, "same inputs must yield the same key");
+    fn cache_key_is_rescan_stable_and_path_mtime_sensitive() {
+        // Same path + mtime across two simulated scans -> identical key, so a
+        // rescan reuses the same cache file instead of orphaning it. The
+        // per-scan entry id is intentionally NOT part of the key.
+        let scan1 = cache_key(r"E:\Books\A Book", Some("2026-01-01T00:00:00Z"));
+        let scan2 = cache_key(r"E:\Books\A Book", Some("2026-01-01T00:00:00Z"));
+        assert_eq!(
+            scan1, scan2,
+            "same path+mtime must yield the same key across scans"
+        );
 
-        // A changed mtime yields a fresh key (content-ish invalidation).
-        let b = cache_key(7, r"E:\Books\A Book", Some("2026-02-02T00:00:00Z"));
-        assert_ne!(a, b, "a changed mtime must change the key");
+        // A changed mtime (the file was re-tagged) yields a fresh key.
+        let retagged = cache_key(r"E:\Books\A Book", Some("2026-02-02T00:00:00Z"));
+        assert_ne!(scan1, retagged, "a changed mtime must change the key");
 
-        // A different entry yields a different key.
-        let c = cache_key(8, r"E:\Books\A Book", Some("2026-01-01T00:00:00Z"));
-        assert_ne!(a, c, "a different entry id must change the key");
+        // A different book (path) yields a different key.
+        let other = cache_key(r"E:\Books\Another Book", Some("2026-01-01T00:00:00Z"));
+        assert_ne!(scan1, other, "a different stored path must change the key");
 
         // 16 hex chars (u64), always.
-        assert_eq!(a.len(), 16);
-        assert!(a.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_eq!(scan1.len(), 16);
+        assert!(scan1.chars().all(|ch| ch.is_ascii_hexdigit()));
+    }
+
+    /// The rescan-reuse invariant end to end: two scans of the same book (same
+    /// stored path + mtime, DIFFERENT per-scan entry ids) resolve to the same
+    /// cache file, so the second scan is a cache HIT rather than a fresh orphan.
+    #[test]
+    fn same_path_and_mtime_across_scans_hit_the_same_cache_file() {
+        let dir = tempfile::TempDir::new().expect("cache tempdir");
+        let cache = dir.path().join("covers");
+        let art = CoverArt {
+            bytes: JPEG_MAGIC.to_vec(),
+            mime: "image/jpeg",
+            ext: "jpg",
+        };
+        let path = r"E:\Books\A Book\book.m4b";
+        let mtime = Some("2026-01-01T00:00:00Z");
+
+        // Scan 1 (entry id, say, 7): miss, then populate the cache.
+        let key_scan1 = cache_key(path, mtime);
+        assert_eq!(find_cached(&cache, &key_scan1), None, "first scan misses");
+        write_cache(&cache, &key_scan1, &art);
+
+        // Scan 2 (a DIFFERENT entry id, say, 4021): the key is identical, so it
+        // hits the file scan 1 wrote - no orphan minted.
+        let key_scan2 = cache_key(path, mtime);
+        assert_eq!(
+            key_scan2, key_scan1,
+            "the key does not depend on the entry id"
+        );
+        let hit = find_cached(&cache, &key_scan2).expect("second scan is a cache hit");
+        assert_eq!(hit, art, "the same cache file serves the rescan");
+
+        // Exactly one cache file exists (the rescan added none).
+        let file_count = std::fs::read_dir(&cache).unwrap().count();
+        assert_eq!(
+            file_count, 1,
+            "a rescan must not orphan a second cache file"
+        );
+    }
+
+    #[test]
+    fn sweep_removes_only_old_files() {
+        let dir = tempfile::TempDir::new().expect("cache tempdir");
+        let cache = dir.path().join("covers");
+        std::fs::create_dir_all(&cache).unwrap();
+        let fresh = cache.join("fresh.jpg");
+        let old = cache.join("old.jpg");
+        std::fs::write(&fresh, JPEG_MAGIC).unwrap();
+        std::fs::write(&old, JPEG_MAGIC).unwrap();
+
+        // Age the old file well past the max by rewriting its mtime.
+        let old_time = std::time::SystemTime::now()
+            - std::time::Duration::from_secs((COVER_CACHE_MAX_AGE_DAYS + 5) * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(old_time)
+            .unwrap();
+
+        let removed = sweep_cover_cache(&cache);
+        assert_eq!(removed, 1, "exactly the one old file is swept");
+        assert!(fresh.exists(), "a fresh cover is never swept");
+        assert!(!old.exists(), "an old cover is swept");
+    }
+
+    #[test]
+    fn sweep_missing_directory_is_a_noop() {
+        let dir = tempfile::TempDir::new().expect("cache tempdir");
+        let cache = dir.path().join("does-not-exist");
+        assert_eq!(
+            sweep_cover_cache(&cache),
+            0,
+            "no cache dir means nothing to sweep"
+        );
     }
 
     #[test]
