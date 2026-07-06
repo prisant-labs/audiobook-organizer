@@ -9,9 +9,12 @@
 //! The three spine commands: [`scan_start`] (kick off a background scan and
 //! return its `job_id`), [`scan_entries`] (read a snapshot back for the tracer),
 //! and [`db_status`] (report whether startup recovered a corrupt database).
+//!
+//! v0.4.0 Phase 2 adds the F-803 settings commands (see [`settings`]).
+
+pub mod settings;
 
 use std::panic::AssertUnwindSafe;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -59,17 +62,33 @@ pub enum JobEnd {
 /// event: the requester already knows, and the `jobs` row is the durable signal).
 /// The cancel flag is deregistered once the job is terminal, whichever way it ends.
 ///
-/// `root` arrives as a plain string from the frontend because this release has no
-/// dialog plugin; the backend-mediated folder picker (tauri-plugin-dialog, F-909)
-/// arrives at v0.4.0 with the capability-model change it needs. That is acceptable
-/// because the tracer UI is disposable (FD-29).
+/// The scan root is NO LONGER a frontend argument (FD-29 re-allowance, v0.4.0
+/// Phase 2): `scan_start` uses the backend's sanctioned library root, loaded from
+/// persisted settings at startup and updated by `settings_set` when the user
+/// picks or changes the library folder. The frontend cannot ask the backend to
+/// scan an arbitrary path; the only way a path enters the backend is the OS folder
+/// picker (`tauri-plugin-dialog`) -> `settings_set` -> persisted `library_root`.
+/// If no library is configured (first-run not completed), there is nothing to
+/// scan and this returns [`AppError::RootNotFound`] so the shell can route to
+/// first-run / re-pick.
 #[tauri::command]
 #[specta::specta]
 pub async fn scan_start(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
-    root: String,
 ) -> Result<JobStarted, AppError> {
+    // The sanctioned root, snapshotted out of managed state (the lock is released
+    // immediately; the PathBuf is owned by the spawned task below). No library
+    // configured -> nothing to scan.
+    let root_path = state
+        .library_root
+        .lock()
+        .expect("library_root mutex poisoned")
+        .clone()
+        .ok_or_else(|| AppError::RootNotFound {
+            path: "no library folder is configured".to_string(),
+        })?;
+
     // Record the running job row up front so the returned job_id is real and the
     // later event can correlate to it. A failure to even record the job is the
     // only thing that fails the call itself; the scan runs in the background.
@@ -94,9 +113,9 @@ pub async fn scan_start(
     tauri::async_runtime::spawn(async move {
         // Clone the pool once for the scan work itself; the terminal-state wrapper
         // takes ownership of the outer clone so it can still write the `jobs` row
-        // even if the scan future is dropped or unwinds.
+        // even if the scan future is dropped or unwinds. `root_path` is the
+        // sanctioned root captured above; move it into the task.
         let scan_pool = pool.clone();
-        let root_path = PathBuf::from(&root);
         // `job_id` is Copy; `handle` is cloned so each terminal-emit closure owns
         // one (only one of the three ever runs).
         let handle_completed = handle.clone();

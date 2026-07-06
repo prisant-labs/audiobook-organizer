@@ -24,6 +24,11 @@
 //! the F-403/F-405 plan tables and the F-801 ruleset table. See migration
 //! 0002's own doc comment for the frozen `plan_ops` column set later v0.3.0
 //! phases build on.
+//!
+//! v0.4.0 Phase 2 adds migration `0003_settings_f803.sql`, additive over 0002,
+//! and [`settings`]: sqlx read/write for the F-803 singleton settings row
+//! (library root, set-aside/quarantine root, reports override, theme), on top
+//! of the `scan_retention_count` column 0002 already added.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -36,6 +41,7 @@ pub mod activity;
 pub mod dupes;
 pub mod plans;
 pub mod rulesets;
+pub mod settings;
 
 use crate::error::AppError;
 
@@ -539,5 +545,96 @@ mod tests {
                 .await
                 .expect("scan_retention_count must be backfilled onto the pre-existing row");
         assert_eq!(retention, 10);
+    }
+
+    /// Migrating a database that only has 0001 + 0002 applied (the v0.3.0 shape)
+    /// through the real [`open_db`] entry point adds the F-803 settings columns
+    /// (migration 0003) with their defaults, backfills them onto the existing
+    /// singleton row, and preserves prior data - the "from a v0.3.0 DB" half of
+    /// this phase's migration verification requirement. Built with a REAL sqlx
+    /// `Migrator` sourced from a temp directory holding only 0001 + 0002, so the
+    /// starting point is provably the v0.3.0 schema, then reopened so only 0003
+    /// actually runs.
+    #[tokio::test]
+    async fn migration_from_v030_db_adds_f803_settings_columns() {
+        let tmp = TempDir::new().expect("tempdir");
+        let app_dir = tmp.path();
+        let db_path = app_dir.join(DB_FILE_NAME);
+
+        let old_migrations_dir = tmp.path().join("v030-migrations");
+        std::fs::create_dir_all(&old_migrations_dir).expect("create v030-migrations dir");
+        std::fs::write(
+            old_migrations_dir.join("0001_init.sql"),
+            include_str!("../../migrations/0001_init.sql"),
+        )
+        .expect("write 0001");
+        std::fs::write(
+            old_migrations_dir.join("0002_plan_and_rulesets.sql"),
+            include_str!("../../migrations/0002_plan_and_rulesets.sql"),
+        )
+        .expect("write 0002");
+
+        let old_pool = open_pool(&db_path).await.expect("open pool for v0.3.0 db");
+        sqlx::migrate::Migrator::new(old_migrations_dir)
+            .await
+            .expect("build v030 migrator")
+            .run(&old_pool)
+            .await
+            .expect("apply 0001 + 0002 only");
+
+        // The v0.3.0 settings row: scan_retention_count present, but none of the
+        // F-803 columns exist yet. Set a non-default retention so we can prove it
+        // survives the 0003 upgrade untouched.
+        sqlx::query("UPDATE settings SET scan_retention_count = 7 WHERE id = 1")
+            .execute(&old_pool)
+            .await
+            .expect("set v0.3.0 retention");
+        old_pool.close().await;
+
+        // Reopen through the real entry point: only 0003 runs (0001/0002 already
+        // recorded). It must be a normal upgrade, not a corrupt recovery.
+        let (pool, outcome) = open_db(app_dir)
+            .await
+            .expect("open_db over an existing v0.3.0-shaped db");
+        assert_eq!(
+            outcome,
+            DbOpenOutcome::Normal,
+            "an additive upgrade over a valid v0.3.0 db must not be treated as corrupt"
+        );
+
+        // The F-803 columns now exist, defaulting library/set-aside/reports to
+        // NULL (so first-run detection sees no configured library) and theme to
+        // 'day' (FD-09), while the pre-existing retention value is preserved.
+        let row = sqlx::query(
+            "SELECT library_root, quarantine_root, reports_root, theme, scan_retention_count \
+             FROM settings WHERE id = 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("F-803 columns must exist after 0003");
+        assert!(
+            row.get::<Option<String>, _>("library_root").is_none(),
+            "library_root defaults to NULL (no library configured)"
+        );
+        assert!(row.get::<Option<String>, _>("quarantine_root").is_none());
+        assert!(row.get::<Option<String>, _>("reports_root").is_none());
+        assert_eq!(
+            row.get::<String, _>("theme"),
+            "day",
+            "theme backfills to the FD-09 Day default"
+        );
+        assert_eq!(
+            row.get::<i64, _>("scan_retention_count"),
+            7,
+            "the pre-existing v0.3.0 retention value must survive the 0003 upgrade"
+        );
+
+        // And the higher-level accessor reads the upgraded row cleanly.
+        let settings = super::settings::get_settings(&pool)
+            .await
+            .expect("get_settings over the upgraded db");
+        assert_eq!(settings.library_root, None);
+        assert_eq!(settings.theme, "day");
+        assert_eq!(settings.scan_retention_count, 7);
     }
 }

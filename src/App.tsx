@@ -11,12 +11,6 @@
 import { useEffect, useRef, useState } from "react";
 import { commands, events, type EntryRow, type DbStatus, type AppError } from "./lib/bindings";
 
-// Hardcoded fixture root for the tracer button. This folder is NOT created
-// by the app; prepare it by hand before running the tracer (see the manual
-// QA checklist and the Phase 6 report for the exact layout used to verify
-// this). Throwaway path, deleted with the rest of this component.
-const TRACER_ROOT = "E:\\tmp\\abo-tracer";
-
 // AppError is an externally tagged enum: exactly one machine-code key is
 // present (the rest are typed `never`). Render it as "code: detail" (or just
 // "code" when the payload has no readable field) instead of dumping the raw
@@ -100,7 +94,11 @@ function App() {
     currentJobIdRef.current = "pending";
     setState({ phase: "running", jobId: "pending" });
 
-    const result = await commands.scanStart(TRACER_ROOT);
+    // No path argument (v0.4.0 Phase 2, FD-29): the backend scans its sanctioned
+    // library root (the folder chosen at first-run and persisted in settings),
+    // not an arbitrary path from the frontend. This disposable tracer is deleted
+    // in P8; the change keeps it compiling against the re-allowance seam.
+    const result = await commands.scanStart();
     if (!mountedRef.current) return;
 
     if (result.status === "ok") {
@@ -114,7 +112,11 @@ function App() {
   }
 
   return (
-    <main style={{ fontFamily: "sans-serif", padding: "1rem" }}>
+    // A plain <div>, not <main>: this tracer now mounts inside AppShell's
+    // ScreenContainer (v0.4.0 Phase 1), which already owns the page's one
+    // <main> landmark. Nesting two <main> elements is invalid; this is the
+    // only change made to this disposable file for that reason.
+    <div style={{ fontFamily: "sans-serif", padding: "1rem" }}>
       <h1>Audiobook Organizer - spine scaffold</h1>
       <p style={{ fontWeight: "bold" }}>
         Tracer slice - disposable, deleted at v0.4.0 (seeing)
@@ -144,7 +146,7 @@ function App() {
           </pre>
         </>
       )}
-    </main>
+    </div>
   );
 }
 

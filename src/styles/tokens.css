@@ -1,0 +1,177 @@
+/* Design tokens (docs/internal/design-system.md Section 2-3), FD-09/FD-11/FD-21.
+ *
+ * This file is the single source of truth for the app's visual tokens. It is
+ * also the Tailwind v4 CSS entry point (`@import "tailwindcss"`): the
+ * `@theme inline` block maps the token custom properties onto Tailwind
+ * utility classes (e.g. `bg-bg`, `text-ink-2`, `border-border`) so components
+ * can use ordinary Tailwind classes while the VALUES stay governed by this
+ * file, not by Tailwind's own default palette. Per the release brief: the
+ * design-system token table is the law, Tailwind is plumbing.
+ *
+ * Canonical theme identifiers (FD-09): `day` and `evening` ONLY. The
+ * prototypes' `calm`/`evening`/`prose` naming never appears in shipped code
+ * (AC-2); grep this tree for "calm" or "prose" as an identifier to confirm.
+ */
+@import "tailwindcss";
+
+/* Self-hosted Literata (SIL OFL), zero network (FD-11). See
+ * src/assets/fonts/PROVENANCE.md. Variable font file covers 400-700 in one
+ * woff2, matching the F-506 report's own @font-face declaration. System
+ * fallback is Georgia/serif per design-system Section 3.1. */
+@font-face {
+  font-family: "Literata";
+  src: url("../assets/fonts/Literata-latin.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-2: var(--border-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-ink: var(--primary-ink);
+  --color-good: var(--good);
+  --color-good-bg: var(--good-bg);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-alert: var(--alert);
+  --color-alert-bg: var(--alert-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-ink: var(--danger-ink);
+  --color-titlebar: var(--titlebar);
+  --color-link: var(--link);
+
+  --font-sans: var(--sans);
+  --font-serif: var(--serif);
+  --font-mono: var(--mono);
+
+  --radius-DEFAULT: var(--r);
+}
+
+/* Shared, theme-independent (design-system Section 2.2). */
+:root {
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --serif: "Literata", Georgia, serif;
+  --mono: "Cascadia Code", Consolas, monospace;
+  --r: 6px;
+}
+
+/* Day theme (data-theme="day"), design-system Section 2.2. Default theme
+ * (AC-2, FD-09): applied by src/lib/theme.ts before first paint. */
+:root[data-theme="day"] {
+  --bg: #fafafb;
+  --surface: #ffffff;
+  --surface-2: #f1f1f4;
+  --border: #e3e3e9;
+  --border-2: #cfcfd8;
+  --ink: #26252e;
+  --ink-2: #4b4a56;
+  --ink-3: #6d6c79;
+  --primary: #4a3fb0;
+  --primary-hover: #3d3399;
+  --primary-ink: #ffffff;
+  --good: #2f7a4c;
+  --good-bg: #e7f2ea;
+  --warn: #7c5a10;
+  --warn-bg: #f5edd8;
+  --alert: #a34b2a;
+  --alert-bg: #f7e7dd;
+  --shelf-rail: linear-gradient(180deg, #dddde3, #cbcbd4);
+  --cover-shadow: 0 2px 5px rgba(30, 28, 45, 0.18);
+  --titlebar: #f3f3f6;
+  --link: #4a3fb0;
+  /* Error/danger pair (Section 2.3, FD-09): distinct from --alert terracotta,
+   * verified WCAG AA >= 4.5:1 in Section 8. Reserved for genuine failure. */
+  --danger: #b3261e;
+  --danger-bg: #fbeae8;
+  --danger-ink: #ffffff;
+}
+
+/* Evening theme (data-theme="evening"), design-system Section 2.2. */
+:root[data-theme="evening"] {
+  --bg: #211b15;
+  --surface: #2b241d;
+  --surface-2: #352d24;
+  --border: #3d352b;
+  --border-2: #4f4436;
+  --ink: #f0e9dd;
+  --ink-2: #cfc4b2;
+  --ink-3: #a2967f;
+  --primary: #6a5cd0;
+  --primary-hover: #7a6ce0;
+  --primary-ink: #ffffff;
+  --good: #7fc492;
+  --good-bg: rgba(127, 196, 146, 0.13);
+  --warn: #dcb25e;
+  --warn-bg: rgba(220, 178, 94, 0.13);
+  --alert: #e08d63;
+  --alert-bg: rgba(224, 141, 99, 0.14);
+  --shelf-rail: linear-gradient(180deg, #5a4630, #3f2f1d);
+  --cover-shadow: 0 3px 8px rgba(0, 0, 0, 0.45);
+  --titlebar: #1b1611;
+  --link: #b3a6f2;
+  --danger: #f2857a;
+  --danger-bg: rgba(242, 133, 122, 0.15);
+  --danger-ink: #211b15;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--ink);
+    /* Theme swap crossfades; collapsed to instant below under
+     * prefers-reduced-motion (AC-4, design-system Section 7). */
+    transition:
+      background 0.25s ease,
+      color 0.25s ease;
+  }
+
+  /* All numeric counts use tabular figures so digits do not jitter as values
+   * update (design-system Section 3.3). Applied broadly here; per-component
+   * overrides are unnecessary since this is a formatting-only property. */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* AC-4 / design-system Section 7: prefers-reduced-motion collapses all
+ * transitions and animations to ~instant (crossfade-or-instant only), never
+ * removed outright. Matches the prototypes' own rule verbatim. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Visible focus ring for every interactive control (design-system Section 7):
+ * 2px solid --primary, 2px offset. Tailwind's `outline-hidden`/default focus
+ * ring is not used so this exact token-driven treatment is guaranteed. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}

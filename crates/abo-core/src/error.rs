@@ -40,6 +40,17 @@ pub enum AppError {
     #[error("database was corrupt and has been recovered; prior data preserved at {backup_path}")]
     DbCorruptRecovered { backup_path: String },
 
+    /// The singleton application settings row (F-803) could not be read or
+    /// written. A rare SQLite error on the settings CRUD path (`settings_get` /
+    /// `settings_set`); `detail` is the developer-facing cause. Distinct from
+    /// [`DbMigrationFailed`](AppError::DbMigrationFailed), which is the
+    /// startup-time open/migrate failure, and from
+    /// [`DbCorruptRecovered`](AppError::DbCorruptRecovered), the recovered
+    /// startup case: this is a runtime read/write failure against an
+    /// already-open, already-migrated database.
+    #[error("settings could not be read or saved: {detail}")]
+    SettingsFailed { detail: String },
+
     // ---- Scan family (Phase 3: scanner, file typing, snapshot persistence) ----
     //
     // Phase 3 seeds the two root-validation codes plus one internal write-path
@@ -183,6 +194,7 @@ impl AppError {
             // Storage family
             AppError::DbMigrationFailed { .. } => "db-migration-failed",
             AppError::DbCorruptRecovered { .. } => "db-corrupt-recovered",
+            AppError::SettingsFailed { .. } => "settings-failed",
             // Scan family
             AppError::RootNotFound { .. } => "root-not-found",
             AppError::RootNotDirectory { .. } => "root-not-directory",
@@ -218,6 +230,11 @@ impl AppError {
                 "The app's database was unreadable and has been reset so the app can run. Your \
                  previous data was preserved as a backup in the corrupt-backups folder and can \
                  be recovered manually if needed."
+            }
+            AppError::SettingsFailed { .. } => {
+                "Your settings could not be saved. Restart the app and try again. If this keeps \
+                 happening, the disk may be full or the app data folder may be on a synced \
+                 location (OneDrive); free space or move the app data out of the synced folder."
             }
             // Scan family
             AppError::RootNotFound { .. } => {
@@ -311,6 +328,9 @@ mod tests {
             },
             AppError::DbCorruptRecovered {
                 backup_path: "C:/x/corrupt-backups/abo-1.db".into(),
+            },
+            AppError::SettingsFailed {
+                detail: "database is locked".into(),
             },
             AppError::RootNotFound {
                 path: r"C:\Users\x\missing".into(),

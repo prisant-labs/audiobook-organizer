@@ -78,6 +78,16 @@ tracing = "0.1.44"
 # how abo-core's tracing events (via tracing's `log` feature) reach the log file.
 tauri-plugin-log = "=2.8.0"
 
+# tauri-plugin-dialog (F-909, FD-29): the OS folder picker used at first-run and
+# in Settings to choose the library root. Tauri-family crate, so pinned EXACT
+# (= prefix) per AC-17. This is the ONLY new capability the security model adds
+# this release; there is deliberately no tauri-plugin-fs and no tauri-plugin-shell
+# (architecture Section 5). The matching JS guest package (@tauri-apps/plugin-dialog)
+# is added to package.json at the same pinned 2.7.1 so the Rust plugin and the JS
+# `open()` binding agree. Backend-mediated: the picked path is handed to the
+# backend via settings_set; the WebView never gains a standing filesystem scope.
+tauri-plugin-dialog = "=2.7.1"
+
 # Per-push CI / default release profile (FD-24). Tuned for a small bundle but
 # with THIN LTO and parallel codegen so per-push CI builds stay fast (the
 # reference project measured a full-LTO single-codegen-unit build at about 35

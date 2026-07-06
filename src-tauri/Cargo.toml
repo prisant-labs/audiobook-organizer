@@ -60,6 +60,13 @@ tauri-plugin-log = { workspace = true }
 # captures. Kept at the workspace-safe caret used by the plugin itself.
 log = "0.4"
 
+# tauri-plugin-dialog (F-909, FD-29): registered in `run()` so the frontend can
+# open the OS folder picker to choose the library root. Backend-only Rust wiring;
+# the JS guest package (@tauri-apps/plugin-dialog) is what the frontend imports.
+# Exact-pinned at the workspace root (AC-17). Pulls no fs/shell grant - the only
+# capability added is `dialog:allow-open` (capabilities/default.json).
+tauri-plugin-dialog = { workspace = true }
+
 # Test-only. `tests/job_terminal.rs` exercises `run_job_to_terminal` (the spawned
 # scan job's terminal-state wrapper) directly: it opens a migrated pool via
 # abo-core, inserts a running `jobs` row, drives the wrapper with a deliberately
