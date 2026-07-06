@@ -7,6 +7,7 @@ import {
   isTheme,
   readLegacyTheme,
   type Theme,
+  writeThemeHint,
 } from "@/lib/theme";
 
 // The single owner of the F-803 settings (T-06/T-09). Loads the persisted
@@ -77,7 +78,11 @@ export function useAppSettings(): UseAppSettings {
   const commit = useCallback((next: AppSettings | null) => {
     settingsRef.current = next;
     setSettings(next);
-    applyTheme(themeOf(next));
+    const theme = themeOf(next);
+    applyTheme(theme);
+    // Refresh the pre-paint hint so the next cold start paints this theme
+    // synchronously; settings remains authoritative (see theme.ts).
+    writeThemeHint(theme);
   }, []);
 
   useEffect(() => {

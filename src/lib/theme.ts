@@ -29,7 +29,10 @@ export function applyTheme(theme: Theme): void {
 // The one remaining role of localStorage is a ONE-TIME migration: on the first
 // launch after this upgrade, a user may still carry a Phase-1 theme choice in
 // localStorage. `useAppSettings` reads it once (`readLegacyTheme`), writes it
-// into settings if it differs, and then removes it (`clearLegacyTheme`), so from
+// into settings if it differs, and then removes it (`clearLegacyTheme`); after
+// every settings load or update it rewrites the key as a pre-paint hint
+// (`writeThemeHint`) so cold starts paint the persisted theme without a flash.
+// Settings is always the authority; the hint is only ever read pre-paint, so from
 // then on settings wins and the key is gone. There is no dual-write: nothing in
 // the app writes this key anymore.
 const LEGACY_STORAGE_KEY = "abo.theme";
@@ -51,6 +54,18 @@ export function readLegacyTheme(): Theme | null {
 export function clearLegacyTheme(): void {
   try {
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // Best-effort only; see readLegacyTheme.
+  }
+}
+
+// Mirror the authoritative settings theme into the pre-paint hint key so the
+// NEXT cold start paints the right theme synchronously. This is a paint hint
+// only: settings remains the sole authority, and a stale or missing hint is
+// always reconciled by the async settings load.
+export function writeThemeHint(theme: Theme): void {
+  try {
+    window.localStorage.setItem(LEGACY_STORAGE_KEY, theme);
   } catch {
     // Best-effort only; see readLegacyTheme.
   }

@@ -74,10 +74,11 @@ describe("useAppSettings", () => {
     const { result } = renderHook(() => useAppSettings());
     await waitFor(() => expect(result.current.status).toBe("ready"));
 
-    // The legacy value was written into settings once, the key removed, and the
-    // resolved settings/theme are the migrated Evening.
+    // The legacy value was written into settings once, and the key now holds
+    // the pre-paint hint for the migrated (authoritative) Evening theme; the
+    // hint is paint-only and never read as authority.
     expect(mockedSave).toHaveBeenCalledWith(expect.objectContaining({ theme: "evening" }));
-    expect(window.localStorage.getItem("abo.theme")).toBeNull();
+    expect(window.localStorage.getItem("abo.theme")).toBe("evening");
     expect(result.current.settings?.theme).toBe("evening");
     expect(document.documentElement.dataset.theme).toBe("evening");
   });
@@ -90,8 +91,9 @@ describe("useAppSettings", () => {
     await waitFor(() => expect(result.current.status).toBe("ready"));
 
     expect(mockedSave).not.toHaveBeenCalled();
-    // The stale key is still cleared so settings is the sole source of truth.
-    expect(window.localStorage.getItem("abo.theme")).toBeNull();
+    // The key carries the pre-paint hint for the authoritative theme; settings
+    // remains the sole source of truth.
+    expect(window.localStorage.getItem("abo.theme")).toBe("day");
   });
 
   it("reverts optimistic state and rethrows when a persist fails", async () => {
