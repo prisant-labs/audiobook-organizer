@@ -7,6 +7,14 @@
 //! `tauri_specta::Builder`, generated `src/lib/bindings.ts`). Phase 6 wires the
 //! disposable tracer-slice UI on top of it. All product logic lives in
 //! `abo-core`; this shell stays thin (reference architecture Section 4).
+//! v0.4.0 Phase 5 adds the F-903 plan review commands (`commands::plan`):
+//! `plan_generate`/`plan_get`/`plan_list_ops`/`plan_set_group_approval`/
+//! `plan_exclude_op`. Phase 6 adds the F-906 ruleset editor commands
+//! (`commands::ruleset`): `ruleset_list`/`ruleset_get`/`ruleset_save`/
+//! `ruleset_delete`/`ruleset_count`/`ruleset_preset_examples`, plus the live
+//! re-plan preview `commands::plan::plan_preview` and the scan Stop control
+//! (`scan_cancel`, already wired since v0.2.0; this phase gives it a real
+//! frontend affordance, AC-36).
 //!   - commands -> IPC command handlers (payload contract lives in abo-core::ipc)
 //!   - events   -> backend -> frontend typed event emission
 //!
@@ -89,9 +97,24 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::scan_start,
             commands::scan_cancel,
             commands::scan_entries,
+            commands::cover_get,
+            commands::classify_overview,
             commands::db_status,
             commands::settings::settings_get,
             commands::settings::settings_set,
+            commands::plan::plan_generate,
+            commands::plan::plan_get,
+            commands::plan::plan_list_ops,
+            commands::plan::plan_set_group_approval,
+            commands::plan::plan_exclude_op,
+            commands::plan::plan_preview,
+            commands::ruleset::ruleset_list,
+            commands::ruleset::ruleset_get,
+            commands::ruleset::ruleset_get_active,
+            commands::ruleset::ruleset_save,
+            commands::ruleset::ruleset_delete,
+            commands::ruleset::ruleset_count,
+            commands::ruleset::ruleset_preset_examples,
         ])
         .events(collect_events![
             events::JobCompleted,
@@ -176,6 +199,18 @@ pub fn run() {
             });
             if let Some(root) = &library_root {
                 log::info!("re-allowed persisted library root: {}", root.display());
+            }
+
+            // Best-effort cover-cache sweep (F-907): reclaim cover thumbnails
+            // whose books were deleted or renamed on disk (the content-addressed
+            // key already keeps a rescan from orphaning files, but a vanished
+            // book still leaves its old file behind). Never touches the library;
+            // any failure is swallowed inside the sweep and only defers reclaim
+            // to the next launch.
+            let cover_cache_dir = app_data_dir.join("covers");
+            let swept = abo_core::scan::sweep_cover_cache(&cover_cache_dir);
+            if swept > 0 {
+                log::info!("swept {swept} stale cover cache file(s) at startup");
             }
 
             app.manage(AppState {

@@ -118,6 +118,27 @@ pub enum AppError {
     #[error("ruleset body is invalid: {detail}")]
     RulesetInvalid { detail: String },
 
+    // ---- Ruleset editor family (v0.4.0 Phase 6: F-906 ruleset editor) ----
+    /// `ruleset_get`/`ruleset_delete` named a `ruleset_id` that does not exist
+    /// (never created, or already deleted).
+    #[error("ruleset not found: {ruleset_id}")]
+    RulesetNotFound { ruleset_id: i64 },
+
+    /// `ruleset_delete` refused to delete `ruleset_id` because it is
+    /// currently the ACTIVE ruleset (the one `plan_generate` builds against).
+    /// Deleting it would leave nothing active without the caller explicitly
+    /// choosing a replacement first, so this is a policy refusal, not a
+    /// database error.
+    #[error("ruleset {ruleset_id} is in use and cannot be deleted")]
+    RulesetInUse { ruleset_id: i64 },
+
+    /// A ruleset database operation (list/get/save/delete/activate) failed at
+    /// the SQLite layer. `detail` is developer-facing; distinct from
+    /// [`RulesetInvalid`](AppError::RulesetInvalid), which is a rejected body,
+    /// not a database failure.
+    #[error("ruleset could not be read or saved: {detail}")]
+    RulesetOperationFailed { detail: String },
+
     // ---- Plan family (v0.3.0 Phase 5: F-404 plan validation) ----
     //
     // The machine codes below are the breakdown Section 8 "Plan" family. They
@@ -184,6 +205,19 @@ pub enum AppError {
     /// v0.3.0 only plans and validates.
     #[error("no operations are approved")]
     NothingApproved,
+
+    // ---- Plan review family (v0.4.0 Phase 5: F-903 review surface) ----
+    /// A plan generation run (build -> validate -> persist) could not complete.
+    /// Wraps a database, filesystem-read, or not-found failure from
+    /// [`crate::plan::report::build_and_persist_plan`] into one family-safe
+    /// code; `detail` is developer-facing.
+    #[error("the tidy-up plan could not be built: {detail}")]
+    PlanGenerationFailed { detail: String },
+
+    /// A plan query or approval command named a `plan_id` that does not exist
+    /// (never generated, or its scan/ruleset predecessor is gone).
+    #[error("plan not found: {plan_id}")]
+    PlanNotFound { plan_id: i64 },
 }
 
 impl AppError {
@@ -204,6 +238,10 @@ impl AppError {
             AppError::CsvParse { .. } => "csv-parse",
             // Ruleset family
             AppError::RulesetInvalid { .. } => "ruleset-invalid",
+            // Ruleset editor family
+            AppError::RulesetNotFound { .. } => "ruleset-not-found",
+            AppError::RulesetInUse { .. } => "ruleset-in-use",
+            AppError::RulesetOperationFailed { .. } => "ruleset-operation-failed",
             // Plan family
             AppError::SnapshotStale { .. } => "snapshot-stale",
             AppError::CollisionInPlan { .. } => "collision-in-plan",
@@ -214,6 +252,9 @@ impl AppError {
             AppError::CrossVolumeSpaceInsufficient { .. } => "cross-volume-space-insufficient",
             AppError::CycleDetected { .. } => "cycle-detected",
             AppError::NothingApproved => "nothing-approved",
+            // Plan review family
+            AppError::PlanGenerationFailed { .. } => "plan-generation-failed",
+            AppError::PlanNotFound { .. } => "plan-not-found",
         }
     }
 
@@ -270,6 +311,21 @@ impl AppError {
                  usually an out-of-date or hand-edited ruleset file; reset it to the defaults or \
                  re-create it, then save again."
             }
+            // Ruleset editor family
+            AppError::RulesetNotFound { .. } => {
+                "This ruleset could not be found; it may already have been deleted. Choose \
+                 another ruleset, or create a new one."
+            }
+            AppError::RulesetInUse { .. } => {
+                "This is the ruleset you're using right now, so it can't be deleted. Choose a \
+                 different one first, then delete this one."
+            }
+            AppError::RulesetOperationFailed { .. } => {
+                "Your shelf-organizing settings could not be read or saved. Restart the app and \
+                 try again. If this keeps happening, the disk may be full or the app data folder \
+                 may be on a synced location (OneDrive); free space or move the app data out of \
+                 the synced folder."
+            }
             // Plan family
             AppError::SnapshotStale { .. } => {
                 "A file or folder in the plan has moved or been deleted since the library was \
@@ -311,6 +367,17 @@ impl AppError {
                 "No changes have been approved yet, so there is nothing to do. Approve at least \
                  one group or operation first."
             }
+            // Plan review family
+            AppError::PlanGenerationFailed { .. } => {
+                "The tidy-up plan could not be built. Scan the library again and try building \
+                 the plan once more. If this keeps happening, the disk may be full or the app \
+                 data folder may be on a synced location (OneDrive); free space or move the app \
+                 data out of the synced folder."
+            }
+            AppError::PlanNotFound { .. } => {
+                "This tidy-up plan could not be found; it may have been built in an earlier \
+                 session. Build a new plan from the current scan and review that instead."
+            }
         }
     }
 }
@@ -351,6 +418,11 @@ mod tests {
             AppError::RulesetInvalid {
                 detail: "missing field `naming`".into(),
             },
+            AppError::RulesetNotFound { ruleset_id: 7 },
+            AppError::RulesetInUse { ruleset_id: 7 },
+            AppError::RulesetOperationFailed {
+                detail: "database is locked".into(),
+            },
             AppError::SnapshotStale {
                 path: r"E:\Books\Gone.m4b".into(),
             },
@@ -382,6 +454,10 @@ mod tests {
                 target_path: r"E:\Books\A\B".into(),
             },
             AppError::NothingApproved,
+            AppError::PlanGenerationFailed {
+                detail: "database is locked".into(),
+            },
+            AppError::PlanNotFound { plan_id: 42 },
         ]
     }
 

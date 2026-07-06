@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Audiobook Organizer</title>
-    <script>
+        <!-- CSP note: this inline pre-paint script works under the strict CSP only
+         because Tauri's default asset-CSP modification injects its sha256 hash
+         into script-src at build time. Never set
+         dangerousDisableAssetCspModification: true in tauri.conf.json, or this
+         hint dies silently and Evening users get a Day flash on every launch. -->
+<script>
       // Pre-paint theme application (AC-2): avoids a flash of the default
       // theme before the module script in src/main.tsx runs. The storage key
       // ("abo.theme") and the day/evening default must stay in sync with

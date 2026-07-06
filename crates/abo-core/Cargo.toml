@@ -97,21 +97,33 @@ unicode-segmentation = "1"
 # enforcement would otherwise reject every short row.
 csv = "1"
 
-# v0.2.0 Phase 7 (FD-14 tag-quality probe, release gate G-08): lofty reads
-# embedded audio tags (title, artist/author, album, composer/narrator) from real
-# files, READ-ONLY, for the bounded gate probe only. It is OPTIONAL and gated
-# behind the `probe` feature (see [features] below): it is never in the default
-# build, never in the shell, and never on any product code path this release
-# ships - the probe is a measurement instrument for the G-08 verdict, not a
-# runtime feature (embedded-tag extraction as a real feature is F-1101, deferred
-# past v1 per D-15/FD-03). lofty is a pure local metadata parser: it pulls no
-# tauri and no HTTP client (verified WITH the feature enabled by both the
-# core-purity `cargo tree -p abo-core -e normal --features probe | grep -i tauri`
-# check and tests/no_network.rs), so both gates stay green even with `probe` on.
-# EXACT-pinned per the workspace convention (no pin exists in the reference
-# project E:/Projects/product-on-purpose/repo-sync-tool) so a silent lofty bump
-# cannot change what the recorded FD-14 verdict was measured against.
-lofty = { version = "=0.24.0", optional = true }
+# lofty reads embedded audio metadata from real files, READ-ONLY. It serves two
+# consumers, both read-only, and is a NORMAL (non-optional) dependency as of
+# v0.4.0 Phase 3:
+#
+#   1. F-907 cover extraction (v0.4.0, D-15/FD-03): `scan::cover` reads the first
+#      embedded picture frame of a book's audio file for the cover-forward home
+#      and review surfaces. This is a PRODUCTION code path the release ships, so
+#      lofty is compiled into the default build - hence promoted from the
+#      `optional = true` it carried when only the probe used it. `scan::cover`
+#      NEVER opens a file write-mode and NEVER writes tags or images (D-09
+#      read-only invariant; proven by the read-only assertion test in
+#      tests/cover_extraction.rs).
+#   2. The FD-14 tag-quality probe (v0.2.0, G-08), still gated behind the `probe`
+#      feature (see [features] below): the probe MODULE stays opt-in and off by
+#      default, but its dependency (lofty) is now always present because covers
+#      need it too. Promoting lofty does not turn the probe on - `probe` gates the
+#      `crate::probe` module, not the crate.
+#
+# lofty is a pure local metadata parser: it pulls no tauri and no HTTP client
+# (verified by the core-purity `cargo tree -p abo-core -e normal | grep -i tauri`
+# check - now over the DEFAULT feature set, since lofty is normal - and by
+# tests/no_network.rs), so both gates stay green. EXACT-pinned per the workspace
+# convention (no pin exists in the reference project
+# E:/Projects/product-on-purpose/repo-sync-tool) so a silent lofty bump cannot
+# change what the recorded FD-14 verdict was measured against, nor what the cover
+# reader was tested over.
+lofty = "=0.24.0"
 
 # v0.2.0 Phase 2 (FD-19 LongPathsEnabled detection): read the registry value
 # HKLM SYSTEM\CurrentControlSet\Control\FileSystem LongPathsEnabled to decide
@@ -129,17 +141,22 @@ winreg = "0.52"
 # under tests/*.rs, without any caller needing to pass --features.
 fixtures = []
 
-# v0.2.0 Phase 7: gates the `probe` module (the FD-14 tag-quality probe) and its
-# only dependency, lofty. Off by default and DELIBERATELY NOT auto-enabled by the
-# self dev-dependency below: the default `cargo test -p abo-core` and
-# `cargo test --workspace` stay lofty-free and lean, and the FD-14 probe is
-# opt-in via `cargo test -p abo-core --features probe`. The one integration test
-# that consumes it (tests/fd14_tag_probe.rs) guards its whole body with
+# v0.2.0 Phase 7: gates the `probe` module (the FD-14 tag-quality probe). Off by
+# default and DELIBERATELY NOT auto-enabled by the self dev-dependency below, so
+# the default `cargo test -p abo-core` and `cargo test --workspace` do not build
+# the probe module and the FD-14 probe stays opt-in via
+# `cargo test -p abo-core --features probe`. The one integration test that
+# consumes it (tests/fd14_tag_probe.rs) guards its whole body with
 # `#![cfg(feature = "probe")]`, so it compiles to nothing (no missing-symbol
 # error) in the default no-probe build and for real only under `--features probe`.
-# `dep:lofty` keeps lofty an implementation detail of this feature rather than
-# also exposing an implicit `lofty` feature flag.
-probe = ["dep:lofty"]
+#
+# As of v0.4.0 Phase 3 this no longer carries `dep:lofty`: lofty was promoted to a
+# normal dependency for F-907 cover extraction (see the `lofty` dependency comment
+# above), so it is always compiled regardless of this feature. `probe` now gates
+# ONLY the `crate::probe` module, which is the correct scope - the FD-14 probe
+# code path is still opt-in and off by default; only its (shared, read-only)
+# lofty dependency became unconditional.
+probe = []
 
 # tokio is a TEST-ONLY dependency: the library's async fns run on whatever
 # runtime the caller (the shell) provides, and sqlx's runtime integration is

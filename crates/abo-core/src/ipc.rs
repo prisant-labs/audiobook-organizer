@@ -43,6 +43,11 @@ use serde::{Deserialize, Serialize};
 /// reachable under `abo_core::ipc` (AC-4). Defined in [`crate::error`].
 pub use crate::error::AppError;
 
+/// Re-exported so [`LibraryOverview`]'s embedded health report is reachable
+/// under `abo_core::ipc` (AC-4), same pattern as [`AppError`] above. Defined in
+/// [`crate::classify`], where the pure `health_metrics` computation lives.
+pub use crate::classify::{ClassMetric, FolderClass, HealthMetrics, MetricUnit, ProblemMetric};
+
 /// The category of a [`ScanWarning`].
 ///
 /// The two per-entry kinds ([`JunctionSkipped`](ScanWarningKind::JunctionSkipped)
@@ -227,6 +232,370 @@ pub struct AppSettings {
     pub scan_retention_count: i64,
 }
 
+/// One book's cover art (F-907, v0.4.0 Phase 3), the wire form returned by the
+/// `cover_get` command. `None` from that command means "no cover" and the
+/// frontend renders the deterministic fallback tile instead (AC-23).
+///
+/// The bytes cross IPC as base64 (`data:` payload), not as a filesystem path and
+/// not as a raw byte array: base64 keeps the payload compact and, decisively,
+/// means the WebView is handed already-read image data over typed IPC rather than
+/// any filesystem or asset-protocol scope. The library root never becomes
+/// WebView-readable (FD-29). The frontend composes `data:${mime};base64,${base64}`
+/// as the `<img>` source.
+///
+/// `mime` is sniffed from the bytes (e.g. `image/jpeg`, `image/png`), so a
+/// mislabeled sidecar or corrupt frame is rejected before it reaches here (the
+/// book then shows the fallback tile). The bytes are the raw, UNDECODED image as
+/// stored in the file (plan T-11 defers decoding/downscaling).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CoverImage {
+    /// The image mime type, sniffed from the bytes (e.g. `image/jpeg`).
+    pub mime: String,
+    /// Standard base64 (RFC 4648, `=`-padded) of the raw image bytes.
+    pub base64: String,
+}
+
+// ---- Phase 4 shell payloads (F-902 library home) ----
+
+/// Which register a [`BookReason`] chip reads in (design-system Section 4.6):
+/// a soft, tidy-adjacent note (`warn`, e.g. "loose file", "messy name") versus
+/// a structural flag that needs a decision (`alert`, e.g. "7 books, 1 folder",
+/// "2 copies"). Icon-plus-label always accompanies the kind; color is never
+/// the only signal (Section 8 accessibility).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReasonKind {
+    Warn,
+    Alert,
+}
+
+/// The plain-language "why this book is worth a look" chip under one
+/// [`BookExample`] (design-system Section 4.6 `.bookslot` / `.why`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct BookReason {
+    pub kind: ReasonKind,
+    /// Plain-language chip text, e.g. "loose file", "messy name",
+    /// "7 books, 1 folder", "2 copies". Never a raw class/rule id (Section 6).
+    pub text: String,
+}
+
+/// One example book on the "Worth a look first" shelf (F-902, v0.4.0 Phase 4,
+/// design-system Section 4.6). `entry_id` names a book WITHIN the snapshot that
+/// produced the enclosing [`LibraryOverview`] (its `scan_id`), so the frontend
+/// can pass `(scan_id, entry_id)` straight to `cover_get` for the book's cover
+/// - the same snapshot-scoped identity [`EntryRow`] already uses.
+///
+/// `title` is never absent (a book the shelf shows always parsed a title, own
+/// or derived); `author` is [`None`] when no author could be read, which the
+/// frontend's `Cover`/`FallbackTile` already render gracefully (AC-23).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct BookExample {
+    pub entry_id: i64,
+    pub title: String,
+    pub author: Option<String>,
+    pub reason: BookReason,
+}
+
+/// One series cluster on the "Series on your shelves" shelf (design-system
+/// Section 4.8). `name` is the series name (falling back to the container
+/// folder's own name when no series field parsed, so a real series-container
+/// never disappears from the shelf for want of a label); `book_count` is the
+/// number of book-like children the classifier folded into this container
+/// (`Evidence::book_children`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct SeriesCluster {
+    pub name: String,
+    pub author: Option<String>,
+    pub book_count: u64,
+}
+
+/// The home's "good news" line (design-system Section 4, `.goodline`): what is
+/// ALREADY tidy, stated in the same sentence-with-a-unit register as every
+/// other home number (FD-08, AC-7). Every field is a plain count/byte total
+/// read from the current snapshot's [`HealthMetrics`], never a hardcoded
+/// sample (FD-27).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct GoodNews {
+    pub already_tidy_books: u64,
+    pub series_shelved: u64,
+    pub empty_folders: u64,
+    pub duplicate_groups: u64,
+    pub duplicate_bytes: u64,
+}
+
+/// The full library home payload (F-902, v0.4.0 Phase 4), returned by the
+/// `classify_overview` command. [`None`] from that command means no scan has
+/// ever completed - the honest pre-first-scan state (AC-6) - in which case the
+/// frontend shows the empty-library state and the scan affordance rather than
+/// any of this shape's zeroed fields (a real zero and "never scanned" must
+/// never be confused).
+///
+/// Every count and byte figure here is computed from the snapshot named by
+/// `scan_id` at render time (AC-7): nothing is a literal/sample value. See
+/// [`crate::classify::build_overview`] for the derivation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct LibraryOverview {
+    /// The snapshot this overview was computed from (`scans.id`); the frontend
+    /// passes this alongside a [`BookExample::entry_id`] to `cover_get`.
+    pub scan_id: i64,
+    /// Every book the library holds: one per `book`-class folder (a disc-split
+    /// book still counts once) plus one per loose-root audio file plus the
+    /// distinct titles F-203 found inside each `multi-book-suspect` folder.
+    pub total_books: u64,
+    /// Sum of file sizes across the whole snapshot (equals
+    /// [`HealthMetrics::total_bytes`]).
+    pub total_bytes: u64,
+    /// How many of `total_books` carry at least one "worth a look" problem
+    /// (loose file, messy folder name, a multi-book/box-set folder, or a
+    /// duplicate copy). `total_books - needs_tidy_books` is already tidy.
+    pub needs_tidy_books: u64,
+    /// A bounded set of example books for the "Worth a look first" shelf
+    /// (design-system Section 4.6-4.7): curated examples, not the exhaustive
+    /// list - the full list is the Phase 5 review surface and the exported
+    /// report (D-16).
+    pub worth_a_look: Vec<BookExample>,
+    /// Real series containers on the shelves (design-system Section 4.8).
+    pub series: Vec<SeriesCluster>,
+    pub good_news: GoodNews,
+    /// The full per-class/per-problem health report this overview was built
+    /// from, so the sidebar's Duplicates badge (FD-08 GROUP count) and any
+    /// other per-group count reads the same numbers the home prose does.
+    pub metrics: HealthMetrics,
+}
+
+// ---- Phase 5 shell payloads (F-903 plan review surface, v0.4.0 Phase 5) ----
+
+/// F-405 approval state (`plan_ops.approval`), the wire form of
+/// [`crate::plan::validate::ApprovalState`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlanApproval {
+    Pending,
+    Approved,
+    Rejected,
+    Excluded,
+}
+
+/// F-404 per-operation validation verdict, the wire form of
+/// [`crate::plan::validate::ValidationState`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlanValidation {
+    Valid,
+    Warning,
+    Blocked,
+}
+
+/// The review state of one campaign-group card (F-502, design-system 4.9
+/// `.stag` tag variants). Distinct from [`PlanApproval`] (a per-OPERATION
+/// state): this is the coarser, group-level summary the switch and status
+/// chip render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroupStatus {
+    /// The switch is on: the group's non-blocked, non-excluded ops are
+    /// approved (design-system `.stag.in` "included").
+    Included,
+    /// The switch is off (a deliberate group-level skip); the group's ops
+    /// are left out this round (design-system `.stag.out` "left out").
+    LeftOut,
+    /// The switch cannot be toggled yet: every member is blocked or
+    /// excluded (F-908 blocked/empty-group state, AC-15), the group has no
+    /// members this scan, or (the Copies group, OQ-3) the candidates are
+    /// still waiting on the byte-by-byte check (design-system `.stag.hold`
+    /// "checking copies").
+    Checking,
+}
+
+/// One campaign-group card (F-502, FD-26). Exactly seven of these render, in
+/// [`crate::plan::builder::CampaignGroup::ALL`] order, whatever the plan
+/// holds (a group with no ops still renders its card, `op_count` 0, AC-10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanGroupView {
+    /// The stable kebab-case group id (`crate::plan::builder::CampaignGroup::slug`),
+    /// e.g. `"loose-books"`; what `plan_set_group_approval` takes back.
+    pub group: String,
+    /// The FD-26 canonical label, e.g. `"loose books"`.
+    pub label: String,
+    /// The card's plain-language headline with the real count folded in,
+    /// e.g. "Give 238 loose books their own folders".
+    pub headline: String,
+    /// The plain-language "why" paragraph under the headline.
+    pub reason: String,
+    /// The user-facing CHANGE count (FD-08 unit: moves/renames/set-asides/
+    /// removals; for the Copies group, duplicate GROUPS).
+    pub op_count: i64,
+    /// How many of the group's changes would ACTUALLY run: `op_count` minus the
+    /// blocked and individually excluded ops. This is what the footer's
+    /// "M changes" total sums over an included group, so a group holding
+    /// blocked/excluded ops never inflates the count of what a tidy-up would do.
+    pub actionable_count: i64,
+    /// Total bytes the group's changes move/set aside.
+    pub byte_size: i64,
+    pub status: GroupStatus,
+    /// How many of the group's ops carry a `warning` verdict.
+    pub warning_count: i64,
+    /// How many of the group's ops carry a `blocked` verdict.
+    pub blocked_count: i64,
+}
+
+/// The full review-surface payload (`plan_generate`/`plan_get`): the seven
+/// group cards plus plan identity. Deliberately does NOT carry the op
+/// listing (that is [`PlanOpsPage`] via `plan_list_ops`) - the two are
+/// fetched separately so toggling a group's switch (which only changes
+/// aggregate counts) never re-sends the whole op list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanReview {
+    pub plan_id: i64,
+    pub scan_id: i64,
+    /// Always exactly seven, in canonical order (AC-10).
+    pub groups: Vec<PlanGroupView>,
+}
+
+/// The matched F-301 pattern shown in an operation's "Show file details"
+/// disclosure (F-504, AC-18): the stable id plus the human-readable shape,
+/// always shown together (FD-13's "never a bare id" rule).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct MatchedPatternView {
+    /// The stable `pattern-N` id (`crate::parse::matchers::MatcherId::as_str`).
+    pub id: String,
+    /// The short human-readable shape (`MatcherId::handle`), e.g.
+    /// "Title by Author (loose root file)".
+    pub name: String,
+}
+
+/// One F-303 extracted field shown in the disclosure, with its own
+/// confidence tier (AC-18, AC-20: low-confidence fields are shown, never
+/// hidden).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ExtractedFieldView {
+    /// `"title" | "author" | "series" | "series-index" | "year"`.
+    pub field: String,
+    pub value: String,
+    /// `"high" | "medium" | "low"`.
+    pub confidence: String,
+}
+
+/// One plan operation for the group-detail pane, the F-503 filter, and the
+/// F-504 disclosure. `source_path`/`target_path` are raw Windows paths;
+/// per FD-13 they must render ONLY inside the "Show file details"
+/// disclosure on primary surfaces, never plainly in the row itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanOpView {
+    /// `plan_ops.id`; what `plan_exclude_op` takes.
+    pub id: i64,
+    /// The stable kebab-case group id (matches [`PlanGroupView::group`]).
+    pub group: String,
+    /// `"mkdir" | "move" | "rename" | "quarantine" | "rmdir-empty" | "no-op"`.
+    pub kind: String,
+    /// The reason qualifier for a `no-op` (`"manual-review"`, `"staging"`).
+    pub kind_reason: Option<String>,
+    pub source_path: String,
+    pub target_path: String,
+    /// The plain-language sentence stating what the op does and why.
+    pub rationale: String,
+    /// `"high" | "medium" | "low"`, the op's overall confidence.
+    pub confidence: String,
+    pub byte_size: i64,
+    pub validation: PlanValidation,
+    /// The stable machine code (e.g. `"snapshot-stale"`), when not `Valid`.
+    pub validation_reason: Option<String>,
+    /// A plain-language "needs you" (warning) or remediation (blocked)
+    /// sentence, never a bare machine code; `None` when `Valid`.
+    pub warning_text: Option<String>,
+    pub approval: PlanApproval,
+    /// The re-derived F-301 match on this op's own source name; `None` when
+    /// the name matched nothing (rare: pattern 8 is a universal fallback) or
+    /// the op has no meaningful source name (`mkdir`).
+    pub matched_pattern: Option<MatchedPatternView>,
+    /// The re-derived F-303 fields, each with its own confidence (AC-18,
+    /// AC-20). Empty when nothing could be read from the name.
+    pub extracted_fields: Vec<ExtractedFieldView>,
+    /// What a rename op's own before/after names removed (only ever set on
+    /// `kind == "rename"`).
+    pub stripped_noise: Option<String>,
+}
+
+/// The flat, filterable op listing (`plan_list_ops`, F-503/F-504): every
+/// non-`mkdir` row across all seven groups, capped defensively (see
+/// `crate::plan::query::MAX_OPS_RETURNED`). The group-detail pane and the
+/// filter box both read from this one list client-side; filtering is
+/// view-only and never mutates approval (AC-17).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanOpsPage {
+    pub ops: Vec<PlanOpView>,
+    /// The real total row count (may exceed `ops.len()` if `truncated`).
+    pub total: i64,
+    pub truncated: bool,
+}
+
+// ---- Phase 6 shell payloads (F-906 ruleset editor + live re-plan) ----
+
+/// One row for the F-906 ruleset editor's "load a different saved ruleset"
+/// list (`ruleset_list`): light enough to list many rulesets without sending
+/// every one's full policy body. `is_active` marks the one row `plan_generate`
+/// currently builds against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RulesetSummary {
+    pub id: i64,
+    pub name: String,
+    pub preset: crate::plan::templates::Preset,
+    pub is_active: bool,
+    pub updated_at: String,
+}
+
+/// One ruleset's full editable detail (`ruleset_get`/`ruleset_save`'s
+/// success return): identity plus the complete, validated
+/// [`crate::ruleset::Ruleset`] body the editor's preset picker and policy
+/// toggles bind to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RulesetDetail {
+    pub id: i64,
+    pub name: String,
+    pub is_active: bool,
+    pub ruleset: crate::ruleset::Ruleset,
+}
+
+/// The `ruleset_save` input (AC-32): `id: None` creates a new named ruleset;
+/// `id: Some(existing)` overwrites that row in place. Either way, saving
+/// makes the result the ACTIVE ruleset ("a saved change persists the active
+/// ruleset; the review screen regenerates from it").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RulesetSaveRequest {
+    pub id: Option<i64>,
+    pub name: String,
+    pub ruleset: crate::ruleset::Ruleset,
+}
+
+/// One F-401 preset's plain-language example (`ruleset_preset_examples`): a
+/// fixed sample book rendered under this preset, so the editor's preset
+/// picker can show what each choice actually looks like before the user
+/// picks it. `example_path` is display-only sample data (never a real book;
+/// see [`crate::plan::templates::example_path`]) - plain-language
+/// description text lives in the frontend's centralized strings module
+/// (FD-23), not here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PresetExampleView {
+    pub preset: crate::plan::templates::Preset,
+    pub example_path: String,
+}
+
+/// The live re-plan preview (`plan_preview`, AC-33): the same seven-card
+/// shape [`PlanReview::groups`] renders, but for a DRAFT ruleset that has not
+/// been saved (and never will be, if the preview is all the user wanted) -
+/// this is why there is no `plan_id` here: nothing is persisted to build it
+/// (no `plans`/`plan_ops` row is ever written for a preview; plan_ops
+/// immutability applies to real plans only, and a preview is not one).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanPreview {
+    pub scan_id: i64,
+    /// Always exactly seven, in canonical order, exactly like
+    /// [`PlanReview::groups`] (AC-10). A group newly blocked by the draft
+    /// ruleset shows up here with a non-zero `blocked_count`, never as a
+    /// silent drop (F-906 edge case).
+    pub groups: Vec<PlanGroupView>,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -336,11 +705,43 @@ mod contract {
         assert_ipc_ready::<AppError>();
         // F-803 app settings (v0.4.0 Phase 2).
         assert_ipc_ready::<AppSettings>();
+        // F-907 cover art (v0.4.0 Phase 3).
+        assert_ipc_ready::<CoverImage>();
+        // F-902 library home (v0.4.0 Phase 4).
+        assert_ipc_ready::<ReasonKind>();
+        assert_ipc_ready::<BookReason>();
+        assert_ipc_ready::<BookExample>();
+        assert_ipc_ready::<SeriesCluster>();
+        assert_ipc_ready::<GoodNews>();
+        assert_ipc_ready::<MetricUnit>();
+        assert_ipc_ready::<FolderClass>();
+        assert_ipc_ready::<ClassMetric>();
+        assert_ipc_ready::<ProblemMetric>();
+        assert_ipc_ready::<HealthMetrics>();
+        assert_ipc_ready::<LibraryOverview>();
+        // F-903 plan review surface (v0.4.0 Phase 5).
+        assert_ipc_ready::<PlanApproval>();
+        assert_ipc_ready::<PlanValidation>();
+        assert_ipc_ready::<GroupStatus>();
+        assert_ipc_ready::<PlanGroupView>();
+        assert_ipc_ready::<PlanReview>();
+        assert_ipc_ready::<MatchedPatternView>();
+        assert_ipc_ready::<ExtractedFieldView>();
+        assert_ipc_ready::<PlanOpView>();
+        assert_ipc_ready::<PlanOpsPage>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();
         assert_ipc_ready::<JobCompletedPayload>();
         assert_ipc_ready::<JobFailedPayload>();
         assert_ipc_ready::<JobProgressPayload>();
+        // F-906 ruleset editor + live re-plan (v0.4.0 Phase 6).
+        assert_ipc_ready::<crate::ruleset::Ruleset>();
+        assert_ipc_ready::<crate::plan::templates::Preset>();
+        assert_ipc_ready::<RulesetSummary>();
+        assert_ipc_ready::<RulesetDetail>();
+        assert_ipc_ready::<RulesetSaveRequest>();
+        assert_ipc_ready::<PresetExampleView>();
+        assert_ipc_ready::<PlanPreview>();
     }
 }

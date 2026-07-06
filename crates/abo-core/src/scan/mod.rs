@@ -10,6 +10,10 @@
 //!     `video` class and the `.mp4 -> video` conservative default (AC-12).
 //!   - [`persist`] - [`run_scan`] (writes one immutable snapshot: `scans` +
 //!     `entries`) and [`get_scan_entries`] (reads a snapshot back) (AC-13).
+//!   - [`cover`] - F-907 (v0.4.0) READ-ONLY cover extraction: the first embedded
+//!     picture frame of a book's audio, or a `cover.jpg` / `folder.jpg` sidecar,
+//!     served to the WebView as base64 over typed IPC (never a filesystem path,
+//!     FD-29) and cached under `app_data/covers` (never under the library, D-09).
 //!   - [`csv_import`] - [`csv_import::run_csv_import`] (F-102): an alternate
 //!     snapshot source that parses a WizTree CSV export into the same
 //!     `entries` schema, flagged `source = csv`, sharing `persist`'s insertion
@@ -19,6 +23,7 @@
 //! The engine here is Tauri-free and does no network I/O; the `src-tauri` shell
 //! wires jobs and the `job:completed` event around [`run_scan`] in Phases 5-6.
 
+pub mod cover;
 pub mod csv_import;
 pub mod exclude;
 pub mod longpath;
@@ -26,6 +31,9 @@ pub mod persist;
 pub mod typing;
 pub mod walk;
 
+pub use cover::{get_cover, read_cover, sweep_cover_cache, CoverArt};
 pub use csv_import::run_csv_import;
 pub use exclude::ExcludeSet;
-pub use persist::{get_scan_entries, run_scan, run_scan_with_job, ScanOutcome};
+pub use persist::{
+    get_scan_entries, latest_completed_scan_id, run_scan, run_scan_with_job, ScanOutcome,
+};

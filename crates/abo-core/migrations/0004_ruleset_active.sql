@@ -1,0 +1,16 @@
+-- 0004_ruleset_active.sql - v0.4.0 (seeing) Phase 6 (F-906 ruleset editor with
+-- live re-plan; AC-32, AC-33), additive over 0002_plan_and_rulesets.sql (which
+-- created the `rulesets` table). Adds the "which ruleset is currently active"
+-- marker directly on this table rather than a foreign key on the singleton
+-- `settings` row, so activating a ruleset is a plain UPDATE within this table
+-- and CRUD stays self-contained (F-801). "Apply/save semantics" per the spec:
+-- saving a ruleset in the editor makes it the active one, and `plan_generate`
+-- always builds against whichever row currently carries `is_active = 1`.
+--
+-- Exactly one row is active at a time, enforced in application code
+-- (`crate::db::rulesets::set_active_ruleset` clears every row's flag inside
+-- the same transaction before setting the new one), not a CHECK constraint
+-- (SQLite has no portable "at most one true" constraint without a partial
+-- unique index over a computed predicate, and this table stays tiny - at most
+-- a handful of named rulesets - so the transactional invariant is enough).
+ALTER TABLE rulesets ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0;

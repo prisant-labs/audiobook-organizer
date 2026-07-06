@@ -12,6 +12,8 @@
 //!
 //! v0.4.0 Phase 2 adds the F-803 settings commands (see [`settings`]).
 
+pub mod plan;
+pub mod ruleset;
 pub mod settings;
 
 use std::panic::AssertUnwindSafe;
@@ -22,7 +24,7 @@ use abo_core::db::DbOpenOutcome;
 // `AppError` is re-exported from `abo-core::ipc`, so the whole command surface
 // names one taxonomy; every `Result<_, AppError>` here is a valid tauri-specta
 // return because `AppError` derives `specta::Type` in the core.
-use abo_core::ipc::{AppError, DbStatus, EntryRow, JobStarted};
+use abo_core::ipc::{AppError, CoverImage, DbStatus, EntryRow, JobStarted, LibraryOverview};
 use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
 use abo_core::scan::walk::now_iso8601_utc;
 use abo_core::scan::ScanOutcome;
@@ -208,6 +210,69 @@ pub async fn scan_entries(
     scan_id: i64,
 ) -> Result<Vec<EntryRow>, AppError> {
     abo_core::scan::get_scan_entries(&state.pool, scan_id).await
+}
+
+/// Read one book's cover art for a snapshot entry (F-907, v0.4.0 Phase 3).
+///
+/// `scan_id` + `entry_id` name a book WITHIN a snapshot (a book folder or a loose
+/// audio file); the source paths are resolved from the snapshot's own `entries`
+/// rows, so the frontend never supplies a filesystem path and the WebView can
+/// never point cover reading at an unsanctioned location (FD-29). The engine reads
+/// the cover STRICTLY read-only (embedded art or a `cover.jpg`/`folder.jpg`
+/// sidecar) and caches the thumbnail under `app_data/covers` - outside the
+/// library, so caching never touches the user's files (D-09, AC-21).
+///
+/// Returns the [`CoverImage`] (mime + base64) so the WebView receives image data
+/// over typed IPC, never a filesystem or asset-protocol scope. `None` means the
+/// book has no cover, and the frontend renders the deterministic fallback tile
+/// (AC-23). Only a genuine database read failure surfaces as an error; an
+/// unreadable frame or absent sidecar degrades that one tile to the fallback
+/// rather than breaking the shelf.
+#[tauri::command]
+#[specta::specta]
+pub async fn cover_get(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+    entry_id: i64,
+) -> Result<Option<CoverImage>, AppError> {
+    // The cover cache lives beside the app data (%LOCALAPPDATA%\AudiobookOrganizer\
+    // covers on Windows), never under the library root.
+    let cache_dir = abo_core::paths::app_data_dir().join("covers");
+    abo_core::scan::get_cover(&state.pool, scan_id, entry_id, &cache_dir).await
+}
+
+/// Read the library home's data (F-902, v0.4.0 Phase 4): the health facts, the
+/// "Worth a look first" examples, the series clusters, and the good-news line,
+/// all computed from the most recently COMPLETED scan.
+///
+/// Returns `None` when no scan has ever completed - the honest pre-first-scan
+/// state (AC-6): the frontend shows the empty-library state and the scan
+/// affordance rather than treating an absent scan as a library of zero books.
+/// The frontend never names a `scan_id` itself; this command is how it finds
+/// "the library, right now."
+///
+/// Classifying is cheap pure logic (no I/O beyond the one snapshot read), so
+/// this command re-derives the classification and health metrics on every
+/// call rather than caching them - the same freshness guarantee AC-7 asks for
+/// (every count read at render time, never a stale cached one).
+#[tauri::command]
+#[specta::specta]
+pub async fn classify_overview(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<LibraryOverview>, AppError> {
+    let Some(scan_id) = abo_core::scan::latest_completed_scan_id(&state.pool).await? else {
+        return Ok(None);
+    };
+    let rows = abo_core::scan::get_scan_entries(&state.pool, scan_id).await?;
+    let inputs = abo_core::classify::inputs_from_snapshot(&rows);
+    let classifications = abo_core::classify::run_classify(&state.pool, &inputs).await?;
+    let metrics = abo_core::classify::health_metrics(&inputs, &classifications);
+    Ok(Some(abo_core::classify::build_overview(
+        scan_id,
+        &inputs,
+        &classifications,
+        &metrics,
+    )))
 }
 
 /// Report whether startup had to recover a corrupt database (P2).

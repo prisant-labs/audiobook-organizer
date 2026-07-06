@@ -207,6 +207,44 @@ pub async fn get_plan_ops(pool: &SqlitePool, plan_id: i64) -> Result<Vec<PlanOpR
         .collect())
 }
 
+/// Fetch one plan-operation row by its own id, or `None` if it does not exist
+/// (v0.4.0 Phase 5: the review surface's per-op exclude reads the row back
+/// after [`crate::plan::validate::set_op_approval`] to return the caller an
+/// up-to-date view without needing the owning `plan_id`).
+pub async fn get_plan_op(
+    pool: &SqlitePool,
+    plan_op_id: i64,
+) -> Result<Option<PlanOpRow>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, plan_id, seq, op_group, kind, kind_reason, source_path, target_path, \
+                rationale, rule_id, confidence, byte_size, validation_state, \
+                validation_reason, provenance_json, approval, approval_updated_at \
+         FROM plan_ops WHERE id = ?",
+    )
+    .bind(plan_op_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| PlanOpRow {
+        id: r.get("id"),
+        plan_id: r.get("plan_id"),
+        seq: r.get("seq"),
+        op_group: r.get("op_group"),
+        kind: r.get("kind"),
+        kind_reason: r.get("kind_reason"),
+        source_path: r.get("source_path"),
+        target_path: r.get("target_path"),
+        rationale: r.get("rationale"),
+        rule_id: r.get("rule_id"),
+        confidence: r.get("confidence"),
+        byte_size: r.get("byte_size"),
+        validation_state: r.get("validation_state"),
+        validation_reason: r.get("validation_reason"),
+        provenance_json: r.get("provenance_json"),
+        approval: r.get("approval"),
+        approval_updated_at: r.get("approval_updated_at"),
+    }))
+}
+
 /// List every plan header, oldest first (insertion order via id).
 pub async fn list_plans(pool: &SqlitePool) -> Result<Vec<PlanRow>, sqlx::Error> {
     let rows = sqlx::query(
@@ -236,17 +274,26 @@ pub async fn list_plans(pool: &SqlitePool) -> Result<Vec<PlanRow>, sqlx::Error> 
 /// This function does not enforce the "a blocked op cannot be approved"
 /// rule; that check belongs to the caller (Phase 5's state machine), which
 /// reads `validation_state` before deciding whether to call this at all.
-pub async fn set_approval(
-    pool: &SqlitePool,
+///
+/// Generic over the executor so a caller can run it either directly against the
+/// pool (one op) or inside a `&mut` transaction (a batch that must be atomic,
+/// e.g. `plan::validate::set_group_approval`). This is the ONLY statement that
+/// writes `plan_ops.approval`; keeping it single lets the batch wrap N of these
+/// in one transaction without a second UPDATE path to keep in step.
+pub async fn set_approval<'e, E>(
+    executor: E,
     plan_op_id: i64,
     approval: &str,
     now: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     sqlx::query("UPDATE plan_ops SET approval = ?, approval_updated_at = ? WHERE id = ?")
         .bind(approval)
         .bind(now)
         .bind(plan_op_id)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(())
 }

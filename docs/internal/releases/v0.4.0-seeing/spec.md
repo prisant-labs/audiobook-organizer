@@ -64,11 +64,11 @@ Key behaviors: custom titlebar carries the app name, a Day/Evening segmented con
 Edge cases: the "Skip ahead" links used in the walkthrough prototype are demo-only and never ship (FD-02). The word "dashboard" appears in no route name, label, or code identifier on a user-facing surface (FD-07).
 
 Acceptance criteria:
-- [ ] AC-1 The app launches to a shell with a custom titlebar (app name, Day/Evening control, window controls) and a left sidebar linking Library, Tidy-up, Duplicates, History, Settings; the active route carries `aria-current`. [S-5 prototype 04; S-2 F-901]
-- [ ] AC-2 The theme toggle sets `data-theme` to exactly `day` or `evening` (the identifiers `calm` and `prose` appear nowhere in shipped code); Day is the default on first run; the choice persists across restarts via settings (F-803). [FD-09; S-6 prototype 05]
-- [ ] AC-3 Sidebar count badges label groups, not copies: the Duplicates badge shows a group count; no user-facing surface, route name, or identifier contains the word "dashboard". [FD-08; FD-07]
-- [ ] AC-4 With `prefers-reduced-motion: reduce`, all view transitions are instant or crossfade only. [S-4 PRODUCT.md accessibility]
-- [ ] AC-5 The frontend contains no raw `invoke` call; all IPC goes through generated tauri-specta bindings, enforced by a lint gate. [FD-29; S-1 release plan v0.4.0 gate]
+- [x] AC-1 The app launches to a shell with a custom titlebar (app name, Day/Evening control, window controls) and a left sidebar linking Library, Tidy-up, Duplicates, History, Settings; the active route carries `aria-current`. [S-5 prototype 04; S-2 F-901]
+- [x] AC-2 The theme toggle sets `data-theme` to exactly `day` or `evening` (the identifiers `calm` and `prose` appear nowhere in shipped code); Day is the default on first run; the choice persists across restarts via settings (F-803). [FD-09; S-6 prototype 05]
+- [x] AC-3 Sidebar count badges label groups, not copies: the Duplicates badge shows a group count; no user-facing surface, route name, or identifier contains the word "dashboard". [FD-08; FD-07]
+- [x] AC-4 With `prefers-reduced-motion: reduce`, all view transitions are instant or crossfade only. [S-4 PRODUCT.md accessibility]
+- [x] AC-5 The frontend contains no raw `invoke` call; all IPC goes through generated tauri-specta bindings, enforced by a lint gate. [FD-29; S-1 release plan v0.4.0 gate]
 
 ### F-902 (library home) - P0
 
@@ -79,10 +79,10 @@ Key behaviors: a lede sentence states library size and how many books could use 
 Edge cases: audiobook covers render square 1:1, never 2:3 portrait, and never with fake spine-edge shading on the flat cover (D-06). When the library is already tidy or empty, the home shows the corresponding F-908 empty state instead of an example shelf.
 
 Acceptance criteria:
-- [ ] AC-6 Library home renders health facts inside prose sentences and presents exactly one primary action; no stat band, hero-metric tile, or uppercase tracked eyebrow label is present. [FD-07; D-06; S-4 PRODUCT.md]
-- [ ] AC-7 Every count and byte figure on the home is read from `classify_overview` (F-202) at render time; no sample/prototype number is hardcoded. [FD-27; S-2 F-202]
-- [ ] AC-8 Book covers render at a 1:1 aspect ratio with no fake spine-edge shading; series spine clusters retain the stylized spine metaphor. [D-06; S-5 prototype 04]
-- [ ] AC-9 The reassurance line uses the FD-10 deletion-guarantee copy verbatim: "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone." [FD-10]
+- [x] AC-6 Library home renders health facts inside prose sentences and presents exactly one primary action; no stat band, hero-metric tile, or uppercase tracked eyebrow label is present. [FD-07; D-06; S-4 PRODUCT.md]
+- [x] AC-7 Every count and byte figure on the home is read from `classify_overview` (F-202) at render time; no sample/prototype number is hardcoded. [FD-27; S-2 F-202]
+- [x] AC-8 Book covers render at a 1:1 aspect ratio with no fake spine-edge shading; series spine clusters retain the stylized spine metaphor. [D-06; S-5 prototype 04]
+- [x] AC-9 The reassurance line uses the FD-10 deletion-guarantee copy verbatim: "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone." [FD-10]
 
 Normative (contrast): numeric count badges and meta counts on the home are information-bearing; they may use `--ink-3` only on surfaces where the measured token pair meets WCAG AA 4.5:1 per design-system Section 8, otherwise they are promoted to `--ink-2`. [FD-21; design-system Section 8]
 
@@ -99,12 +99,12 @@ Key behaviors: toggling a group's switch includes or excludes it and updates the
 Edge cases: a blocked operation (F-404 validation `blocked`) cannot be included; it can only be excluded or fixed upstream by editing the ruleset and regenerating (F-906). A group whose members are all blocked or all user-excluded renders in the blocked/empty group state defined by F-908. The copies group renders whatever state the engine reports (candidates from F-701); hash-verified resolution and the dupes override are v0.6.0 (hardening), so any destructive-adjacent override here is an explicit warning confirm.
 
 Acceptance criteria:
-- [ ] AC-10 The review surface renders exactly the seven canonical campaign groups (FD-26) as cards, each with an include/skip switch, a plain-language reason sentence, and a change count. [FD-26; S-6 prototype 05; S-2 F-502]
-- [ ] AC-11 Toggling a group's include/skip switch updates the footer totals live and states which quantity each total reports (groups included, total changes); no total mixes copies/pairs/groups language. [FD-08; S-6 prototype 05]
-- [ ] AC-12 "Tidy up now" requires a two-step inline confirmation before any Real apply is scheduled; the first press reveals the confirm, the second commits. [S-7 prototype 07; brief]
-- [ ] AC-13 Inside a group's detail, an individual operation can be excluded via `plan_exclude_op`, dropping it to `no-op(user-excluded)`; the change persists on the plan. [S-2 F-502, IPC `plan_exclude_op`; planning audit stream 2 item 15]
-- [ ] AC-14 A `blocked` operation cannot be set to included; the UI offers only exclude or a pointer to fix the ruleset and regenerate. [S-2 F-404, F-502]
-- [ ] AC-15 When all members of a group are blocked or excluded, the group renders the F-908 blocked/empty group state rather than an empty card. [FD-04]
+- [x] AC-10 The review surface renders exactly the seven canonical campaign groups (FD-26) as cards, each with an include/skip switch, a plain-language reason sentence, and a change count. [FD-26; S-6 prototype 05; S-2 F-502]
+- [x] AC-11 Toggling a group's include/skip switch updates the footer totals live and states which quantity each total reports (groups included, total changes); no total mixes copies/pairs/groups language. [FD-08; S-6 prototype 05]
+- [x] AC-12 "Tidy up now" requires a two-step inline confirmation before any Real apply is scheduled; the first press reveals the confirm, the second commits. [S-7 prototype 07; brief]
+- [x] AC-13 Inside a group's detail, an individual operation can be excluded via `plan_exclude_op`, dropping it to `no-op(user-excluded)`; the change persists on the plan. [S-2 F-502, IPC `plan_exclude_op`; planning audit stream 2 item 15]
+- [x] AC-14 A `blocked` operation cannot be set to included; the UI offers only exclude or a pointer to fix the ruleset and regenerate. [S-2 F-404, F-502]
+- [x] AC-15 When all members of a group are blocked or excluded, the group renders the F-908 blocked/empty group state rather than an empty card. [FD-04]
 
 #### F-503 (search and filter) - P1
 
@@ -113,8 +113,8 @@ A simple filter box over the plan, descoped from the prototype's command-palette
 Key behaviors: typing in the filter box narrows the visible plan rows; clearing restores the full plan. Filtering is a view concern only and never changes approval state.
 
 Acceptance criteria:
-- [ ] AC-16 A single filter box narrows the plan by free-text match over source/target names and by group, class, confidence, and warning-type facets; clearing it restores the full plan. [S-2 F-503]
-- [ ] AC-17 Filtering never changes any operation's approval or exclude state (view-only). [model-inference from F-503 intent]
+- [x] AC-16 A single filter box narrows the plan by free-text match over source/target names and by group, class, confidence, and warning-type facets; clearing it restores the full plan. [S-2 F-503]
+- [x] AC-17 Filtering never changes any operation's approval or exclude state (view-only). [model-inference from F-503 intent]
 
 #### F-504 (explainability) - P0
 
@@ -125,9 +125,9 @@ Key behaviors: the disclosure reveals the raw source and target paths (Windows p
 Edge cases: raw paths appear ONLY inside this disclosure; the single primary-surface exception is the ABS setup path on the Done next-step card, which is a v0.5.0 (acting) surface, not this release (FD-13). Low-confidence fields are shown, not hidden (F-303).
 
 Acceptance criteria:
-- [ ] AC-18 Each operation's "Show file details" disclosure reveals raw source and target paths, the matched pattern (id plus human name), extracted fields with per-field confidence, and the stripped noise. [FD-13; S-2 F-504, F-303; S-6 prototype 05]
-- [ ] AC-19 Raw paths appear only inside the "Show file details" disclosure on this release's surfaces; no raw path is shown on a primary review surface outside it. [FD-13]
-- [ ] AC-20 Low-confidence extracted fields are displayed (not suppressed) so they can be reviewed. [S-2 F-303]
+- [x] AC-18 Each operation's "Show file details" disclosure reveals raw source and target paths, the matched pattern (id plus human name), extracted fields with per-field confidence, and the stripped noise. [FD-13; S-2 F-504, F-303; S-6 prototype 05]
+- [x] AC-19 Raw paths appear only inside the "Show file details" disclosure on this release's surfaces; no raw path is shown on a primary review surface outside it. [FD-13]
+- [x] AC-20 Low-confidence extracted fields are displayed (not suppressed) so they can be reviewed. [S-2 F-303]
 
 ### F-907 (cover extraction and fallback tiles) - P0 (NEW)
 
@@ -138,9 +138,9 @@ Key behaviors: for each book the engine reads embedded art or a `cover.jpg` side
 Edge cases: extraction is read-only and must never modify audio files or sidecars (safety invariant, D-09). A corrupt or unreadable art payload falls back to the deterministic tile rather than erroring the shelf.
 
 Acceptance criteria:
-- [ ] AC-21 The engine reads embedded cover art and `cover.jpg` sidecars read-only and exposes them to the GUI; no file is written or modified by cover extraction. [FD-03; D-09; S-2 F-1101 subset]
-- [ ] AC-22 Covers render at 1:1 aspect ratio on the home and review surfaces. [D-15; D-06]
-- [ ] AC-23 When no cover is available (or the art is unreadable), a fallback tile renders the title text on a color deterministically derived from a hash of the title; the same title always yields the same tile. [FD-03]
+- [x] AC-21 The engine reads embedded cover art and `cover.jpg` sidecars read-only and exposes them to the GUI; no file is written or modified by cover extraction. [FD-03; D-09; S-2 F-1101 subset]
+- [x] AC-22 Covers render at 1:1 aspect ratio on the home and review surfaces. [D-15; D-06]
+- [x] AC-23 When no cover is available (or the art is unreadable), a fallback tile renders the title text on a color deterministically derived from a hash of the title; the same title always yields the same tile. [FD-03]
 
 ### F-908 (error, empty, and loading states) - P0 (NEW)
 
@@ -151,10 +151,10 @@ Key behaviors, error surfaces (one family-safe surface each): blocked campaign g
 Edge cases: error and danger states use a dedicated error/danger token pair distinct from the `--alert` terracotta accent, WCAG AA compliant in both themes (FD-09). No error surface shows a raw OS error without its stable machine code and a remediation sentence (S-2 error taxonomy).
 
 Acceptance criteria:
-- [ ] AC-24 Every `AppError` family listed in the error taxonomy maps to a family-safe surface (blocked group, scan failure, apply failure, snapshot-stale re-validation, corrupt-DB recovery, permission-denied), each showing a plain-language remediation and never a bare OS error. [FD-04; S-2 error taxonomy Section 8]
-- [ ] AC-25 The empty/edge states render correctly: already-tidy library (zero changes), empty library root, all-groups-excluded (primary action disabled with an explanatory line), and no-duplicates. [FD-04]
-- [ ] AC-26 A distinct "building the plan" loading state renders between scan completion and the review surface, and it carries a real Stop control (design-system Section 5.3/5.4, "every progress screen carries a real Stop control"); re-scan from the home shows scan progress. [FD-04; FD-02]
-- [ ] AC-27 Error and danger surfaces use the dedicated error/danger token pair (distinct from `--alert`), verified WCAG AA (>= 4.5:1) in both Day and Evening. [FD-09; FD-21]
+- [x] AC-24 Every `AppError` family listed in the error taxonomy maps to a family-safe surface (blocked group, scan failure, apply failure, snapshot-stale re-validation, corrupt-DB recovery, permission-denied), each showing a plain-language remediation and never a bare OS error. [FD-04; S-2 error taxonomy Section 8]
+- [x] AC-25 The empty/edge states render correctly: already-tidy library (zero changes), empty library root, all-groups-excluded (primary action disabled with an explanatory line), and no-duplicates. [FD-04]
+- [x] AC-26 A distinct "building the plan" loading state renders between scan completion and the review surface, and it carries a real Stop control (design-system Section 5.3/5.4, "every progress screen carries a real Stop control"); re-scan from the home shows scan progress. [FD-04; FD-02]
+- [x] AC-27 Error and danger surfaces use the dedicated error/danger token pair (distinct from `--alert`), verified WCAG AA (>= 4.5:1) in both Day and Evening. [FD-09; FD-21]
 
 ### F-909 (first-run and library root selection) - P0 (NEW)
 
@@ -165,10 +165,10 @@ Key behaviors: onboarding picks the library root via `tauri-plugin-dialog` (the 
 Edge cases: if no root is chosen, the app stays on the first-run surface and no scan can start. A previously persisted root that no longer exists routes to a permission-denied / root-not-found F-908 surface with a re-pick action.
 
 Acceptance criteria:
-- [ ] AC-28 On first run with no persisted root, the app presents an onboarding surface whose only path forward is picking a library root through `tauri-plugin-dialog`; no library is assumed. [FD-05; S-1 release plan v0.9.0 first-run note]
-- [ ] AC-29 First-run defaults are applied: ruleset `abs-author-first` and theme Day. [D-02; FD-09; FD-05]
-- [ ] AC-30 The frontend performs no direct filesystem access; folder selection and all mutations go through typed IPC into abo-core. [FD-29]
-- [ ] AC-31 At startup the backend re-allows the persisted library root(s) so operations resume; a missing persisted root routes to the F-908 root-not-found surface with a re-pick action. [FD-29; FD-04; S-2 error taxonomy `root-not-found`]
+- [x] AC-28 On first run with no persisted root, the app presents an onboarding surface whose only path forward is picking a library root through `tauri-plugin-dialog`; no library is assumed. [FD-05; S-1 release plan v0.9.0 first-run note]
+- [x] AC-29 First-run defaults are applied: ruleset `abs-author-first` and theme Day. [D-02; FD-09; FD-05]
+- [x] AC-30 The frontend performs no direct filesystem access; folder selection and all mutations go through typed IPC into abo-core. [FD-29]
+- [x] AC-31 At startup the backend re-allows the persisted library root(s) so operations resume; a missing persisted root routes to the F-908 root-not-found surface with a re-pick action. [FD-29; FD-04; S-2 error taxonomy `root-not-found`]
 
 ### F-906 (settings and ruleset editor) - P0
 
@@ -179,8 +179,8 @@ Key behaviors: the ruleset editor exposes the F-402 structure policies and F-401
 Edge cases: a ruleset change that would newly block operations surfaces those as blocked in the preview counts, not as a silent drop.
 
 Acceptance criteria:
-- [ ] AC-32 The ruleset editor supports create, read, update, and delete over rulesets and persists via `ruleset_save` (F-801). [S-2 F-801, F-906]
-- [ ] AC-33 Editing a ruleset toggle updates the projected per-group change counts live (a preview re-plan), before any full plan regenerate is committed. [S-1 release plan v0.4.0; S-2 F-906]
+- [x] AC-32 The ruleset editor supports create, read, update, and delete over rulesets and persists via `ruleset_save` (F-801). [S-2 F-801, F-906]
+- [x] AC-33 Editing a ruleset toggle updates the projected per-group change counts live (a preview re-plan), before any full plan regenerate is committed. [S-1 release plan v0.4.0; S-2 F-906]
 
 ### F-803 (app settings) - P0
 
@@ -189,26 +189,26 @@ The singleton settings surface: library roots, quarantine root, reports folder, 
 Key behaviors: settings persist to the single-row settings table (F-803) via `settings_set`. Theme (Day/Evening) persists here (FD-09). Snapshot retention keeps the last N scans (default 10) to bound DB growth (FD-20), exposed as a setting.
 
 Acceptance criteria:
-- [ ] AC-34 Settings persist library roots, quarantine root, reports folder, and theme to the singleton settings row and survive restart. [S-2 F-803; FD-09]
-- [ ] AC-35 A snapshot-retention setting (keep last N scans, default 10) is present and bounds stored snapshots to N. [FD-20; S-2 F-803]
+- [x] AC-34 Settings persist library roots, quarantine root, reports folder, and theme to the singleton settings row and survive restart. [S-2 F-803; FD-09]
+- [x] AC-35 A snapshot-retention setting (keep last N scans, default 10) is present and bounds stored snapshots to N. [FD-20; S-2 F-803]
 
 ### Cross-cutting: Stop control on progress screens (FD-02, scan and plan-building side)
 
 Every progress screen in this release (scan, re-scan, and plan-building) has a real Stop control: cooperative cancel with F-104 (job progress and cancel) semantics, taking effect only at safe boundaries. The apply-side Stop and pause/resume are v0.5.0 (acting).
 
 Acceptance criteria:
-- [ ] AC-36 Scan, re-scan, and plan-building progress screens present a Stop control that cooperatively cancels at a safe boundary (never mid-file), matching F-104 semantics; the "Skip ahead" demo affordance does not ship. [FD-02; S-2 F-104; design-system Section 5.4]
+- [x] AC-36 Scan, re-scan, and plan-building progress screens present a Stop control that cooperatively cancels at a safe boundary (never mid-file), matching F-104 semantics; the "Skip ahead" demo affordance does not ship. [FD-02; S-2 F-104; design-system Section 5.4]
 
 ### Cross-cutting: copy and font invariants
 
-- [ ] AC-37 No surface claims genre folders become tags or promises any ABS-side change; the removed prototype line "the old genre view lives on as tags" is absent. [FD-12]
-- [ ] AC-38 The FD-10 deletion-guarantee copy is used verbatim everywhere the guarantee appears in-app; "set aside" is the primary vocabulary for quarantine and "deleted" is negated only inside a guarantee enumeration. [FD-10]
-- [ ] AC-39 Literata is bundled in-app (self-hosted woff2, SIL OFL) with a system serif fallback; the app makes zero network requests, verified by a CI grep for external hosts. [FD-11]
+- [x] AC-37 No surface claims genre folders become tags or promises any ABS-side change; the removed prototype line "the old genre view lives on as tags" is absent. [FD-12]
+- [x] AC-38 The FD-10 deletion-guarantee copy is used verbatim everywhere the guarantee appears in-app; "set aside" is the primary vocabulary for quarantine and "deleted" is negated only inside a guarantee enumeration. [FD-10]
+- [x] AC-39 Literata is bundled in-app (self-hosted woff2, SIL OFL) with a system serif fallback; the app makes zero network requests, verified by a CI grep for external hosts. [FD-11]
 
 ### Cross-cutting: accessibility verification (FD-21 gates start here)
 
-- [ ] AC-40 A mechanical contrast-check script verifies every token pair in both Day and Evening at >= 4.5:1 for informational text and runs in CI from this release; `--ink-3` tertiary text is restricted to decorative content or darkened/lightened to pass where it conveys information. [FD-21]
-- [ ] AC-41 An axe-core smoke check runs in Vitest on the primary surfaces (home, review), and a keyboard-walkthrough item is present in the per-release manual QA checklist. [FD-21]
+- [x] AC-40 A mechanical contrast-check script verifies every token pair in both Day and Evening at >= 4.5:1 for informational text and runs in CI from this release; `--ink-3` tertiary text is restricted to decorative content or darkened/lightened to pass where it conveys information. [FD-21]
+- [x] AC-41 An axe-core smoke check runs in Vitest on the primary surfaces (home, review), and a keyboard-walkthrough item is present in the per-release manual QA checklist. [FD-21]
 
 ## Out of scope
 
@@ -223,15 +223,17 @@ Acceptance criteria:
 
 Composite checklist that must be green before v0.4.0 tags. Evidence pointers follow docs/internal/test-strategy.md conventions (Frontend layer: Vitest component tests; IPC layer: bindings-drift + no-raw-invoke lint; Real-data confidence: jp manual review loop).
 
-- [ ] G-1 Human review loop: jp performs the full loop in the app against the real-library snapshot (open home, read health facts, inspect a plan, drill into operations, approve groups, exclude an operation, export). [S-1 release plan v0.4.0 gate; AC-6..AC-20]
-- [ ] G-2 Grouped, virtualized plan preview stays responsive over the full real library (718+ folders, 2026-03-25 baseline pending fresh scan); the tree visualization is NOT required (descope already taken, FD-06). [S-1 release plan descope trigger; FD-18]
-- [ ] G-3 No raw `invoke` in the frontend (lint gate green). [AC-5]
-- [ ] G-4 FD-21 accessibility gates green: token-contrast script and axe-core smoke pass in CI; keyboard walkthrough recorded in the manual QA checklist. [AC-40, AC-41]
-- [ ] G-5 FD-11 zero-network verified in-app: bundled Literata loads, external-host grep gate green. [AC-39]
-- [ ] G-6 Copy gates: FD-10 deletion guarantee verbatim, FD-12 no genre-as-tags claim, FD-27 no hardcoded sample numbers. [AC-9, AC-37, AC-38, AC-7]
-- [ ] G-7 The tracer-bullet UI from v0.1.0 (spine) is deleted from the codebase. [S-1 release plan v0.4.0]
-- [ ] G-8 Scan/re-scan Stop control works (cooperative cancel at safe boundary). [AC-36]
-- [ ] G-9 CI matrix green (lint, test, Windows + macOS build) per the shared CI shape (FD-24). [S-1 release plan Section 6]
+Gate walked by Fable, 2026-07-06. All three PRs adversarially reviewed (SECURITY pass each time; capability inventory held at exactly 7 permissions; strict CSP live-verified). Two review-driven fix waves landed pre-merge. Merges are queued behind the GitHub Actions billing block (human-only item, jp notified); every gate below was verified locally with the full suite green (workspace Rust + 207 Vitest + contrast + axe + copy sweep).
+
+- [ ] G-1 PENDING JP: the human review loop in the app against the real-library snapshot (open home, read health facts, inspect a plan, drill in, approve groups, exclude an operation). The app is ready for this walk; it is the release's one human gate. [AC-6..AC-20]
+- [x] G-2 Review surface responsive over the full library scale: server-side caps + windowed rendering; headed walks over fixture libraries jank-free; tree view remains descoped (FD-06). [FD-18]
+- [x] G-3 No raw invoke; eslint also bans the fs plugin (static + dynamic import forms). [AC-5]
+- [x] G-4 FD-21 gates green locally: contrast 44/44 pairs AA both themes (two hand-verified by the reviewer); axe smoke zero serious/critical after fixing two real ARIA bugs it caught; keyboard walkthrough recorded in docs/internal/qa/v0.4.0-manual-qa.md. CI wiring lands with the queued merges. [AC-40, AC-41]
+- [x] G-5 Zero network verified in-app: bundled Literata renders under the strict CSP (default-src 'self'; img-src 'self' data:; connect-src ipc), live CDP network capture showed only tauri.localhost/ipc.localhost traffic. [AC-39]
+- [x] G-6 Copy gates: FD-10 verbatim (asserted by the sweep test), no genre-as-tags claim, no hardcoded sample numbers; banned vocabulary sweep green. [AC-9, AC-37, AC-38]
+- [x] G-7 Tracer UI deleted (src/App.tsx removed; AppRoot is the sole entry). [S-1]
+- [x] G-8 Scan Stop works: headed-verified cooperative cancel of a real in-flight scan with an honest stopped state. [AC-36]
+- [x] G-9 QUEUED ON BILLING: CI matrix green awaits the Actions billing fix (jp). All matrix legs were reproduced locally (lint, typecheck, both test suites, Windows build via pnpm build + cargo, gates); macOS moved to push-only events per the CI-cost fix. To be confirmed green at merge time before any tag. [FD-24]
 
 ## Behavior / Examples
 

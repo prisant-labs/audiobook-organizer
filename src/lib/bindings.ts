@@ -54,6 +54,86 @@ export const commands = {
 	 */
 	scanEntries: (scanId: number) => typedError<EntryRow[], AppError>(__TAURI_INVOKE("scan_entries", { scanId })),
 	/**
+	 *  Read one book's cover art for a snapshot entry (F-907, v0.4.0 Phase 3).
+	 * 
+	 *  `scan_id` + `entry_id` name a book WITHIN a snapshot (a book folder or a loose
+	 *  audio file); the source paths are resolved from the snapshot's own `entries`
+	 *  rows, so the frontend never supplies a filesystem path and the WebView can
+	 *  never point cover reading at an unsanctioned location (FD-29). The engine reads
+	 *  the cover STRICTLY read-only (embedded art or a `cover.jpg`/`folder.jpg`
+	 *  sidecar) and caches the thumbnail under `app_data/covers` - outside the
+	 *  library, so caching never touches the user's files (D-09, AC-21).
+	 * 
+	 *  Returns the [`CoverImage`] (mime + base64) so the WebView receives image data
+	 *  over typed IPC, never a filesystem or asset-protocol scope. `None` means the
+	 *  book has no cover, and the frontend renders the deterministic fallback tile
+	 *  (AC-23). Only a genuine database read failure surfaces as an error; an
+	 *  unreadable frame or absent sidecar degrades that one tile to the fallback
+	 *  rather than breaking the shelf.
+	 */
+	coverGet: (scanId: number, entryId: number) => typedError<{
+	/**  The image mime type, sniffed from the bytes (e.g. `image/jpeg`). */
+	mime: string,
+	/**  Standard base64 (RFC 4648, `=`-padded) of the raw image bytes. */
+	base64: string,
+} | null, AppError>(__TAURI_INVOKE("cover_get", { scanId, entryId })),
+	/**
+	 *  Read the library home's data (F-902, v0.4.0 Phase 4): the health facts, the
+	 *  "Worth a look first" examples, the series clusters, and the good-news line,
+	 *  all computed from the most recently COMPLETED scan.
+	 * 
+	 *  Returns `None` when no scan has ever completed - the honest pre-first-scan
+	 *  state (AC-6): the frontend shows the empty-library state and the scan
+	 *  affordance rather than treating an absent scan as a library of zero books.
+	 *  The frontend never names a `scan_id` itself; this command is how it finds
+	 *  "the library, right now."
+	 * 
+	 *  Classifying is cheap pure logic (no I/O beyond the one snapshot read), so
+	 *  this command re-derives the classification and health metrics on every
+	 *  call rather than caching them - the same freshness guarantee AC-7 asks for
+	 *  (every count read at render time, never a stale cached one).
+	 */
+	classifyOverview: () => typedError<{
+	/**
+	 *  The snapshot this overview was computed from (`scans.id`); the frontend
+	 *  passes this alongside a [`BookExample::entry_id`] to `cover_get`.
+	 */
+	scan_id: number,
+	/**
+	 *  Every book the library holds: one per `book`-class folder (a disc-split
+	 *  book still counts once) plus one per loose-root audio file plus the
+	 *  distinct titles F-203 found inside each `multi-book-suspect` folder.
+	 */
+	total_books: number,
+	/**
+	 *  Sum of file sizes across the whole snapshot (equals
+	 *  [`HealthMetrics::total_bytes`]).
+	 */
+	total_bytes: number,
+	/**
+	 *  How many of `total_books` carry at least one "worth a look" problem
+	 *  (loose file, messy folder name, a multi-book/box-set folder, or a
+	 *  duplicate copy). `total_books - needs_tidy_books` is already tidy.
+	 */
+	needs_tidy_books: number,
+	/**
+	 *  A bounded set of example books for the "Worth a look first" shelf
+	 *  (design-system Section 4.6-4.7): curated examples, not the exhaustive
+	 *  list - the full list is the Phase 5 review surface and the exported
+	 *  report (D-16).
+	 */
+	worth_a_look: BookExample[],
+	/**  Real series containers on the shelves (design-system Section 4.8). */
+	series: SeriesCluster[],
+	good_news: GoodNews,
+	/**
+	 *  The full per-class/per-problem health report this overview was built
+	 *  from, so the sidebar's Duplicates badge (FD-08 GROUP count) and any
+	 *  other per-group count reads the same numbers the home prose does.
+	 */
+	metrics: HealthMetrics,
+} | null, AppError>(__TAURI_INVOKE("classify_overview")),
+	/**
 	 *  Report whether startup had to recover a corrupt database (P2).
 	 * 
 	 *  Reads the [`DbOpenOutcome`] captured at startup out of managed state and maps
@@ -82,6 +162,100 @@ export const commands = {
 	 *  what was stored.
 	 */
 	settingsSet: (settings: AppSettings) => typedError<AppSettings, AppError>(__TAURI_INVOKE("settings_set", { settings })),
+	/**
+	 *  Generate a REAL plan from a completed scan and return its review surface
+	 *  (F-903): build -> detect duplicates -> validate -> persist, then the
+	 *  seven group cards. `scan_id` is a completed snapshot's id (from
+	 *  `classify_overview` or `job:completed`'s scan payload). Always builds
+	 *  against the ACTIVE ruleset (F-906, [`ensure_active_ruleset`]), seeding the
+	 *  shipped default (D-02 `abs-author-first`) on a brand-new database.
+	 */
+	planGenerate: (scanId: number) => typedError<PlanReview, AppError>(__TAURI_INVOKE("plan_generate", { scanId })),
+	/**
+	 *  Re-fetch a previously generated plan's review surface (F-903), for
+	 *  example after navigating back to review without regenerating.
+	 */
+	planGet: (planId: number) => typedError<PlanReview, AppError>(__TAURI_INVOKE("plan_get", { planId })),
+	/**
+	 *  The flat, filterable op listing for one plan (F-503/F-504): every
+	 *  non-`mkdir` row, capped defensively. The group-detail pane and the filter
+	 *  box both read from this one list client-side.
+	 */
+	planListOps: (planId: number) => typedError<PlanOpsPage, AppError>(__TAURI_INVOKE("plan_list_ops", { planId })),
+	/**
+	 *  Toggle a campaign group's include/skip switch (F-502, AC-11): `included =
+	 *  true` approves every non-blocked, non-excluded op in the group (blocked
+	 *  ops are skipped, never force-approved, AC-14/AC-17); `included = false`
+	 *  rejects them (a deliberate "left out this round", reversible by toggling
+	 *  back on). Returns the refreshed [`PlanReview`] so the caller's card state
+	 *  and footer totals stay in lockstep with what was actually persisted.
+	 */
+	planSetGroupApproval: (planId: number, group: string, included: boolean) => typedError<PlanReview, AppError>(__TAURI_INVOKE("plan_set_group_approval", { planId, group, included })),
+	/**
+	 *  Exclude one operation from a plan (F-502/AC-13): drops it to
+	 *  `no-op(user-excluded)` on the approval axis (the descriptive columns are
+	 *  never rewritten, only the mutable `approval` pair). Works on a `blocked`
+	 *  op too (AC-14: exclude is always available even when include is not).
+	 *  Returns the refreshed [`PlanOpView`] so the caller can patch just that
+	 *  row without re-fetching the whole listing.
+	 */
+	planExcludeOp: (planOpId: number) => typedError<PlanOpView, AppError>(__TAURI_INVOKE("plan_exclude_op", { planOpId })),
+	/**
+	 *  The F-906 ruleset editor's live re-plan preview (AC-33): re-plan `scan_id`
+	 *  against `ruleset` (a DRAFT that may not yet be saved) and return the same
+	 *  seven-card counts shape the review screen renders - WITHOUT persisting
+	 *  anything (no `plans`/`plan_ops` row is ever written for a preview; see
+	 *  [`abo_core::plan::report::preview_plan_review`]'s doc comment). Debounced
+	 *  and cancellable on the frontend side (the same re-entrancy guard pattern
+	 *  `usePlanReview` already establishes for `plan_generate`); this command
+	 *  itself is a plain, side-effect-free read plus in-memory compute, so
+	 *  calling it repeatedly and discarding stale responses is always safe.
+	 */
+	planPreview: (scanId: number, ruleset: Ruleset) => typedError<PlanPreview, AppError>(__TAURI_INVOKE("plan_preview", { scanId, ruleset })),
+	/**
+	 *  List every saved ruleset (F-801 CRUD, AC-32), lightest-weight shape (no
+	 *  policy body) for the editor's "load a different saved ruleset" affordance.
+	 */
+	rulesetList: () => typedError<RulesetSummary[], AppError>(__TAURI_INVOKE("ruleset_list")),
+	/**  Read one ruleset's full editable detail (F-801 CRUD, AC-32). */
+	rulesetGet: (rulesetId: number) => typedError<RulesetDetail, AppError>(__TAURI_INVOKE("ruleset_get", { rulesetId })),
+	/**
+	 *  Read the active ruleset's full editable detail, seeding the shipped
+	 *  default (D-02) if nothing has ever been saved or activated yet - so the
+	 *  F-906 editor always has something to load, even before the user's first
+	 *  scan/plan (which is what previously bootstrapped the one ruleset row).
+	 */
+	rulesetGetActive: () => typedError<RulesetDetail, AppError>(__TAURI_INVOKE("ruleset_get_active")),
+	/**
+	 *  Create or update a ruleset and make it the ACTIVE one (F-801 CRUD, AC-32;
+	 *  AC-33's "apply/save" semantics). Validates the body BEFORE writing
+	 *  anything (AC-29, `Ruleset::validate`), so a malformed draft is never
+	 *  persisted half-valid.
+	 */
+	rulesetSave: (request: RulesetSaveRequest) => typedError<RulesetDetail, AppError>(__TAURI_INVOKE("ruleset_save", { request })),
+	/**
+	 *  Delete a saved ruleset (F-801 CRUD, AC-32). Refuses to delete the
+	 *  currently ACTIVE ruleset ([`AppError::RulesetInUse`]): deleting it would
+	 *  leave nothing for `plan_generate` to build against, so the caller must
+	 *  activate a different ruleset first (`ruleset_save` on another row, or a
+	 *  future dedicated activate action).
+	 */
+	rulesetDelete: (rulesetId: number) => typedError<null, AppError>(__TAURI_INVOKE("ruleset_delete", { rulesetId })),
+	/**
+	 *  How many rulesets are currently saved (used by the frontend to decide
+	 *  whether deleting the active one is even a reachable action - it never is
+	 *  with only one saved, since that one is always active).
+	 */
+	rulesetCount: () => typedError<number, AppError>(__TAURI_INVOKE("ruleset_count")),
+	/**
+	 *  The three F-401 shipped presets, each rendered against one fixed sample
+	 *  book (`abo_core::plan::templates::example_path`), for the editor's preset
+	 *  picker (F-906: "three presets with plain-language descriptions + example
+	 *  path preview rendered from each template" - the plain-language
+	 *  descriptions live in the frontend's centralized strings module, FD-23;
+	 *  this command supplies only the rendered example path per preset).
+	 */
+	rulesetPresetExamples: (seriesIndexWidth: number) => __TAURI_INVOKE<PresetExampleView[]>("ruleset_preset_examples", { seriesIndexWidth }),
 };
 
 /** Events */
@@ -110,7 +284,7 @@ export type AppError =
  */
 ({ "db-migration-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The existing database was unreadable and was reset. The corrupt file was
  *  preserved (moved aside, never deleted) at `backup_path`, and a fresh,
@@ -119,7 +293,7 @@ export type AppError =
  */
 ({ "db-corrupt-recovered": {
 	backup_path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The singleton application settings row (F-803) could not be read or
  *  written. A rare SQLite error on the settings CRUD path (`settings_get` /
@@ -132,15 +306,15 @@ export type AppError =
  */
 ({ "settings-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root does not exist. Return before any DB row is written. */
 ({ "root-not-found": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root exists but is not a directory (e.g. a file was chosen). */
 ({ "root-not-directory": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A single entry could not be read because the OS denied access. Defined
  *  and ready for v0.2.0: the v0.1.0 walk records such entries and counts
@@ -152,7 +326,7 @@ export type AppError =
  */
 ({ "permission-denied": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A junction or reparse point was recorded but deliberately not followed
  *  (D-09), so the walk cannot loop through a link back into the tree.
@@ -163,7 +337,7 @@ export type AppError =
  */
 ({ "junction-skipped": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An internal failure while writing the snapshot (a SQLite/transaction
  *  error during the scans/entries write path). The walk itself never fails
@@ -171,7 +345,7 @@ export type AppError =
  */
 ({ "scan-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A WizTree CSV import (F-102) could not fully parse. `row` is the 1-based
  *  index of the offending data row (the row after the header, preamble
@@ -188,7 +362,7 @@ export type AppError =
  */
 ({ "csv-parse": {
 	row: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A ruleset's JSON body could not be accepted: it is not valid JSON, is
  *  missing a required field, has a field of the wrong type, carries a
@@ -200,7 +374,33 @@ export type AppError =
  */
 ({ "ruleset-invalid": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  `ruleset_get`/`ruleset_delete` named a `ruleset_id` that does not exist
+ *  (never created, or already deleted).
+ */
+({ "ruleset-not-found": {
+	ruleset_id: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  `ruleset_delete` refused to delete `ruleset_id` because it is
+ *  currently the ACTIVE ruleset (the one `plan_generate` builds against).
+ *  Deleting it would leave nothing active without the caller explicitly
+ *  choosing a replacement first, so this is a policy refusal, not a
+ *  database error.
+ */
+({ "ruleset-in-use": {
+	ruleset_id: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A ruleset database operation (list/get/save/delete/activate) failed at
+ *  the SQLite layer. `detail` is developer-facing; distinct from
+ *  [`RulesetInvalid`](AppError::RulesetInvalid), which is a rejected body,
+ *  not a database failure.
+ */
+({ "ruleset-operation-failed": {
+	detail: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A source path recorded at plan time no longer exists at validation time
  *  (the snapshot went stale). The operation cannot run against a vanished
@@ -208,21 +408,21 @@ export type AppError =
  */
 ({ "snapshot-stale": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never } | 
 /**
  *  Two operations in the same plan produce the same target path (compared
  *  case-insensitively for NTFS), so one would clobber the other.
  */
 ({ "collision-in-plan": {
 	path: string,
-} }) & { "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An operation's target path already exists on disk (compared
  *  case-insensitively for NTFS) and is not being vacated by the plan.
  */
 ({ "collision-on-disk": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A target path exceeds the maximum length even with the Windows
  *  extended-length (`\\?\`) allowance. `length` is the measured character
@@ -231,7 +431,7 @@ export type AppError =
 ({ "path-too-long": {
 	path: string,
 	length: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A path component is not a legal filesystem name (an illegal character, or
  *  a trailing dot/space). This is the backstop to the F-304 name normalizer.
@@ -239,7 +439,7 @@ export type AppError =
 ({ "illegal-component": {
 	path: string,
 	component: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A path component is (or begins with) a reserved Windows device name
  *  (CON, PRN, AUX, NUL, COM1-9, LPT1-9). Backstop to F-304.
@@ -247,7 +447,7 @@ export type AppError =
 ({ "reserved-name": {
 	path: string,
 	component: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The cross-volume operations targeting `volume` sum to more bytes
  *  (`needed`) than the volume has free (`available`), so the
@@ -257,7 +457,7 @@ export type AppError =
 	volume: string,
 	needed: number,
 	available: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An operation would move a source into its own subtree (target lies inside
  *  source), which is a cycle no filesystem can perform.
@@ -265,13 +465,29 @@ export type AppError =
 ({ "cycle-detected": {
 	source_path: string,
 	target_path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A proceed/apply was requested but no operation is in the `approved`
  *  state, so there is nothing to do. Defined for the v0.5.0 apply path;
  *  v0.3.0 only plans and validates.
  */
-"nothing-approved";
+"nothing-approved" | 
+/**
+ *  A plan generation run (build -> validate -> persist) could not complete.
+ *  Wraps a database, filesystem-read, or not-found failure from
+ *  [`crate::plan::report::build_and_persist_plan`] into one family-safe
+ *  code; `detail` is developer-facing.
+ */
+({ "plan-generation-failed": {
+	detail: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A plan query or approval command named a `plan_id` that does not exist
+ *  (never generated, or its scan/ruleset predecessor is gone).
+ */
+({ "plan-not-found": {
+	plan_id: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never };
 
 /**
  *  The singleton application settings (F-803), the wire form of the one
@@ -312,6 +528,112 @@ export type AppSettings = {
 	theme: string,
 	/**  Snapshot retention: keep the last N scans (FD-20, AC-35). Default 10. */
 	scan_retention_count: number,
+};
+
+/**
+ *  One example book on the "Worth a look first" shelf (F-902, v0.4.0 Phase 4,
+ *  design-system Section 4.6). `entry_id` names a book WITHIN the snapshot that
+ *  produced the enclosing [`LibraryOverview`] (its `scan_id`), so the frontend
+ *  can pass `(scan_id, entry_id)` straight to `cover_get` for the book's cover
+ *  - the same snapshot-scoped identity [`EntryRow`] already uses.
+ * 
+ *  `title` is never absent (a book the shelf shows always parsed a title, own
+ *  or derived); `author` is [`None`] when no author could be read, which the
+ *  frontend's `Cover`/`FallbackTile` already render gracefully (AC-23).
+ */
+export type BookExample = {
+	entry_id: number,
+	title: string,
+	author: string | null,
+	reason: BookReason,
+};
+
+/**
+ *  The plain-language "why this book is worth a look" chip under one
+ *  [`BookExample`] (design-system Section 4.6 `.bookslot` / `.why`).
+ */
+export type BookReason = {
+	kind: ReasonKind,
+	/**
+	 *  Plain-language chip text, e.g. "loose file", "messy name",
+	 *  "7 books, 1 folder", "2 copies". Never a raw class/rule id (Section 6).
+	 */
+	text: string,
+};
+
+/**
+ *  A per-class metric: how many folders carry the class, and how many bytes are
+ *  attributed to it. `folder_count` is in folders; `byte_total` is in bytes
+ *  (the units are stated by the field names, FD-08).
+ */
+export type ClassMetric = {
+	class: FolderClass,
+	folder_count: number,
+	byte_total: number,
+};
+
+/**  F-402/F-302 cleanup toggles. */
+export type CleanupPolicy = {
+	/**
+	 *  Run the F-302 strip-noise pass (ripper tags, bitrate/size markers,
+	 *  rank/year prefixes, ...). Default `true`.
+	 */
+	strip_noise: boolean,
+};
+
+/**  The action applied to one class of non-audio clutter file. */
+export type ClutterAction = 
+/**  Leave the file in place with its book (no op). */
+"keep" | 
+/**  Move the file into a book subfolder. */
+"move-to-subfolder" | 
+/**  Move the file to quarantine (never delete). */
+"quarantine";
+
+/**
+ *  Per-file-class non-audio clutter policy (F-402). The fields are policy
+ *  CATEGORIES named exactly as the spec's AC-6 enumerates them, not raw
+ *  `scan::typing` file classes: the plan builder maps a concrete file to the
+ *  matching category. Note a `.txt`/description sidecar is governed by
+ *  [`StructurePolicy::sidecars`] (keep-with-book), not by this clutter policy.
+ */
+export type ClutterPolicy = {
+	/**  Ebook files (epub/pdf/mobi/...). Default [`ClutterAction::Keep`]. */
+	ebook: ClutterAction,
+	/**  Cover images. Default [`ClutterAction::Keep`]. */
+	cover: ClutterAction,
+	/**  `.nfo` release-info files. Default [`ClutterAction::Quarantine`]. */
+	nfo: ClutterAction,
+	/**  `.sfv` checksum files. Default [`ClutterAction::Quarantine`]. */
+	sfv: ClutterAction,
+	/**  Playlist files (m3u/cue). Default [`ClutterAction::Quarantine`]. */
+	playlist: ClutterAction,
+	/**  Weblink files (url/html). Default [`ClutterAction::Quarantine`]. */
+	weblink: ClutterAction,
+};
+
+/**
+ *  One book's cover art (F-907, v0.4.0 Phase 3), the wire form returned by the
+ *  `cover_get` command. `None` from that command means "no cover" and the
+ *  frontend renders the deterministic fallback tile instead (AC-23).
+ * 
+ *  The bytes cross IPC as base64 (`data:` payload), not as a filesystem path and
+ *  not as a raw byte array: base64 keeps the payload compact and, decisively,
+ *  means the WebView is handed already-read image data over typed IPC rather than
+ *  any filesystem or asset-protocol scope. The library root never becomes
+ *  WebView-readable (FD-29). The frontend composes `data:${mime};base64,${base64}`
+ *  as the `<img>` source.
+ * 
+ *  `mime` is sniffed from the bytes (e.g. `image/jpeg`, `image/png`), so a
+ *  mislabeled sidecar or corrupt frame is rejected before it reaches here (the
+ *  book then shows the fallback tile). The bytes are the raw, UNDECODED image as
+ *  stored in the file (plan T-11 defers decoding/downscaling).
+ */
+export type CoverImage = {
+	/**  The image mime type, sniffed from the bytes (e.g. `image/jpeg`). */
+	mime: string,
+	/**  Standard base64 (RFC 4648, `=`-padded) of the raw image bytes. */
+	base64: string,
 };
 
 /**
@@ -366,6 +688,107 @@ export type EntryRow = {
 	mtime: string | null,
 	/**  Depth below the scan root (root is 0). */
 	depth: number,
+};
+
+/**
+ *  One F-303 extracted field shown in the disclosure, with its own
+ *  confidence tier (AC-18, AC-20: low-confidence fields are shown, never
+ *  hidden).
+ */
+export type ExtractedFieldView = {
+	/**  `"title" | "author" | "series" | "series-index" | "year"`. */
+	field: string,
+	value: string,
+	/**  `"high" | "medium" | "low"`. */
+	confidence: string,
+};
+
+/**
+ *  The nine F-201 folder classes (the Codex taxonomy plus `docs-resources`).
+ *  [`FolderClass::as_str`] is the stable kebab-case string used in evidence,
+ *  snapshots, and (later) IPC; serialization uses the same string.
+ * 
+ *  Derives `serde`/`specta::Type` (v0.4.0 Phase 4, F-902 library home): the
+ *  health metrics this class feeds into (`HealthMetrics`, `crate::classify::metrics`)
+ *  now cross the IPC boundary inside `LibraryOverview` (`crate::ipc`), so this
+ *  type must itself be wire-ready. `#[serde(rename_all = "kebab-case")]`
+ *  reproduces exactly the strings [`FolderClass::as_str`] already returns (e.g.
+ *  `SeriesContainer` -> `"series-container"`), so the wire format is unchanged
+ *  from the hand-written `Serialize` impl this replaces.
+ */
+export type FolderClass = 
+/**  One book's audio (leaf folder of audio, or a disc-split single book). */
+"book" | 
+/**  A folder whose book-like children cohere into one author/series. */
+"series-container" | 
+/**  A collection of distinct books: a genre shelf, source pack, or list. */
+"pack-container" | 
+/**  A staging area (`_sort`, `_process`). */
+"staging" | 
+/**  Direct audio files AND child folders together. */
+"mixed" | 
+/**  Several complete books sitting as sibling audio files (F-203). */
+"multi-book-suspect" | 
+/**  No audio anywhere beneath and no non-audio content either. */
+"empty" | 
+/**  Non-audio content only (ebooks / images / release info), no audio. */
+"docs-resources" | 
+/**
+ *  Not auto-classifiable, or FD-17 non-book media (video / comics / radio
+ *  play). A first-class outcome, never an error.
+ */
+"manual-review";
+
+/**
+ *  The home's "good news" line (design-system Section 4, `.goodline`): what is
+ *  ALREADY tidy, stated in the same sentence-with-a-unit register as every
+ *  other home number (FD-08, AC-7). Every field is a plain count/byte total
+ *  read from the current snapshot's [`HealthMetrics`], never a hardcoded
+ *  sample (FD-27).
+ */
+export type GoodNews = {
+	already_tidy_books: number,
+	series_shelved: number,
+	empty_folders: number,
+	duplicate_groups: number,
+	duplicate_bytes: number,
+};
+
+/**
+ *  The review state of one campaign-group card (F-502, design-system 4.9
+ *  `.stag` tag variants). Distinct from [`PlanApproval`] (a per-OPERATION
+ *  state): this is the coarser, group-level summary the switch and status
+ *  chip render.
+ */
+export type GroupStatus = 
+/**
+ *  The switch is on: the group's non-blocked, non-excluded ops are
+ *  approved (design-system `.stag.in` "included").
+ */
+"included" | 
+/**
+ *  The switch is off (a deliberate group-level skip); the group's ops
+ *  are left out this round (design-system `.stag.out` "left out").
+ */
+"left-out" | 
+/**
+ *  The switch cannot be toggled yet: every member is blocked or
+ *  excluded (F-908 blocked/empty-group state, AC-15), the group has no
+ *  members this scan, or (the Copies group, OQ-3) the candidates are
+ *  still waiting on the byte-by-byte check (design-system `.stag.hold`
+ *  "checking copies").
+ */
+"checking";
+
+/**
+ *  The full health report: per-class metrics (all nine classes, always present,
+ *  zeroed where a class is absent), per-problem metrics, and the library total
+ *  in bytes.
+ */
+export type HealthMetrics = {
+	per_class: ClassMetric[],
+	problems: ProblemMetric[],
+	total_bytes: number,
 };
 
 /**  Typed `job:completed` event, emitted when a spawned scan finishes cleanly. */
@@ -451,6 +874,449 @@ export type JobStarted = {
 	 *  `job:completed` / `job:failed` event back to this call.
 	 */
 	job_id: number,
+};
+
+/**
+ *  The full library home payload (F-902, v0.4.0 Phase 4), returned by the
+ *  `classify_overview` command. [`None`] from that command means no scan has
+ *  ever completed - the honest pre-first-scan state (AC-6) - in which case the
+ *  frontend shows the empty-library state and the scan affordance rather than
+ *  any of this shape's zeroed fields (a real zero and "never scanned" must
+ *  never be confused).
+ * 
+ *  Every count and byte figure here is computed from the snapshot named by
+ *  `scan_id` at render time (AC-7): nothing is a literal/sample value. See
+ *  [`crate::classify::build_overview`] for the derivation.
+ */
+export type LibraryOverview = {
+	/**
+	 *  The snapshot this overview was computed from (`scans.id`); the frontend
+	 *  passes this alongside a [`BookExample::entry_id`] to `cover_get`.
+	 */
+	scan_id: number,
+	/**
+	 *  Every book the library holds: one per `book`-class folder (a disc-split
+	 *  book still counts once) plus one per loose-root audio file plus the
+	 *  distinct titles F-203 found inside each `multi-book-suspect` folder.
+	 */
+	total_books: number,
+	/**
+	 *  Sum of file sizes across the whole snapshot (equals
+	 *  [`HealthMetrics::total_bytes`]).
+	 */
+	total_bytes: number,
+	/**
+	 *  How many of `total_books` carry at least one "worth a look" problem
+	 *  (loose file, messy folder name, a multi-book/box-set folder, or a
+	 *  duplicate copy). `total_books - needs_tidy_books` is already tidy.
+	 */
+	needs_tidy_books: number,
+	/**
+	 *  A bounded set of example books for the "Worth a look first" shelf
+	 *  (design-system Section 4.6-4.7): curated examples, not the exhaustive
+	 *  list - the full list is the Phase 5 review surface and the exported
+	 *  report (D-16).
+	 */
+	worth_a_look: BookExample[],
+	/**  Real series containers on the shelves (design-system Section 4.8). */
+	series: SeriesCluster[],
+	good_news: GoodNews,
+	/**
+	 *  The full per-class/per-problem health report this overview was built
+	 *  from, so the sidebar's Duplicates badge (FD-08 GROUP count) and any
+	 *  other per-group count reads the same numbers the home prose does.
+	 */
+	metrics: HealthMetrics,
+};
+
+/**
+ *  The matched F-301 pattern shown in an operation's "Show file details"
+ *  disclosure (F-504, AC-18): the stable id plus the human-readable shape,
+ *  always shown together (FD-13's "never a bare id" rule).
+ */
+export type MatchedPatternView = {
+	/**  The stable `pattern-N` id (`crate::parse::matchers::MatcherId::as_str`). */
+	id: string,
+	/**
+	 *  The short human-readable shape (`MatcherId::handle`), e.g.
+	 *  "Title by Author (loose root file)".
+	 */
+	name: string,
+};
+
+/**
+ *  The quantity a metric counts (FD-08: no bare number without its unit).
+ * 
+ *  Derives `serde`/`specta::Type` (v0.4.0 Phase 4): `HealthMetrics` crosses the
+ *  IPC boundary inside `LibraryOverview` (`crate::ipc`), so every type it
+ *  contains must be wire-ready. `#[serde(rename_all = "lowercase")]` reproduces
+ *  exactly the strings [`MetricUnit::as_str`] already returns, so the wire
+ *  format is unchanged from the hand-written `Serialize` impl this replaces.
+ */
+export type MetricUnit = "folders" | "files" | "bytes" | 
+/**  Duplicate GROUPS (one book, N copies = one group; FD-08). */
+"groups";
+
+/**
+ *  F-401 naming: which preset renders target paths, and the series-index
+ *  zero-pad width.
+ */
+export type NamingPolicy = {
+	/**  The shipped preset (default [`Preset::AbsAuthorFirst`], D-02). */
+	preset: Preset,
+	/**
+	 *  `{SeriesIndex}` zero-pad width (default [`DEFAULT_SERIES_INDEX_WIDTH`]);
+	 *  must be at least 1.
+	 */
+	series_index_width: number,
+};
+
+/**
+ *  Where a pack/collection shell goes after its books are fully extracted
+ *  (FD-01). The decision-gate default is [`PackShellDestination::Quarantine`].
+ */
+export type PackShellDestination = 
+/**  Move the emptied shell to quarantine (never delete). The FD-01 default. */
+"quarantine" | 
+/**  Leave the emptied shell exactly where it is (no op emitted for it). */
+"leave-in-place";
+
+/**
+ *  F-405 approval state (`plan_ops.approval`), the wire form of
+ *  [`crate::plan::validate::ApprovalState`].
+ */
+export type PlanApproval = "pending" | "approved" | "rejected" | "excluded";
+
+/**
+ *  One campaign-group card (F-502, FD-26). Exactly seven of these render, in
+ *  [`crate::plan::builder::CampaignGroup::ALL`] order, whatever the plan
+ *  holds (a group with no ops still renders its card, `op_count` 0, AC-10).
+ */
+export type PlanGroupView = {
+	/**
+	 *  The stable kebab-case group id (`crate::plan::builder::CampaignGroup::slug`),
+	 *  e.g. `"loose-books"`; what `plan_set_group_approval` takes back.
+	 */
+	group: string,
+	/**  The FD-26 canonical label, e.g. `"loose books"`. */
+	label: string,
+	/**
+	 *  The card's plain-language headline with the real count folded in,
+	 *  e.g. "Give 238 loose books their own folders".
+	 */
+	headline: string,
+	/**  The plain-language "why" paragraph under the headline. */
+	reason: string,
+	/**
+	 *  The user-facing CHANGE count (FD-08 unit: moves/renames/set-asides/
+	 *  removals; for the Copies group, duplicate GROUPS).
+	 */
+	op_count: number,
+	/**
+	 *  How many of the group's changes would ACTUALLY run: `op_count` minus the
+	 *  blocked and individually excluded ops. This is what the footer's
+	 *  "M changes" total sums over an included group, so a group holding
+	 *  blocked/excluded ops never inflates the count of what a tidy-up would do.
+	 */
+	actionable_count: number,
+	/**  Total bytes the group's changes move/set aside. */
+	byte_size: number,
+	status: GroupStatus,
+	/**  How many of the group's ops carry a `warning` verdict. */
+	warning_count: number,
+	/**  How many of the group's ops carry a `blocked` verdict. */
+	blocked_count: number,
+};
+
+/**
+ *  One plan operation for the group-detail pane, the F-503 filter, and the
+ *  F-504 disclosure. `source_path`/`target_path` are raw Windows paths;
+ *  per FD-13 they must render ONLY inside the "Show file details"
+ *  disclosure on primary surfaces, never plainly in the row itself.
+ */
+export type PlanOpView = {
+	/**  `plan_ops.id`; what `plan_exclude_op` takes. */
+	id: number,
+	/**  The stable kebab-case group id (matches [`PlanGroupView::group`]). */
+	group: string,
+	/**  `"mkdir" | "move" | "rename" | "quarantine" | "rmdir-empty" | "no-op"`. */
+	kind: string,
+	/**  The reason qualifier for a `no-op` (`"manual-review"`, `"staging"`). */
+	kind_reason: string | null,
+	source_path: string,
+	target_path: string,
+	/**  The plain-language sentence stating what the op does and why. */
+	rationale: string,
+	/**  `"high" | "medium" | "low"`, the op's overall confidence. */
+	confidence: string,
+	byte_size: number,
+	validation: PlanValidation,
+	/**  The stable machine code (e.g. `"snapshot-stale"`), when not `Valid`. */
+	validation_reason: string | null,
+	/**
+	 *  A plain-language "needs you" (warning) or remediation (blocked)
+	 *  sentence, never a bare machine code; `None` when `Valid`.
+	 */
+	warning_text: string | null,
+	approval: PlanApproval,
+	/**
+	 *  The re-derived F-301 match on this op's own source name; `None` when
+	 *  the name matched nothing (rare: pattern 8 is a universal fallback) or
+	 *  the op has no meaningful source name (`mkdir`).
+	 */
+	matched_pattern: MatchedPatternView | null,
+	/**
+	 *  The re-derived F-303 fields, each with its own confidence (AC-18,
+	 *  AC-20). Empty when nothing could be read from the name.
+	 */
+	extracted_fields: ExtractedFieldView[],
+	/**
+	 *  What a rename op's own before/after names removed (only ever set on
+	 *  `kind == "rename"`).
+	 */
+	stripped_noise: string | null,
+};
+
+/**
+ *  The flat, filterable op listing (`plan_list_ops`, F-503/F-504): every
+ *  non-`mkdir` row across all seven groups, capped defensively (see
+ *  `crate::plan::query::MAX_OPS_RETURNED`). The group-detail pane and the
+ *  filter box both read from this one list client-side; filtering is
+ *  view-only and never mutates approval (AC-17).
+ */
+export type PlanOpsPage = {
+	ops: PlanOpView[],
+	/**  The real total row count (may exceed `ops.len()` if `truncated`). */
+	total: number,
+	truncated: boolean,
+};
+
+/**
+ *  The live re-plan preview (`plan_preview`, AC-33): the same seven-card
+ *  shape [`PlanReview::groups`] renders, but for a DRAFT ruleset that has not
+ *  been saved (and never will be, if the preview is all the user wanted) -
+ *  this is why there is no `plan_id` here: nothing is persisted to build it
+ *  (no `plans`/`plan_ops` row is ever written for a preview; plan_ops
+ *  immutability applies to real plans only, and a preview is not one).
+ */
+export type PlanPreview = {
+	scan_id: number,
+	/**
+	 *  Always exactly seven, in canonical order, exactly like
+	 *  [`PlanReview::groups`] (AC-10). A group newly blocked by the draft
+	 *  ruleset shows up here with a non-zero `blocked_count`, never as a
+	 *  silent drop (F-906 edge case).
+	 */
+	groups: PlanGroupView[],
+};
+
+/**
+ *  The full review-surface payload (`plan_generate`/`plan_get`): the seven
+ *  group cards plus plan identity. Deliberately does NOT carry the op
+ *  listing (that is [`PlanOpsPage`] via `plan_list_ops`) - the two are
+ *  fetched separately so toggling a group's switch (which only changes
+ *  aggregate counts) never re-sends the whole op list.
+ */
+export type PlanReview = {
+	plan_id: number,
+	scan_id: number,
+	/**  Always exactly seven, in canonical order (AC-10). */
+	groups: PlanGroupView[],
+};
+
+/**
+ *  F-404 per-operation validation verdict, the wire form of
+ *  [`crate::plan::validate::ValidationState`].
+ */
+export type PlanValidation = "valid" | "warning" | "blocked";
+
+/**
+ *  The preferred canonical audio format kept when a book holds parallel
+ *  formats (F-205's `0 M4B` case). Default [`PreferredFormat::M4b`]; the
+ *  non-preferred copy is quarantined (the never-delete-audio invariant), never
+ *  silently deleted.
+ */
+export type PreferredFormat = 
+/**  Keep the `.m4b` single-file copy; quarantine the loser. The default. */
+"m4b" | 
+/**  Keep the `.mp3` chaptered copy; quarantine the loser. */
+"mp3";
+
+/**
+ *  One of the three shipped F-401 presets. [`Preset::AbsAuthorFirst`] is the
+ *  default (D-02, closing the strategy brief's open question 1).
+ * 
+ *  Serializes as its spec-native kebab-case name (`abs-author-first`,
+ *  `title-first`, `hybrid-genre`) so an F-801 ruleset body (see
+ *  [`crate::ruleset`]) reads exactly as the spec's F-401 preset strings.
+ * 
+ *  `specta::Type` (v0.4.0 Phase 6, F-906): this crosses the tauri-specta IPC
+ *  seam as part of [`crate::ruleset::NamingPolicy`], for the ruleset editor's
+ *  preset picker (`ruleset_get`/`ruleset_save`) and the example-path preview
+ *  (`ruleset_preset_examples`, see [`example_path`]).
+ */
+export type Preset = 
+/**  `{Author}/{Series}/Book {SeriesIndex} - {Year} - {Title}/` (default). */
+"abs-author-first" | 
+/**
+ *  `{Title} - {Author} ({Year})/` - a single flat per-book folder,
+ *  independent of series membership.
+ */
+"title-first" | 
+/**
+ *  Genre kept as a top-level shelf, ABS-native below: the same shape as
+ *  [`Preset::AbsAuthorFirst`] with an optional leading `{Genre}/`
+ *  segment (see the module doc's "Genre is not a parsed field" section
+ *  for what happens when no genre value is supplied).
+ */
+"hybrid-genre";
+
+/**
+ *  One F-401 preset's plain-language example (`ruleset_preset_examples`): a
+ *  fixed sample book rendered under this preset, so the editor's preset
+ *  picker can show what each choice actually looks like before the user
+ *  picks it. `example_path` is display-only sample data (never a real book;
+ *  see [`crate::plan::templates::example_path`]) - plain-language
+ *  description text lives in the frontend's centralized strings module
+ *  (FD-23), not here.
+ */
+export type PresetExampleView = {
+	preset: Preset,
+	example_path: string,
+};
+
+/**
+ *  A per-problem metric, carrying its own explicit unit (FD-08). `count` is in
+ *  the stated `unit`; `byte_total` is always bytes (0 where a size is not
+ *  meaningful for the problem, e.g. deep nesting).
+ */
+export type ProblemMetric = {
+	/**
+	 *  Stable kebab-case problem id (e.g. `"loose-root-books"`). `String` (not
+	 *  `&'static str`) so this struct can derive `Deserialize` for the IPC
+	 *  contract test (v0.4.0 Phase 4): every value this crate ever constructs
+	 *  is still one of the fixed string-literal ids below.
+	 */
+	problem: string,
+	unit: MetricUnit,
+	count: number,
+	byte_total: number,
+};
+
+/**
+ *  Which register a [`BookReason`] chip reads in (design-system Section 4.6):
+ *  a soft, tidy-adjacent note (`warn`, e.g. "loose file", "messy name") versus
+ *  a structural flag that needs a decision (`alert`, e.g. "7 books, 1 folder",
+ *  "2 copies"). Icon-plus-label always accompanies the kind; color is never
+ *  the only signal (Section 8 accessibility).
+ */
+export type ReasonKind = "warn" | "alert";
+
+/**
+ *  A complete, validated ruleset: the F-401 naming choice plus the F-402
+ *  structure and cleanup policies, versioned so `abo-core` and any future CLI
+ *  share one shape (F-801).
+ * 
+ *  Serialization is strict and complete: every field is written, and on read
+ *  every field is required (a body missing any section or field is rejected -
+ *  see [`parse_and_validate`]). This keeps a persisted body unambiguous and
+ *  makes AC-29 rejection behavior sharp; the writer is always
+ *  [`Ruleset::to_body_json`], so a round-trip is lossless.
+ */
+export type Ruleset = {
+	/**  Schema version of this body; must equal [`RULESET_SCHEMA_VERSION`]. */
+	schema_version: number,
+	/**  F-401 naming template choice. */
+	naming: NamingPolicy,
+	/**  F-402 structure policies. */
+	structure: StructurePolicy,
+	/**  F-402/F-302 cleanup toggles. */
+	cleanup: CleanupPolicy,
+};
+
+/**
+ *  One ruleset's full editable detail (`ruleset_get`/`ruleset_save`'s
+ *  success return): identity plus the complete, validated
+ *  [`crate::ruleset::Ruleset`] body the editor's preset picker and policy
+ *  toggles bind to.
+ */
+export type RulesetDetail = {
+	id: number,
+	name: string,
+	is_active: boolean,
+	ruleset: Ruleset,
+};
+
+/**
+ *  The `ruleset_save` input (AC-32): `id: None` creates a new named ruleset;
+ *  `id: Some(existing)` overwrites that row in place. Either way, saving
+ *  makes the result the ACTIVE ruleset ("a saved change persists the active
+ *  ruleset; the review screen regenerates from it").
+ */
+export type RulesetSaveRequest = {
+	id: number | null,
+	name: string,
+	ruleset: Ruleset,
+};
+
+/**
+ *  One row for the F-906 ruleset editor's "load a different saved ruleset"
+ *  list (`ruleset_list`): light enough to list many rulesets without sending
+ *  every one's full policy body. `is_active` marks the one row `plan_generate`
+ *  currently builds against.
+ */
+export type RulesetSummary = {
+	id: number,
+	name: string,
+	preset: Preset,
+	is_active: boolean,
+	updated_at: string,
+};
+
+/**
+ *  One series cluster on the "Series on your shelves" shelf (design-system
+ *  Section 4.8). `name` is the series name (falling back to the container
+ *  folder's own name when no series field parsed, so a real series-container
+ *  never disappears from the shelf for want of a label); `book_count` is the
+ *  number of book-like children the classifier folded into this container
+ *  (`Evidence::book_children`).
+ */
+export type SeriesCluster = {
+	name: string,
+	author: string | null,
+	book_count: number,
+};
+
+/**
+ *  What happens to a book's sidecars (ebook / cover / description) relative to
+ *  the book when it moves. Default [`SidecarPolicy::KeepWithBook`].
+ */
+export type SidecarPolicy = 
+/**  Sidecars travel with their book into the canonical target folder. */
+"keep-with-book" | 
+/**  Sidecars are quarantined instead of moved with the book. */
+"quarantine";
+
+/**  F-402 structure policies. */
+export type StructurePolicy = {
+	/**  Enforce one book per folder (split multi-book folders). Default `true`. */
+	one_book_per_folder: boolean,
+	/**
+	 *  Where a fully-extracted pack shell goes (FD-01). Default
+	 *  [`PackShellDestination::Quarantine`].
+	 */
+	pack_shell: PackShellDestination,
+	/**  How sidecars are handled. Default [`SidecarPolicy::KeepWithBook`]. */
+	sidecars: SidecarPolicy,
+	/**  Per-class non-audio clutter policy. */
+	clutter: ClutterPolicy,
+	/**
+	 *  Preferred canonical format on parallel formats. Default
+	 *  [`PreferredFormat::M4b`].
+	 */
+	preferred_format: PreferredFormat,
+	/**  Remove verified-empty folders. Default `true`. */
+	empty_folder_removal: boolean,
 };
 
 /* Tauri Specta runtime */

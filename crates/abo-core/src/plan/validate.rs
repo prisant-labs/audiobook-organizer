@@ -211,7 +211,14 @@ impl OpVerdict {
 /// trait, so tests inject scarcity ([`FixedFreeSpace`]) and production reads the
 /// real disk ([`RealFreeSpace`]). `None` means "unknown": validation then marks
 /// a cross-volume move but never falsely blocks it for lack of a measurement.
-pub trait FreeSpace {
+///
+/// `Send + Sync` (v0.4.0 Phase 5): [`ValidationEnv`] borrows a `&dyn FreeSpace`,
+/// and [`crate::plan::report::build_and_persist_plan`] (which builds one) is
+/// awaited from a `#[tauri::command]` async fn (`plan_generate`), which
+/// requires its whole future to be `Send`. Both implementors below
+/// ([`RealFreeSpace`], a unit struct, and [`FixedFreeSpace`], a plain
+/// `HashMap`) already satisfy this trivially.
+pub trait FreeSpace: Send + Sync {
     /// Available bytes on `volume` (e.g. `"E:"`), or `None` if unknown.
     fn available_bytes(&self, volume: &str) -> Option<u64>;
 }
@@ -802,6 +809,13 @@ pub async fn set_op_approval(
 /// they cannot be approved), and every non-blocked op in the group is approved;
 /// the count of ops actually transitioned is returned. Reject / Exclude / Reset
 /// apply to every op in the group unconditionally.
+///
+/// The whole batch runs in ONE transaction: either every transition in the
+/// group commits or none does. A group is the unit of user approval (F-405), so
+/// a mid-batch failure (a disk or lock error after some rows were written) must
+/// never leave the group half-approved - the user would see an incoherent
+/// mixture no toggle produced. On any error the transaction is dropped without
+/// commit, rolling back every write made so far.
 pub async fn set_group_approval(
     pool: &sqlx::SqlitePool,
     plan_id: i64,
@@ -810,6 +824,7 @@ pub async fn set_group_approval(
     now: &str,
 ) -> Result<usize, ApprovalError> {
     let ops = crate::db::plans::get_plan_ops(pool, plan_id).await?;
+    let mut tx = pool.begin().await?;
     let mut applied = 0usize;
     for op in ops {
         if group_for_op_group(&op.op_group) != Some(group) {
@@ -822,9 +837,12 @@ pub async fn set_group_approval(
             continue;
         }
         let next = next_approval(validation, action)?;
-        crate::db::plans::set_approval(pool, op.id, next.as_str(), now).await?;
+        // Same UPDATE as the single-op path, but bound to this transaction, so
+        // the group commits all-or-nothing.
+        crate::db::plans::set_approval(&mut *tx, op.id, next.as_str(), now).await?;
         applied += 1;
     }
+    tx.commit().await?;
     Ok(applied)
 }
 
@@ -1483,5 +1501,69 @@ mod tests {
             .unwrap();
         assert_eq!(valid_op.approval, "approved");
         assert_eq!(blocked_op.approval, "pending", "blocked op stays pending");
+    }
+
+    /// FIX 3: the group batch is atomic. An induced write failure partway
+    /// through must roll back every transition, leaving ZERO approvals changed
+    /// (never a half-approved group). The failure is induced by holding
+    /// SQLite's write lock on a competing connection while the batch tries to
+    /// write, with a zero busy-timeout so the batched write fails at once
+    /// instead of waiting out the default timeout.
+    #[tokio::test]
+    async fn set_group_approval_rolls_back_on_a_mid_batch_failure() {
+        use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+        use sqlx::Executor;
+
+        let (dir, seed_pool, plan_id) = seed_plan_with_verdicts().await;
+
+        // A second pool on the SAME database file whose writes fail immediately
+        // (busy_timeout 0) rather than blocking for the production 5s.
+        let db_path = dir.path().join("abo.db");
+        let options = SqliteConnectOptions::new()
+            .filename(&db_path)
+            .journal_mode(SqliteJournalMode::Wal)
+            .busy_timeout(std::time::Duration::from_millis(0))
+            .foreign_keys(true);
+        let fast_fail_pool = SqlitePoolOptions::new()
+            .max_connections(3)
+            .connect_with(options)
+            .await
+            .unwrap();
+
+        // Hold the write lock so the batch can never commit. WAL still lets the
+        // batch's initial READ of the ops succeed; only its writes are blocked.
+        let mut blocker = fast_fail_pool.acquire().await.unwrap();
+        (&mut *blocker).execute("BEGIN IMMEDIATE;").await.unwrap();
+
+        // Reject applies to EVERY op in the group (both the valid and the
+        // blocked one), so the batch attempts multiple writes, all inside the
+        // one transaction. With the lock held, the batch fails.
+        let result = set_group_approval(
+            &fast_fail_pool,
+            plan_id,
+            CampaignGroup::LooseBooks,
+            ApprovalAction::Reject,
+            "2026-07-04T03:00:00Z",
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "the batch must fail while the write lock is held"
+        );
+
+        // Release the lock and confirm NOT ONE approval changed: the whole
+        // transaction rolled back, no partial commit.
+        (&mut *blocker).execute("ROLLBACK;").await.unwrap();
+        drop(blocker);
+
+        let after = crate::db::plans::get_plan_ops(&seed_pool, plan_id)
+            .await
+            .unwrap();
+        assert!(
+            after.iter().all(|o| o.approval == "pending"),
+            "an induced mid-batch failure must leave zero approvals changed"
+        );
+
+        fast_fail_pool.close().await;
     }
 }

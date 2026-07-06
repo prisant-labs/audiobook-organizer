@@ -103,7 +103,14 @@ pub const DEFAULT_SERIES_INDEX_WIDTH: usize = 1;
 /// Serializes as its spec-native kebab-case name (`abs-author-first`,
 /// `title-first`, `hybrid-genre`) so an F-801 ruleset body (see
 /// [`crate::ruleset`]) reads exactly as the spec's F-401 preset strings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+///
+/// `specta::Type` (v0.4.0 Phase 6, F-906): this crosses the tauri-specta IPC
+/// seam as part of [`crate::ruleset::NamingPolicy`], for the ruleset editor's
+/// preset picker (`ruleset_get`/`ruleset_save`) and the example-path preview
+/// (`ruleset_preset_examples`, see [`example_path`]).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Preset {
     /// `{Author}/{Series}/Book {SeriesIndex} - {Year} - {Title}/` (default).
@@ -117,6 +124,45 @@ pub enum Preset {
     /// segment (see the module doc's "Genre is not a parsed field" section
     /// for what happens when no genre value is supplied).
     HybridGenre,
+}
+
+impl Preset {
+    /// All three shipped presets, in the order the F-906 ruleset editor's
+    /// preset picker lists them.
+    pub const ALL: [Preset; 3] = [
+        Preset::AbsAuthorFirst,
+        Preset::TitleFirst,
+        Preset::HybridGenre,
+    ];
+}
+
+/// A fixed sample book used ONLY to preview what one [`Preset`] would render
+/// (the F-906 preset picker's "example path preview"). Never real library
+/// data - a display-only illustration, not a plan input.
+const EXAMPLE_FIELDS: TemplateFields<'static> = TemplateFields {
+    author: Some("Brandon Sanderson"),
+    title: Some("The Way of Kings"),
+    series: Some("The Stormlight Archive"),
+    series_index: Some("1"),
+    year: Some(2010),
+    narrator: None,
+    subtitle: None,
+    genre: Some("Fantasy"),
+};
+
+/// Render the fixed [`EXAMPLE_FIELDS`] sample book under `preset`, joined with
+/// a Windows-style backslash (this product is Windows-first), for the F-906
+/// preset picker's example path preview. Always
+/// [`RenderOutcome::Rendered`] for the shipped sample (author/title/series/
+/// series-index are all present), so [`RenderOutcome::ManualReview`] is
+/// unreachable here - proven by a test below.
+pub fn example_path(preset: Preset, series_index_width: usize) -> String {
+    match render_path(preset, &EXAMPLE_FIELDS, series_index_width) {
+        RenderOutcome::Rendered(segments) => segments.join("\\"),
+        RenderOutcome::ManualReview(reason) => {
+            unreachable!("the fixed F-906 example book always renders: {reason:?}")
+        }
+    }
 }
 
 /// The template variables one book can supply, borrowed rather than owned
@@ -838,5 +884,38 @@ mod tests {
         assert_eq!(view.narrator, Some("Robin Miles"));
         assert_eq!(view.subtitle, None);
         assert_eq!(view.genre, None);
+    }
+
+    // ---- F-906 (v0.4.0 Phase 6): the preset picker's example path. -------
+
+    /// Every shipped preset renders the fixed example book (never panics via
+    /// the `unreachable!` ManualReview arm) and produces a plausible-looking
+    /// path with the sample title in it.
+    #[test]
+    fn example_path_renders_for_every_preset() {
+        for preset in Preset::ALL {
+            let path = example_path(preset, 1);
+            assert!(path.contains("The Way of Kings"), "{preset:?}: {path}");
+        }
+    }
+
+    /// `AbsAuthorFirst`'s example path carries the author-first shape, with
+    /// the series-index width applied.
+    #[test]
+    fn example_path_abs_author_first_shape() {
+        let path = example_path(Preset::AbsAuthorFirst, 2);
+        assert_eq!(
+            path,
+            r"Brandon Sanderson\The Stormlight Archive\Book 01 - 2010 - The Way of Kings"
+        );
+    }
+
+    /// `Preset::ALL` lists exactly the three shipped presets.
+    #[test]
+    fn preset_all_lists_exactly_three() {
+        assert_eq!(Preset::ALL.len(), 3);
+        assert_eq!(Preset::ALL[0], Preset::AbsAuthorFirst);
+        assert_eq!(Preset::ALL[1], Preset::TitleFirst);
+        assert_eq!(Preset::ALL[2], Preset::HybridGenre);
     }
 }

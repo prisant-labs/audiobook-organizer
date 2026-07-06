@@ -4,11 +4,16 @@ import { pickLibraryFolder } from "@/lib/dialog";
 import { DEFAULT_THEME, isTheme, type Theme } from "@/lib/theme";
 import type { AppSettings } from "@/lib/settings";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
+import { RulesetEditor } from "@/components/settings/RulesetEditor";
 
 export interface SettingsProps {
   settings: AppSettings;
   // Persist a full replacement settings row (optimistic; see useAppSettings).
   onUpdate: (next: AppSettings) => Promise<void>;
+  // The most recently completed scan's id, threaded to the ruleset editor's
+  // live re-plan preview (F-906, AC-33); `null` before any scan has ever
+  // completed (see Review.tsx's identical prop for the same reasoning).
+  scanId: number | null;
 }
 
 // Settings surface (F-803 + F-909 re-selection, AC-34/AC-35). Calm maintenance
@@ -17,7 +22,7 @@ export interface SettingsProps {
 // through the same path as the titlebar toggle (one source of truth: onUpdate).
 // Plain-language register, "set aside" for the quarantine root (FD-31); no
 // engine jargon (design-system Sections 4-6).
-export function Settings({ settings, onUpdate }: SettingsProps) {
+export function Settings({ settings, onUpdate, scanId }: SettingsProps) {
   const s = STRINGS.settings;
   const [note, setNote] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const theme: Theme = isTheme(settings.theme) ? settings.theme : DEFAULT_THEME;
@@ -102,6 +107,9 @@ export function Settings({ settings, onUpdate }: SettingsProps) {
           value={settings.scan_retention_count}
           onCommit={(n) => void apply({ ...settings, scan_retention_count: n })}
         />
+
+        {/* Ruleset editor (F-906, AC-32/AC-33): naming style + safety toggles + live re-plan counts. */}
+        <RulesetEditor scanId={scanId} />
       </div>
 
       <p

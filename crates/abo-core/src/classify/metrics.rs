@@ -51,7 +51,14 @@ use crate::parse::strip::{strip, StripOptions};
 use crate::scan::typing::FileClass;
 
 /// The quantity a metric counts (FD-08: no bare number without its unit).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Derives `serde`/`specta::Type` (v0.4.0 Phase 4): `HealthMetrics` crosses the
+/// IPC boundary inside `LibraryOverview` (`crate::ipc`), so every type it
+/// contains must be wire-ready. `#[serde(rename_all = "lowercase")]` reproduces
+/// exactly the strings [`MetricUnit::as_str`] already returns, so the wire
+/// format is unchanged from the hand-written `Serialize` impl this replaces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "lowercase")]
 pub enum MetricUnit {
     Folders,
     Files,
@@ -71,16 +78,10 @@ impl MetricUnit {
     }
 }
 
-impl serde::Serialize for MetricUnit {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(self.as_str())
-    }
-}
-
 /// A per-class metric: how many folders carry the class, and how many bytes are
 /// attributed to it. `folder_count` is in folders; `byte_total` is in bytes
 /// (the units are stated by the field names, FD-08).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ClassMetric {
     pub class: FolderClass,
     pub folder_count: u64,
@@ -90,9 +91,13 @@ pub struct ClassMetric {
 /// A per-problem metric, carrying its own explicit unit (FD-08). `count` is in
 /// the stated `unit`; `byte_total` is always bytes (0 where a size is not
 /// meaningful for the problem, e.g. deep nesting).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct ProblemMetric {
-    pub problem: &'static str,
+    /// Stable kebab-case problem id (e.g. `"loose-root-books"`). `String` (not
+    /// `&'static str`) so this struct can derive `Deserialize` for the IPC
+    /// contract test (v0.4.0 Phase 4): every value this crate ever constructs
+    /// is still one of the fixed string-literal ids below.
+    pub problem: String,
     pub unit: MetricUnit,
     pub count: u64,
     pub byte_total: u64,
@@ -101,7 +106,7 @@ pub struct ProblemMetric {
 /// The full health report: per-class metrics (all nine classes, always present,
 /// zeroed where a class is absent), per-problem metrics, and the library total
 /// in bytes.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, specta::Type)]
 pub struct HealthMetrics {
     pub per_class: Vec<ClassMetric>,
     pub problems: Vec<ProblemMetric>,
@@ -265,31 +270,31 @@ pub fn health_metrics(
 
     let problems = vec![
         ProblemMetric {
-            problem: "loose-root-books",
+            problem: "loose-root-books".to_string(),
             unit: MetricUnit::Files,
             count: loose_count,
             byte_total: loose_bytes,
         },
         ProblemMetric {
-            problem: "noisy-names",
+            problem: "noisy-names".to_string(),
             unit: MetricUnit::Folders,
             count: noisy_count,
             byte_total: 0,
         },
         ProblemMetric {
-            problem: "deep-nesting",
+            problem: "deep-nesting".to_string(),
             unit: MetricUnit::Folders,
             count: deep_count,
             byte_total: 0,
         },
         ProblemMetric {
-            problem: "duplicate-candidate-groups",
+            problem: "duplicate-candidate-groups".to_string(),
             unit: MetricUnit::Groups,
             count: dup_groups,
             byte_total: dup_bytes,
         },
         ProblemMetric {
-            problem: "empty-folders",
+            problem: "empty-folders".to_string(),
             unit: MetricUnit::Folders,
             count: empty_count,
             byte_total: 0,
@@ -306,7 +311,11 @@ pub fn health_metrics(
 /// All-noise strip options: every trailing/leading noise pass on, so any name
 /// that changes is "noisy". `underscores_to_spaces` is off (it is a formatting
 /// normalization, not a noise marker, and would flag every underscored name).
-fn noise_options() -> StripOptions {
+///
+/// `pub(crate)` so [`crate::classify::overview`] can flag the SAME folders as
+/// noisy when building the "messy name" reason chip (F-902 library home,
+/// v0.4.0 Phase 4) - one noise definition, not two.
+pub(crate) fn noise_options() -> StripOptions {
     StripOptions {
         bracket_tags: true,
         release_group_suffix: true,
@@ -319,7 +328,7 @@ fn noise_options() -> StripOptions {
 }
 
 /// Whether `name` carries strippable noise (its stripped form differs).
-fn has_noise(name: &str) -> bool {
+pub(crate) fn has_noise(name: &str) -> bool {
     strip(name, noise_options()).text.trim() != name.trim()
 }
 
@@ -327,6 +336,22 @@ fn has_noise(name: &str) -> bool {
 mod tests {
     use super::*;
     use crate::classify::classify;
+
+    /// `MetricUnit`'s derived `serde` wire format must reproduce
+    /// [`MetricUnit::as_str`] exactly (the hand-written `Serialize` impl this
+    /// derive replaced).
+    #[test]
+    fn wire_format_matches_as_str_for_every_unit() {
+        for unit in [
+            MetricUnit::Folders,
+            MetricUnit::Files,
+            MetricUnit::Bytes,
+            MetricUnit::Groups,
+        ] {
+            let json = serde_json::to_string(&unit).expect("MetricUnit serializes");
+            assert_eq!(json, format!("\"{}\"", unit.as_str()));
+        }
+    }
 
     fn folder(id: usize, parent: Option<usize>, name: &str) -> ClassifyInput {
         ClassifyInput {

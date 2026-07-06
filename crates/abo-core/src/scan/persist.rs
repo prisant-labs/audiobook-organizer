@@ -333,6 +333,24 @@ pub async fn get_scan_entries(pool: &SqlitePool, scan_id: i64) -> Result<Vec<Ent
     Ok(rows)
 }
 
+/// The id of the most recently STARTED snapshot whose `status = 'completed'`,
+/// or `None` when no scan has ever completed (the honest pre-first-scan state,
+/// v0.4.0 Phase 4). "Most recent" is by `scans.id` (an autoincrementing
+/// rowid), which agrees with insertion/start order since rows are never
+/// renumbered (AC-13 immutability).
+///
+/// Used by the `classify_overview` command (F-902 library home, T-15): the
+/// frontend never names a `scan_id` itself, so this is how the shell finds
+/// "the library, right now" without a live job to correlate to.
+pub async fn latest_completed_scan_id(pool: &SqlitePool) -> Result<Option<i64>, AppError> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT id FROM scans WHERE status = 'completed' ORDER BY id DESC LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .map_err(scan_failed)?;
+    Ok(row.map(|(id,)| id))
+}
+
 /// Insert the initial `running` `scans` row and return its assigned id.
 /// `source` is `"live"` for [`run_scan_with_job`] or `"csv"` for a WizTree
 /// import (`crate::scan::csv_import::run_csv_import`); both values are the
@@ -456,6 +474,44 @@ mod tests {
     async fn mark_scan_failed_on_missing_row_does_not_panic() {
         let (_dir, pool) = fresh_pool().await;
         mark_scan_failed(&pool, 999_999).await;
+    }
+
+    /// `latest_completed_scan_id` is `None` before any scan has completed, then
+    /// tracks the most recently completed row - skipping a later `running` or
+    /// `failed` row rather than mistaking it for the current library state
+    /// (F-902 library home, T-15).
+    #[tokio::test]
+    async fn latest_completed_scan_id_tracks_the_newest_completed_row() {
+        let (_dir, pool) = fresh_pool().await;
+        assert_eq!(latest_completed_scan_id(&pool).await.unwrap(), None);
+
+        let first = insert_running_scan(&pool, "live", "C:\\a", "2026-01-01T00:00:00Z")
+            .await
+            .expect("insert first");
+        sqlx::query("UPDATE scans SET status = 'completed' WHERE id = ?")
+            .bind(first)
+            .execute(&pool)
+            .await
+            .expect("complete first");
+        assert_eq!(latest_completed_scan_id(&pool).await.unwrap(), Some(first));
+
+        // A second scan that FAILS must not shadow the still-good first snapshot.
+        let failed = insert_running_scan(&pool, "live", "C:\\b", "2026-01-02T00:00:00Z")
+            .await
+            .expect("insert second");
+        mark_scan_failed(&pool, failed).await;
+        assert_eq!(latest_completed_scan_id(&pool).await.unwrap(), Some(first));
+
+        // A third scan that completes becomes the new latest.
+        let second = insert_running_scan(&pool, "live", "C:\\c", "2026-01-03T00:00:00Z")
+            .await
+            .expect("insert third");
+        sqlx::query("UPDATE scans SET status = 'completed' WHERE id = ?")
+            .bind(second)
+            .execute(&pool)
+            .await
+            .expect("complete third");
+        assert_eq!(latest_completed_scan_id(&pool).await.unwrap(), Some(second));
     }
 
     /// Count `entries` rows persisted for a given scan id.

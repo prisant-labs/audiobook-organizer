@@ -54,4 +54,183 @@ export const STRINGS = {
     retentionLabel: "Scans to keep",
     retentionHelp: "The app remembers this many recent scans, then lets the oldest go.",
   },
+
+  // The ruleset editor (F-906, v0.4.0 Phase 6, AC-32/AC-33): "how your
+  // shelves get organized", hosted inside Settings. Deliberately never says
+  // "ruleset" - plain-language register per design-system Section 6.1 and the
+  // vocabulary-discipline standing rule. Naming-style/policy copy paraphrases
+  // the F-401/F-402 spec behaviors in family-facing words.
+  rulesetEditor: {
+    loading: "Loading how your shelves are organized...",
+    heading: "How your shelves get organized",
+    intro: "Choose a naming style and a few safety options. Changing something here shows you what it would affect before you save it.",
+    presetHeading: "Naming style",
+    presets: {
+      "abs-author-first": {
+        label: "Author first",
+        description: "Groups everything under the author, with the series and book number next.",
+      },
+      "title-first": {
+        label: "Title first",
+        description: "One flat folder per book, named for its title and author.",
+      },
+      "hybrid-genre": {
+        label: "Genre shelves",
+        description: "Adds a genre shelf on top of the author-first style, when a genre is known.",
+      },
+    } as const,
+    policiesHeading: "Safety and tidiness options",
+    oneBookPerFolder: {
+      label: "Split folders that hold more than one book",
+      help: "Turns a folder holding several complete books into one folder per book.",
+    },
+    packShell: {
+      label: "The leftover collection folder, once its books are unpacked",
+      help: "After every book inside moves out safely, this decides what happens to the folder they came from.",
+      quarantine: "Set it aside",
+      leaveInPlace: "Leave it where it is",
+    },
+    sidecars: {
+      label: "Ebook and cover files that travel with a book",
+      keepWithBook: "Keep with the book",
+      quarantine: "Set aside instead",
+    },
+    preferredFormat: {
+      label: "When a book has both an M4B and an MP3 copy, keep",
+      m4b: "The M4B copy",
+      mp3: "The MP3 copy",
+    },
+    emptyFolderRemoval: {
+      label: "Sweep out folders a tidy-up leaves empty",
+    },
+    stripNoise: {
+      label: "Clean up leftover labels in folder names",
+      help: "Removes ripper tags, bitrates, and file sizes some download tools leave behind in folder names.",
+    },
+    liveCountsHeading: "What this would change",
+    liveCountsNoScan: "Scan your library first to see what these choices would change.",
+    liveCountsLoading: "Recalculating...",
+    saveAction: "Save",
+    saveSaving: "Saving...",
+    saveSaved: "Saved. The tidy-up plan will use this the next time it's built.",
+    unsavedNote: "You have changes that aren't saved yet.",
+  },
+
+  // Library home (F-902, v0.4.0 Phase 4, design-system Sections 4.6-4.8 and 6).
+  // Numbers are NEVER literals here (FD-27, AC-7): every count/byte figure is
+  // composed at render time from `classify_overview` by `Library.tsx`'s own
+  // sentence-building helpers, not stored as a fixed string in this module.
+  library: {
+    heading: "Your library",
+    worthALookHeading: "Worth a look first",
+    worthALookSubline: "a few examples of what the tidy-up would fix",
+    seriesHeading: "Series on your shelves",
+    seriesSubline: "the tidy-up keeps each series together",
+    scanAgain: "Scan again",
+    startTidyUp: "Start a tidy-up",
+    scanNow: "Scan your library",
+    // AC-9: the FD-10 deletion-guarantee copy, verbatim. This is the exact
+    // sanctioned string; do not paraphrase it here or at any call site.
+    reassurance:
+      "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone.",
+    // The honest pre-first-scan state (design-system Section 5.2 "Empty
+    // library root" family; AC-6 forbids treating "never scanned" as a
+    // library of zero books).
+    noScanYet: {
+      heading: "Let's take a first look",
+      body: "Scan your library to see what's there. The app only reads it - nothing is moved or changed until you review and approve it.",
+    },
+    scanning: {
+      heading: "Reading your library...",
+    },
+    // Scan Stop control (F-104, AC-36): a real, honest cooperative-cancel
+    // affordance on every scan/re-scan progress screen. Never "Skip ahead"
+    // (FD-02) - that prototype shortcut is demo-only and does not ship.
+    stopScan: "Stop",
+    stopped: "Stopped. Nothing was changed - a scan only reads.",
+  },
+
+  // Plan review surface (F-903/F-502/F-503/F-504, v0.4.0 Phase 5,
+  // design-system Sections 4.9-4.14 and 6). Every group's headline/reason and
+  // every count/byte figure comes from the real generated plan
+  // (`plan_generate`/`plan_get`), never a literal here (FD-27).
+  review: {
+    heading: "Review the tidy-up",
+    lede: "The plan looks at every book and works out what would tidy it up. Nothing happens until you say so, and you can leave any group out.",
+    generating: "Building the tidy-up plan...",
+    noScan: {
+      heading: "Scan your library first",
+      body: "There is nothing to review yet. Go to your library and scan it, then come back here to review a tidy-up.",
+    },
+    detailEmpty: "Choose a group on the left to see what it would change.",
+    detailNoOps: "There is nothing to show for this group this time.",
+    moreOps: (more: number) =>
+      `...and ${more.toLocaleString("en-US")} more just like these. The full list is in the exported report.`,
+    excludeAction: "Leave this one out",
+    excludeUndoNote: "Left out",
+    fileDetails: "Show file details",
+    // F-504 honesty caveat (FIX 2): shown beside the re-derived pattern/fields
+    // block so the reader knows it reflects only this item's own name, not any
+    // detail inherited from a parent folder. Suppressed for box sets and
+    // bundles (the backend omits the whole block there).
+    ownNameCaveat: "Based on this item's own name.",
+    filterPlaceholder: "Search by name...",
+    filterGroupAll: "All groups",
+    filterConfidenceAll: "Any confidence",
+    filterWarningAll: "Any status",
+    filterWarningOnly: "Needs a look",
+    filterBlockedOnly: "Held",
+    filterNoMatches: "Nothing matches that search.",
+    // Design-system Section 4.13/6.4 standing footer reassurance line
+    // (distinct from the library home's full FD-10 guarantee enumeration).
+    footerReassurance: "Nothing is deleted. Every change can be undone.",
+    tidyUpNow: "Tidy up now",
+    confirmPrompt: "Ready to tidy up the included groups?",
+    confirmGoAhead: "Go ahead",
+    confirmNotYet: "Not yet",
+    // Applying is v0.5.0 (acting); the confirm affordance is real but honest
+    // about what it cannot do yet, never a fake success.
+    confirmNotAvailable:
+      "Applying a tidy-up isn't available in this version yet - that arrives in a later update. For now you can review the plan, include or leave out groups, and look at the file details.",
+    allExcludedNote: "Turn on at least one group to tidy up.",
+  },
+
+  // Error / empty / loading states (F-908, v0.4.0 Phase 7, design-system
+  // Section 5). The per-AppError family sentences and next steps live in the
+  // centralized error-copy module (src/lib/errorCopy.ts, still one module per
+  // FD-23); these are the shared chrome strings the state COMPONENTS render
+  // around that copy. Plain-language register throughout (Section 6): never a
+  // machine code or raw OS error on a family-facing line.
+  states: {
+    // Generic family-safe fallback wording, mirrored by GENERIC_ERROR_COPY.
+    genericHeading: "Something went wrong.",
+    // The disclosure that holds the technical detail (FD-13): the one place a
+    // raw error string / path is allowed, for tier 1. Same label the review
+    // surface uses so "Show file details" means one thing everywhere.
+    showFileDetails: "Show file details",
+    tryAgain: "Try again",
+    // Startup boot (AppRoot), while the settings load resolves.
+    booting: "Getting your library ready...",
+    // Settings could not be read/saved at startup (AppRoot). Reassurance that
+    // the audiobooks are safe; the technical cause sits in the disclosure.
+    settingsUnavailableHeading: "Your settings could not be opened",
+    // Persisted library root is gone at scan time (F-909 re-pick, AC-31): a
+    // calm surface whose one action re-picks the folder through the OS picker.
+    rootMissingRepick: "Choose your library folder again",
+    // Plan-building loading state (AC-26, design-system Section 5.3): DISTINCT
+    // from the scan screen, with a real Stop. Stopping abandons the wait and
+    // returns you; building a plan moves nothing, so this is honest about what
+    // Stop does (it never claims to cancel work mid-file - there is no file
+    // work to cancel while planning).
+    buildingThePlan: {
+      heading: "Building the tidy-up plan",
+      subline: "Working out the safest set of changes.",
+      stop: "Stop",
+    },
+    planBuildStopped: {
+      heading: "Building the plan was stopped.",
+      body: "Nothing was changed - building a plan only reads your library. You can build it again whenever you like.",
+      action: "Build the plan again",
+    },
+  },
 } as const;
