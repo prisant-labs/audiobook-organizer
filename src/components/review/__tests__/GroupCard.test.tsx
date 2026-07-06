@@ -89,10 +89,14 @@ describe("GroupCard", () => {
     expect(onSelect).toHaveBeenCalled();
   });
 
-  it("marks the selected card with aria-selected", () => {
+  // v0.4.0 Phase 8 (T-36, AC-41): aria-selected is not an allowed attribute on
+  // role="button" (axe-core aria-allowed-attr); aria-pressed conveys the same
+  // "this card is the active one" state via a valid toggle-button semantic
+  // (see GroupCard.tsx's ARIA structure comment for the full rationale).
+  it("marks the selected card with aria-pressed", () => {
     render(<GroupCard group={group()} selected onSelect={vi.fn()} onToggle={vi.fn()} />);
     expect(screen.getByRole("button", { name: /Give 238 loose books/i })).toHaveAttribute(
-      "aria-selected",
+      "aria-pressed",
       "true",
     );
   });

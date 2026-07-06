@@ -103,7 +103,7 @@ export function Review({ scanId }: ReviewProps) {
           <p className="mt-2 max-w-[46ch] text-[13.5px] leading-[1.55] text-ink-2 [text-wrap:pretty]">
             {STRINGS.review.lede}
           </p>
-          <div className="mt-6">
+          <div className="mt-6" role="group" aria-label="Tidy-up groups">
             {review.groups.map((group) => (
               <GroupCard
                 key={group.group}
