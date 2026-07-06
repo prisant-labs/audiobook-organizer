@@ -460,9 +460,10 @@ mod tests {
     async fn seed_default_active_ruleset_seeds_once_then_no_ops() {
         let (_db, pool) = fresh_pool().await;
 
-        let inserted = seed_default_active_ruleset(&pool, "Default", "{}", 1, "2026-07-06T00:00:00Z")
-            .await
-            .expect("seed");
+        let inserted =
+            seed_default_active_ruleset(&pool, "Default", "{}", 1, "2026-07-06T00:00:00Z")
+                .await
+                .expect("seed");
         assert_eq!(inserted, 1, "the first seed inserts one row");
         let active = get_active_ruleset(&pool)
             .await
@@ -474,7 +475,10 @@ mod tests {
         let again = seed_default_active_ruleset(&pool, "Default", "{}", 1, "2026-07-06T00:00:01Z")
             .await
             .expect("seed again");
-        assert_eq!(again, 0, "a second seed on a non-empty table inserts nothing");
+        assert_eq!(
+            again, 0,
+            "a second seed on a non-empty table inserts nothing"
+        );
         assert_eq!(count_rulesets(&pool).await.expect("count"), 1);
     }
 
