@@ -107,7 +107,13 @@
   --ink-2: #cfc4b2;
   --ink-3: #a2967f;
   --primary: #6a5cd0;
-  --primary-hover: #7a6ce0;
+  /* Corrected from the prototype's #7a6ce0 (v0.4.0 Phase 8, T-35): the
+   * mechanical token-contrast script (scripts/check-contrast.mjs, AC-40)
+   * measured --primary-ink (#ffffff) on #7a6ce0 at 4.16:1, below WCAG AA
+   * (4.5:1) for the button label text. This value keeps the same lighter-on-
+   * hover direction (a deliberate Evening-theme choice, distinct from Day's
+   * darken-on-hover) while landing at 4.64:1. */
+  --primary-hover: #7264d8;
   --primary-ink: #ffffff;
   --good: #7fc492;
   --good-bg: rgba(127, 196, 146, 0.13);

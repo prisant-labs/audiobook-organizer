@@ -114,7 +114,7 @@ Evening theme (`data-theme="evening"`):
 | `--ink-2` | `#cfc4b2` | `--shelf-rail` | `linear-gradient(180deg,#5a4630,#3f2f1d)` |
 | `--ink-3` | `#a2967f` | `--cover-shadow` | `0 3px 8px rgba(0,0,0,.45)` |
 | `--primary` | `#6a5cd0` | `--titlebar` | `#1b1611` |
-| `--primary-hover` | `#7a6ce0` | `--link` | `#b3a6f2` |
+| `--primary-hover` | `#7264d8` (corrected from the prototype's `#7a6ce0`; see Section 8 note) | `--link` | `#b3a6f2` |
 | `--primary-ink` | `#ffffff` | | |
 
 Semantic status pairs map to product meaning: `--good` = tidy / included / verified; `--warn` = held / checking / needs-you-soft; `--alert` = structural attention (box set, multiple copies). `--alert` (terracotta) is NOT an error color; error/danger gets its own pair below.
@@ -188,7 +188,7 @@ Source: 04, 07. `.row` is a horizontal, overflow-x scrolling flex row of book sl
 Source: 04. `.cluster` renders a series as a group of stylized vertical spines (`.spine`, 17px wide, deterministic height jitter, occasional `.lean` tilt) with the series name written vertically on the center spine. Below: `.clab` caption "**Series** by Author - N books (M not shown)". Real series only (Dresden Files, Wheel of Time, Dune, Harry Potter, Wings of Fire in the prototype). The stylized spine metaphor is the deliberate exception to the no-spine-shading rule (D-06).
 
 ### 4.9 Group card plus include/skip switch plus status tag (the "bundle")
-Source: 05, 07. Review left column. `.bundle` card: title `h3` (weight 600), plain-language "why" paragraph, a `.meta` line (tabular-nums count plus GB, e.g. "238 books - 67.9 GB"). Selected card carries `aria-selected="true"` with a `--primary` ring. Right column of the card: a `role="switch"` toggle (`.sw`, `aria-checked`) and a status tag `.stag`. Tag variants: `.in` "included" (`--good`), `.out` "left out" (`--ink-3`/`--surface-2`), `.hold` "checking copies" (`--warn`, switch disabled). Cards are keyboard-selectable (`tabindex`, Enter selects; Section 7). The seven cards are the seven campaign groups (FD-26 (seven campaign groups), Section 6.7).
+Source: 05, 07. Review left column. `.bundle` card: title `h3` (weight 600), plain-language "why" paragraph, a `.meta` line (tabular-nums count plus GB, e.g. "238 books - 67.9 GB"). Selected card carries `aria-pressed="true"` (corrected from the prototype's `aria-selected`, v0.4.0 Phase 8 T-36: `aria-selected` is not an allowed attribute on `role="button"`, and the roles that do allow it require a `listbox`/`option` container the switch column cannot share without also becoming an illegal listbox child - see GroupCard.tsx) with a `--primary` ring. Right column of the card: a `role="switch"` toggle (`.sw`, `aria-checked`) and a status tag `.stag`, rendered as a SIBLING of the selectable region, never nested inside it (nested-interactive). Tag variants: `.in` "included" (`--good`), `.out` "left out" (`--ink-3`/`--surface-2`), `.hold` "checking copies" (`--warn`, switch disabled). Cards are keyboard-selectable (`tabindex`, Enter selects; Section 7). The seven cards are the seven campaign groups (FD-26 (seven campaign groups), Section 6.7).
 
 ### 4.10 Example card with Now/After breadcrumbs
 Source: 05, 07. Right column detail. `.example` row: `sz-md` cover plus a body with the book name `h4`, then a two-line `.ba` block labeled "Now" and "After". "Now" is a plain-language description of the current mess in `--ink-2`; "After" is a breadcrumb (`.crumb`) of the destination folder path rendered as words joined by a subtle `>` separator in `--ink-3`. Paths are NOT shown here; they live behind the disclosure (4.12). A `.morenote` foot line ("...and 234 more books just like these. The full list is in the report.") closes the group.
@@ -332,7 +332,7 @@ Written as testable statements for F-908 / the v0.4.0 surfaces.
 
 - The theme control is a two-button segmented control; the active theme's button has `aria-pressed="true"` and the other `false`; toggling updates `data-theme` on the root and persists via F-803 (app settings).
 - Group include/skip toggles are `role="switch"` with `aria-checked` reflecting state; a held group's switch is `disabled` with a visible reason.
-- Group cards are keyboard-selectable: `tabindex="0"`, `aria-selected` reflects selection, Enter selects the card and updates the detail pane.
+- Group cards are keyboard-selectable: `tabindex="0"`, `aria-pressed` reflects selection (corrected from `aria-selected`, v0.4.0 Phase 8 T-36; see Section 4.9), Enter selects the card and updates the detail pane.
 - All interactive controls show a visible `:focus-visible` outline: 2px solid `--primary`, offset 2px.
 - `prefers-reduced-motion:reduce` collapses all transitions and animations to ~0ms (crossfade or instant alternatives); the theme-change and progress-bar transitions honor it.
 - Confirming a tidy-up is a two-step inline confirm strip in the footer (4.14), NEVER a modal dialog.
@@ -364,8 +364,16 @@ Computed contrast (sRGB relative luminance, rounded):
 | `--ink-3` on `--bg` | Evening | ~5.8:1 | pass |
 | `--ink-3` on `--surface` | Evening | ~5.3:1 | pass |
 | `--primary-ink` on `--primary` | Evening | ~5.2:1 | pass |
+| `--primary-ink` on `--primary-hover` | Evening | ~4.64:1 | pass (corrected, see note) |
 | `--danger` on `--bg` | Evening | ~6.8:1 | pass |
 | `--danger` on `--surface` | Evening | ~6.1:1 | pass |
+
+v0.4.0 Phase 8 correction (T-35): the prototype's Evening `--primary-hover`
+(`#7a6ce0`) measured 4.16:1 against `--primary-ink`, a real AA failure the
+mechanical contrast script (`scripts/check-contrast.mjs`) caught on its first
+run. Darkened slightly to `#7264d8` (4.64:1), keeping the Evening theme's
+deliberate lighter-on-hover direction (the opposite of Day's darken-on-hover)
+rather than reversing it.
 
 `--ink-3` restriction rule (FD-21, planning audit stream 2 item 19): `--ink-3` on `--surface-2` in Day is borderline (~4.5:1). Therefore `--ink-3` is restricted to decorative or non-information content (section sub-lines that repeat visible information, rail chrome). Where `--ink-3` conveys information a reader must act on, it is darkened (Day) or lightened (Evening) to clear 4.5:1 against its actual background, or promoted to `--ink-2`. Count badges (`.n`, Section 4.3) and `.meta` counts (Section 4.9) are information-bearing: `--ink-3` is permitted for them only on token-pair surfaces measured at or above 4.5:1 in the table above, and on any other surface they are promoted to `--ink-2`.
 
