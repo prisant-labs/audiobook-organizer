@@ -223,7 +223,7 @@ Acceptance criteria:
 
 Composite checklist that must be green before v0.4.0 tags. Evidence pointers follow docs/internal/test-strategy.md conventions (Frontend layer: Vitest component tests; IPC layer: bindings-drift + no-raw-invoke lint; Real-data confidence: jp manual review loop).
 
-Gate walked by Fable, 2026-07-06. All three PRs adversarially reviewed (SECURITY pass each time; capability inventory held at exactly 7 permissions; strict CSP live-verified). Two review-driven fix waves landed pre-merge. Merges are queued behind the GitHub Actions billing block (human-only item, jp notified); every gate below was verified locally with the full suite green (workspace Rust + 207 Vitest + contrast + axe + copy sweep).
+Gate walked by Fable, 2026-07-06. All three PRs adversarially reviewed (SECURITY pass each time; capability inventory held at exactly 7 permissions; strict CSP live-verified). Two review-driven fix waves landed pre-merge. Every gate below was first verified locally with the full suite green (workspace Rust + 207 Vitest + contrast + axe + copy sweep) while merges sat behind the GitHub Actions billing block; jp resolved the block later the same day and the merges landed with CI green (see G-9).
 
 - [ ] G-1 PENDING JP: the human review loop in the app against the real-library snapshot (open home, read health facts, inspect a plan, drill in, approve groups, exclude an operation). The app is ready for this walk; it is the release's one human gate. [AC-6..AC-20]
 - [x] G-2 Review surface responsive over the full library scale: server-side caps + windowed rendering; headed walks over fixture libraries jank-free; tree view remains descoped (FD-06). [FD-18]
@@ -233,7 +233,7 @@ Gate walked by Fable, 2026-07-06. All three PRs adversarially reviewed (SECURITY
 - [x] G-6 Copy gates: FD-10 verbatim (asserted by the sweep test), no genre-as-tags claim, no hardcoded sample numbers; banned vocabulary sweep green. [AC-9, AC-37, AC-38]
 - [x] G-7 Tracer UI deleted (src/App.tsx removed; AppRoot is the sole entry). [S-1]
 - [x] G-8 Scan Stop works: headed-verified cooperative cancel of a real in-flight scan with an honest stopped state. [AC-36]
-- [x] G-9 QUEUED ON BILLING: CI matrix green awaits the Actions billing fix (jp). All matrix legs were reproduced locally (lint, typecheck, both test suites, Windows build via pnpm build + cargo, gates); macOS moved to push-only events per the CI-cost fix. To be confirmed green at merge time before any tag. [FD-24]
+- [x] G-9 CI matrix green, CONFIRMED at merge time 2026-07-06: jp restored Actions billing; PR #17 and PR #18 pull-request runs green, and both main merge-commit push runs green including the macOS honesty legs (runs 28806796001 and 28808035764). All matrix legs had been reproduced locally during the block; macOS stays push-only per the CI-cost fix. [FD-24]
 
 ## Behavior / Examples
 
