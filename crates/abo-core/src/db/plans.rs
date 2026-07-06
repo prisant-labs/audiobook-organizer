@@ -274,17 +274,26 @@ pub async fn list_plans(pool: &SqlitePool) -> Result<Vec<PlanRow>, sqlx::Error> 
 /// This function does not enforce the "a blocked op cannot be approved"
 /// rule; that check belongs to the caller (Phase 5's state machine), which
 /// reads `validation_state` before deciding whether to call this at all.
-pub async fn set_approval(
-    pool: &SqlitePool,
+///
+/// Generic over the executor so a caller can run it either directly against the
+/// pool (one op) or inside a `&mut` transaction (a batch that must be atomic,
+/// e.g. `plan::validate::set_group_approval`). This is the ONLY statement that
+/// writes `plan_ops.approval`; keeping it single lets the batch wrap N of these
+/// in one transaction without a second UPDATE path to keep in step.
+pub async fn set_approval<'e, E>(
+    executor: E,
     plan_op_id: i64,
     approval: &str,
     now: &str,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     sqlx::query("UPDATE plan_ops SET approval = ?, approval_updated_at = ? WHERE id = ?")
         .bind(approval)
         .bind(now)
         .bind(plan_op_id)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(())
 }
