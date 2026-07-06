@@ -54,6 +54,30 @@ export const commands = {
 	 */
 	scanEntries: (scanId: number) => typedError<EntryRow[], AppError>(__TAURI_INVOKE("scan_entries", { scanId })),
 	/**
+	 *  Read one book's cover art for a snapshot entry (F-907, v0.4.0 Phase 3).
+	 * 
+	 *  `scan_id` + `entry_id` name a book WITHIN a snapshot (a book folder or a loose
+	 *  audio file); the source paths are resolved from the snapshot's own `entries`
+	 *  rows, so the frontend never supplies a filesystem path and the WebView can
+	 *  never point cover reading at an unsanctioned location (FD-29). The engine reads
+	 *  the cover STRICTLY read-only (embedded art or a `cover.jpg`/`folder.jpg`
+	 *  sidecar) and caches the thumbnail under `app_data/covers` - outside the
+	 *  library, so caching never touches the user's files (D-09, AC-21).
+	 * 
+	 *  Returns the [`CoverImage`] (mime + base64) so the WebView receives image data
+	 *  over typed IPC, never a filesystem or asset-protocol scope. `None` means the
+	 *  book has no cover, and the frontend renders the deterministic fallback tile
+	 *  (AC-23). Only a genuine database read failure surfaces as an error; an
+	 *  unreadable frame or absent sidecar degrades that one tile to the fallback
+	 *  rather than breaking the shelf.
+	 */
+	coverGet: (scanId: number, entryId: number) => typedError<{
+	/**  The image mime type, sniffed from the bytes (e.g. `image/jpeg`). */
+	mime: string,
+	/**  Standard base64 (RFC 4648, `=`-padded) of the raw image bytes. */
+	base64: string,
+} | null, AppError>(__TAURI_INVOKE("cover_get", { scanId, entryId })),
+	/**
 	 *  Report whether startup had to recover a corrupt database (P2).
 	 * 
 	 *  Reads the [`DbOpenOutcome`] captured at startup out of managed state and maps
@@ -312,6 +336,30 @@ export type AppSettings = {
 	theme: string,
 	/**  Snapshot retention: keep the last N scans (FD-20, AC-35). Default 10. */
 	scan_retention_count: number,
+};
+
+/**
+ *  One book's cover art (F-907, v0.4.0 Phase 3), the wire form returned by the
+ *  `cover_get` command. `None` from that command means "no cover" and the
+ *  frontend renders the deterministic fallback tile instead (AC-23).
+ * 
+ *  The bytes cross IPC as base64 (`data:` payload), not as a filesystem path and
+ *  not as a raw byte array: base64 keeps the payload compact and, decisively,
+ *  means the WebView is handed already-read image data over typed IPC rather than
+ *  any filesystem or asset-protocol scope. The library root never becomes
+ *  WebView-readable (FD-29). The frontend composes `data:${mime};base64,${base64}`
+ *  as the `<img>` source.
+ * 
+ *  `mime` is sniffed from the bytes (e.g. `image/jpeg`, `image/png`), so a
+ *  mislabeled sidecar or corrupt frame is rejected before it reaches here (the
+ *  book then shows the fallback tile). The bytes are the raw, UNDECODED image as
+ *  stored in the file (plan T-11 defers decoding/downscaling).
+ */
+export type CoverImage = {
+	/**  The image mime type, sniffed from the bytes (e.g. `image/jpeg`). */
+	mime: string,
+	/**  Standard base64 (RFC 4648, `=`-padded) of the raw image bytes. */
+	base64: string,
 };
 
 /**

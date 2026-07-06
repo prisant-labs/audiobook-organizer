@@ -89,6 +89,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::scan_start,
             commands::scan_cancel,
             commands::scan_entries,
+            commands::cover_get,
             commands::db_status,
             commands::settings::settings_get,
             commands::settings::settings_set,

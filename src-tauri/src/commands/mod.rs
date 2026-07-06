@@ -22,7 +22,7 @@ use abo_core::db::DbOpenOutcome;
 // `AppError` is re-exported from `abo-core::ipc`, so the whole command surface
 // names one taxonomy; every `Result<_, AppError>` here is a valid tauri-specta
 // return because `AppError` derives `specta::Type` in the core.
-use abo_core::ipc::{AppError, DbStatus, EntryRow, JobStarted};
+use abo_core::ipc::{AppError, CoverImage, DbStatus, EntryRow, JobStarted};
 use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
 use abo_core::scan::walk::now_iso8601_utc;
 use abo_core::scan::ScanOutcome;
@@ -208,6 +208,35 @@ pub async fn scan_entries(
     scan_id: i64,
 ) -> Result<Vec<EntryRow>, AppError> {
     abo_core::scan::get_scan_entries(&state.pool, scan_id).await
+}
+
+/// Read one book's cover art for a snapshot entry (F-907, v0.4.0 Phase 3).
+///
+/// `scan_id` + `entry_id` name a book WITHIN a snapshot (a book folder or a loose
+/// audio file); the source paths are resolved from the snapshot's own `entries`
+/// rows, so the frontend never supplies a filesystem path and the WebView can
+/// never point cover reading at an unsanctioned location (FD-29). The engine reads
+/// the cover STRICTLY read-only (embedded art or a `cover.jpg`/`folder.jpg`
+/// sidecar) and caches the thumbnail under `app_data/covers` - outside the
+/// library, so caching never touches the user's files (D-09, AC-21).
+///
+/// Returns the [`CoverImage`] (mime + base64) so the WebView receives image data
+/// over typed IPC, never a filesystem or asset-protocol scope. `None` means the
+/// book has no cover, and the frontend renders the deterministic fallback tile
+/// (AC-23). Only a genuine database read failure surfaces as an error; an
+/// unreadable frame or absent sidecar degrades that one tile to the fallback
+/// rather than breaking the shelf.
+#[tauri::command]
+#[specta::specta]
+pub async fn cover_get(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+    entry_id: i64,
+) -> Result<Option<CoverImage>, AppError> {
+    // The cover cache lives beside the app data (%LOCALAPPDATA%\AudiobookOrganizer\
+    // covers on Windows), never under the library root.
+    let cache_dir = abo_core::paths::app_data_dir().join("covers");
+    abo_core::scan::get_cover(&state.pool, scan_id, entry_id, &cache_dir).await
 }
 
 /// Report whether startup had to recover a corrupt database (P2).
