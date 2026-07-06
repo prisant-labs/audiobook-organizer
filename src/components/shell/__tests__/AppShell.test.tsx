@@ -18,6 +18,38 @@ vi.mock("../../../lib/bindings", () => ({
     scanStart: vi.fn(),
     scanEntries: vi.fn(),
     classifyOverview: vi.fn().mockResolvedValue({ status: "ok", data: null }),
+    // The Settings route (F-906 ruleset editor) loads the active ruleset and
+    // its preset examples on mount; resolved here so navigating there in
+    // these shell-level tests never triggers a real IPC call.
+    rulesetGetActive: vi.fn().mockResolvedValue({
+      status: "ok",
+      data: {
+        id: 1,
+        name: "Default",
+        is_active: true,
+        ruleset: {
+          schema_version: 1,
+          naming: { preset: "abs-author-first", series_index_width: 1 },
+          structure: {
+            one_book_per_folder: true,
+            pack_shell: "quarantine",
+            sidecars: "keep-with-book",
+            clutter: {
+              ebook: "keep",
+              cover: "keep",
+              nfo: "quarantine",
+              sfv: "quarantine",
+              playlist: "quarantine",
+              weblink: "quarantine",
+            },
+            preferred_format: "m4b",
+            empty_folder_removal: true,
+          },
+          cleanup: { strip_noise: true },
+        },
+      },
+    }),
+    rulesetPresetExamples: vi.fn().mockResolvedValue([]),
   },
   events: {
     jobCompleted: { listen: vi.fn().mockResolvedValue(() => {}) },

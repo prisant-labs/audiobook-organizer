@@ -55,6 +55,67 @@ export const STRINGS = {
     retentionHelp: "The app remembers this many recent scans, then lets the oldest go.",
   },
 
+  // The ruleset editor (F-906, v0.4.0 Phase 6, AC-32/AC-33): "how your
+  // shelves get organized", hosted inside Settings. Deliberately never says
+  // "ruleset" - plain-language register per design-system Section 6.1 and the
+  // vocabulary-discipline standing rule. Naming-style/policy copy paraphrases
+  // the F-401/F-402 spec behaviors in family-facing words.
+  rulesetEditor: {
+    loading: "Loading how your shelves are organized...",
+    heading: "How your shelves get organized",
+    intro: "Choose a naming style and a few safety options. Changing something here shows you what it would affect before you save it.",
+    presetHeading: "Naming style",
+    presets: {
+      "abs-author-first": {
+        label: "Author first",
+        description: "Groups everything under the author, with the series and book number next.",
+      },
+      "title-first": {
+        label: "Title first",
+        description: "One flat folder per book, named for its title and author.",
+      },
+      "hybrid-genre": {
+        label: "Genre shelves",
+        description: "Adds a genre shelf on top of the author-first style, when a genre is known.",
+      },
+    } as const,
+    policiesHeading: "Safety and tidiness options",
+    oneBookPerFolder: {
+      label: "Split folders that hold more than one book",
+      help: "Turns a folder holding several complete books into one folder per book.",
+    },
+    packShell: {
+      label: "The leftover collection folder, once its books are unpacked",
+      help: "After every book inside moves out safely, this decides what happens to the folder they came from.",
+      quarantine: "Set it aside",
+      leaveInPlace: "Leave it where it is",
+    },
+    sidecars: {
+      label: "Ebook and cover files that travel with a book",
+      keepWithBook: "Keep with the book",
+      quarantine: "Set aside instead",
+    },
+    preferredFormat: {
+      label: "When a book has both an M4B and an MP3 copy, keep",
+      m4b: "The M4B copy",
+      mp3: "The MP3 copy",
+    },
+    emptyFolderRemoval: {
+      label: "Sweep out folders a tidy-up leaves empty",
+    },
+    stripNoise: {
+      label: "Clean up leftover labels in folder names",
+      help: "Removes ripper tags, bitrates, and file sizes some download tools leave behind in folder names.",
+    },
+    liveCountsHeading: "What this would change",
+    liveCountsNoScan: "Scan your library first to see what these choices would change.",
+    liveCountsLoading: "Recalculating...",
+    saveAction: "Save",
+    saveSaving: "Saving...",
+    saveSaved: "Saved. The tidy-up plan will use this the next time it's built.",
+    unsavedNote: "You have changes that aren't saved yet.",
+  },
+
   // Library home (F-902, v0.4.0 Phase 4, design-system Sections 4.6-4.8 and 6).
   // Numbers are NEVER literals here (FD-27, AC-7): every count/byte figure is
   // composed at render time from `classify_overview` by `Library.tsx`'s own
@@ -82,6 +143,11 @@ export const STRINGS = {
     scanning: {
       heading: "Reading your library...",
     },
+    // Scan Stop control (F-104, AC-36): a real, honest cooperative-cancel
+    // affordance on every scan/re-scan progress screen. Never "Skip ahead"
+    // (FD-02) - that prototype shortcut is demo-only and does not ship.
+    stopScan: "Stop",
+    stopped: "Stopped. Nothing was changed - a scan only reads.",
   },
 
   // Plan review surface (F-903/F-502/F-503/F-504, v0.4.0 Phase 5,

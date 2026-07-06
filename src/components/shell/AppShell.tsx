@@ -83,6 +83,12 @@ function RouteContent({
     case "history":
       return <ComingSoon label="History" />;
     case "settings":
-      return <Settings settings={settings} onUpdate={onUpdate} />;
+      return (
+        <Settings
+          settings={settings}
+          onUpdate={onUpdate}
+          scanId={health.overview?.scan_id ?? null}
+        />
+      );
   }
 }

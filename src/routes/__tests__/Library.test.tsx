@@ -15,7 +15,7 @@ import type { UseHealthMetrics } from "@/hooks/useHealthMetrics";
 // layer underneath it (see useHealthMetrics.test.tsx for that hook's own
 // tests).
 vi.mock("@/lib/bindings", () => ({
-  commands: { scanStart: vi.fn() },
+  commands: { scanStart: vi.fn(), scanCancel: vi.fn() },
   events: {
     jobCompleted: { listen: vi.fn().mockResolvedValue(() => {}) },
     jobFailed: { listen: vi.fn().mockResolvedValue(() => {}) },
@@ -25,11 +25,13 @@ vi.mock("@/lib/bindings", () => ({
 vi.mock("@/lib/covers", () => ({ getCover: vi.fn() }));
 
 const mockedScanStart = vi.mocked(commands.scanStart);
+const mockedScanCancel = vi.mocked(commands.scanCancel);
 const mockedGetCover = vi.mocked(getCover);
 
 afterEach(cleanup);
 beforeEach(() => {
   mockedScanStart.mockReset();
+  mockedScanCancel.mockReset();
   mockedGetCover.mockReset().mockResolvedValue(null);
 });
 
@@ -142,5 +144,50 @@ describe("Library", () => {
     expect(screen.getByText(/overview-failed/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  // F-104 scan Stop control (T-28, AC-36): cooperative cancel, never "Skip ahead".
+  describe("scan Stop control", () => {
+    it("shows a working Stop control once a scan is running, wired to scan_cancel", async () => {
+      const user = userEvent.setup();
+      mockedScanStart.mockResolvedValue({ status: "ok", data: { job_id: 7 } });
+      mockedScanCancel.mockResolvedValue(true);
+      render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} />);
+
+      await user.click(screen.getByRole("button", { name: "Scan again" }));
+      const stop = await screen.findByRole("button", { name: "Stop" });
+
+      await user.click(stop);
+
+      expect(mockedScanCancel).toHaveBeenCalledWith(7);
+      expect(await screen.findByText(/stopped/i)).toBeInTheDocument();
+      // The reassurance that a scan only reads accompanies the stopped note.
+      expect(screen.getByText(/nothing was changed/i)).toBeInTheDocument();
+    });
+
+    it("does not transition to stopped when scan_cancel reports the job already finished", async () => {
+      const user = userEvent.setup();
+      mockedScanStart.mockResolvedValue({ status: "ok", data: { job_id: 8 } });
+      mockedScanCancel.mockResolvedValue(false);
+      render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} />);
+
+      await user.click(screen.getByRole("button", { name: "Scan again" }));
+      const stop = await screen.findByRole("button", { name: "Stop" });
+      await user.click(stop);
+
+      expect(mockedScanCancel).toHaveBeenCalledWith(8);
+      expect(screen.queryByText(/^Stopped\./)).toBeNull();
+    });
+
+    it("never renders a 'Skip ahead' affordance (FD-02: demo-only, does not ship)", async () => {
+      const user = userEvent.setup();
+      mockedScanStart.mockResolvedValue({ status: "ok", data: { job_id: 9 } });
+      render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} />);
+
+      await user.click(screen.getByRole("button", { name: "Scan again" }));
+      await screen.findByRole("button", { name: "Stop" });
+
+      expect(screen.queryByText(/skip ahead/i)).toBeNull();
+    });
   });
 });

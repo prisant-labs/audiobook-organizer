@@ -10,6 +10,7 @@ import { ShelfSection } from "@/components/library/ShelfSection";
 import { BookSlot } from "@/components/library/BookSlot";
 import { SpineCluster } from "@/components/library/SpineCluster";
 import { GoodNewsLine } from "@/components/library/GoodNewsLine";
+import { ScanProgress } from "@/components/ScanProgress";
 import type { RouteId } from "@/routes";
 
 export interface LibraryProps {
@@ -25,6 +26,7 @@ type ScanRunState =
   | { phase: "idle" }
   | { phase: "starting" }
   | { phase: "running"; jobId: number; done?: number; total?: number }
+  | { phase: "stopped" }
   | { phase: "failed"; message: string };
 
 // F-902 library home (T-15..T-18, AC-6..AC-9): the warm, cover-forward screen
@@ -98,6 +100,22 @@ export function Library({ onNavigate, health }: LibraryProps) {
     }
   }, []);
 
+  // Scan Stop control (F-104, AC-36): cooperative cancel at the next safe
+  // boundary. `scan_cancel` is synchronous and returns whether a running job
+  // was actually signalled; the backend never emits a job:completed/failed
+  // event for a cancelled job (the requester already knows), so this is the
+  // one place that transitions local state to the honest "stopped" outcome.
+  // Ignoring any later job:progress/completed/failed for this job_id (by
+  // clearing currentJobIdRef) is what keeps that late traffic from silently
+  // reviving a screen the user already asked to stop.
+  const stopScan = useCallback(async () => {
+    if (scanState.phase !== "running") return;
+    const stopped = await commands.scanCancel(scanState.jobId);
+    if (!mountedRef.current || !stopped) return;
+    currentJobIdRef.current = null;
+    setScanState({ phase: "stopped" });
+  }, [scanState]);
+
   if (status === "loading") {
     return <LibrarySkeleton />;
   }
@@ -121,12 +139,22 @@ export function Library({ onNavigate, health }: LibraryProps) {
   }
 
   const scanning = scanState.phase === "starting" || scanState.phase === "running";
-  const scanStatusLine =
-    scanState.phase === "running" && scanState.total
-      ? `${scanState.done ?? 0} of ${scanState.total} read`
-      : scanning
-        ? "Reading your library..."
-        : null;
+  const scanStatusArea = (
+    <>
+      {scanState.phase === "starting" && (
+        <p className="mt-2 tabular-nums text-[12.5px] text-ink-3">{STRINGS.library.scanning.heading}</p>
+      )}
+      {scanState.phase === "running" && (
+        <ScanProgress done={scanState.done} total={scanState.total} onStop={() => void stopScan()} />
+      )}
+      {scanState.phase === "stopped" && (
+        <p className="mt-2 text-[12.5px] text-ink-3">{STRINGS.library.stopped}</p>
+      )}
+      {scanState.phase === "failed" && (
+        <p className="mt-2 text-[12.5px] text-danger">{scanState.message}</p>
+      )}
+    </>
+  );
 
   if (!overview) {
     return (
@@ -145,12 +173,7 @@ export function Library({ onNavigate, health }: LibraryProps) {
         >
           {scanning ? STRINGS.library.scanning.heading : STRINGS.library.scanNow}
         </button>
-        {scanStatusLine && (
-          <p className="mt-2 tabular-nums text-[12.5px] text-ink-3">{scanStatusLine}</p>
-        )}
-        {scanState.phase === "failed" && (
-          <p className="mt-2 text-[12.5px] text-danger">{scanState.message}</p>
-        )}
+        {scanStatusArea}
       </div>
     );
   }
@@ -163,12 +186,7 @@ export function Library({ onNavigate, health }: LibraryProps) {
             {STRINGS.library.heading}
           </h1>
           <LibraryLede overview={overview} />
-          {scanStatusLine && (
-            <p className="mt-2 tabular-nums text-[12.5px] text-ink-3">{scanStatusLine}</p>
-          )}
-          {scanState.phase === "failed" && (
-            <p className="mt-2 text-[12.5px] text-danger">{scanState.message}</p>
-          )}
+          {scanStatusArea}
         </div>
         <div className="flex flex-none gap-2.5 pt-1.5">
           <button

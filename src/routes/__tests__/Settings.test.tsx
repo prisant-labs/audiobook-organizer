@@ -6,6 +6,10 @@ import { pickLibraryFolder } from "@/lib/dialog";
 import type { AppSettings } from "@/lib/settings";
 
 vi.mock("@/lib/dialog", () => ({ pickLibraryFolder: vi.fn() }));
+// The ruleset editor (F-906) has its own dedicated test coverage
+// (RulesetEditor.test.tsx); stubbing it here keeps this file focused on
+// Settings.tsx's own behavior (folders/theme/retention).
+vi.mock("@/components/settings/RulesetEditor", () => ({ RulesetEditor: () => null }));
 const mockedPick = vi.mocked(pickLibraryFolder);
 
 const BASE: AppSettings = {
@@ -24,7 +28,7 @@ beforeEach(() => {
 // configured values and persists edits via onUpdate (the settings_set path).
 describe("Settings", () => {
   it("shows the configured library folder", () => {
-    render(<Settings settings={BASE} onUpdate={vi.fn().mockResolvedValue(undefined)} />);
+    render(<Settings settings={BASE} onUpdate={vi.fn().mockResolvedValue(undefined)} scanId={null} />);
     expect(screen.getByText("E:\\Books")).toBeInTheDocument();
   });
 
@@ -33,7 +37,7 @@ describe("Settings", () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     mockedPick.mockResolvedValue("E:\\New Library");
 
-    render(<Settings settings={BASE} onUpdate={onUpdate} />);
+    render(<Settings settings={BASE} onUpdate={onUpdate} scanId={null} />);
     await user.click(screen.getByRole("button", { name: /change folder/i }));
 
     await waitFor(() =>
@@ -48,7 +52,7 @@ describe("Settings", () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     mockedPick.mockResolvedValue(null);
 
-    render(<Settings settings={BASE} onUpdate={onUpdate} />);
+    render(<Settings settings={BASE} onUpdate={onUpdate} scanId={null} />);
     await user.click(screen.getByRole("button", { name: /change folder/i }));
 
     await waitFor(() => expect(mockedPick).toHaveBeenCalledTimes(1));
@@ -59,7 +63,7 @@ describe("Settings", () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn().mockResolvedValue(undefined);
 
-    render(<Settings settings={BASE} onUpdate={onUpdate} />);
+    render(<Settings settings={BASE} onUpdate={onUpdate} scanId={null} />);
     await user.click(screen.getByRole("button", { name: "Evening" }));
 
     expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ theme: "evening" }));
@@ -69,7 +73,7 @@ describe("Settings", () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn().mockResolvedValue(undefined);
 
-    render(<Settings settings={BASE} onUpdate={onUpdate} />);
+    render(<Settings settings={BASE} onUpdate={onUpdate} scanId={null} />);
     const input = screen.getByRole("spinbutton", { name: /scans to keep/i });
     await user.clear(input);
     await user.type(input, "25");
@@ -86,7 +90,7 @@ describe("Settings", () => {
     const user = userEvent.setup();
     const onUpdate = vi.fn().mockResolvedValue(undefined);
 
-    render(<Settings settings={BASE} onUpdate={onUpdate} />);
+    render(<Settings settings={BASE} onUpdate={onUpdate} scanId={null} />);
     const input = screen.getByRole("spinbutton", { name: /scans to keep/i });
     await user.click(input);
     await user.tab(); // blur without changing
@@ -99,7 +103,7 @@ describe("Settings", () => {
     const onUpdate = vi.fn().mockResolvedValue(undefined);
     const withAside: AppSettings = { ...BASE, set_aside_root: "E:\\Aside" };
 
-    render(<Settings settings={withAside} onUpdate={onUpdate} />);
+    render(<Settings settings={withAside} onUpdate={onUpdate} scanId={null} />);
     // Two "Use default" buttons appear (set-aside + reports); the set-aside one
     // is the first, since reports has no value so no button.
     const useDefault = screen.getAllByRole("button", { name: /use default/i })[0];
