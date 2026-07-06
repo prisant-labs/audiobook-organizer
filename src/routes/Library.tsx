@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Library as LibraryIcon } from "lucide-react";
 import { commands, events } from "@/lib/bindings";
-import { formatAppError } from "@/lib/appError";
-import { scanFailureMessage } from "@/lib/scanFailure";
+import { appErrorCode, formatAppError } from "@/lib/appError";
+import { copyForCode } from "@/lib/errorCopy";
 import { STRINGS } from "@/lib/strings";
 import type { UseHealthMetrics } from "@/hooks/useHealthMetrics";
 import { LibrarySkeleton } from "@/components/library/LibrarySkeleton";
@@ -11,6 +12,8 @@ import { BookSlot } from "@/components/library/BookSlot";
 import { SpineCluster } from "@/components/library/SpineCluster";
 import { GoodNewsLine } from "@/components/library/GoodNewsLine";
 import { ScanProgress } from "@/components/ScanProgress";
+import { ErrorCallout } from "@/components/states/ErrorCallout";
+import { EmptyState } from "@/components/states/EmptyState";
 import type { RouteId } from "@/routes";
 
 export interface LibraryProps {
@@ -20,26 +23,37 @@ export interface LibraryProps {
   // Sidebar badges (`navCountsFrom`) read the SAME `overview`, so a completed
   // scan's `reload()` (called below) updates both at once. See useNavCounts.ts.
   health: UseHealthMetrics;
+  // F-909 re-pick (AC-31): open the OS folder picker and persist the new
+  // library root, resolving `true` when a folder was chosen. Provided by
+  // AppShell (which owns settings + the dialog seam). Optional so the route
+  // still renders in isolation (tests); the root-missing surface falls back to
+  // a plain retry when it is absent.
+  onRepickRoot?: () => Promise<boolean>;
 }
+
+// Two codes mean "the persisted library folder isn't usable and the fix is to
+// re-pick it" (F-909, AC-31), as opposed to a transient scan failure.
+const ROOT_MISSING_CODES = new Set(["root-not-found", "root-not-directory"]);
 
 type ScanRunState =
   | { phase: "idle" }
   | { phase: "starting" }
   | { phase: "running"; jobId: number; done?: number; total?: number }
   | { phase: "stopped" }
-  | { phase: "failed"; message: string };
+  // The persisted root is gone (F-909 re-pick surface, AC-31).
+  | { phase: "root-missing"; code: string; detail: string | null }
+  // Any other scan failure (F-908 scan-failure surface, AC-24).
+  | { phase: "failed"; code: string | null; detail: string | null };
 
-// F-902 library home (T-15..T-18, AC-6..AC-9): the warm, cover-forward screen
-// the family sees first. Every count/byte figure comes from `health.overview`
-// (`classify_overview`) at render time (AC-7); the scan affordance wires
-// `scan_start` and the job events so a fresh scan reloads the same data (T-15
-// brief). Loading, error, and honest pre-first-scan states are handled inline
-// here rather than through the full F-908 state components (`src/components/
-// states/*`), which are Phase 7's brief (T-29..T-32) - this route's minimal
-// versions are marked below and are meant to be superseded, not duplicated,
-// when that phase lands.
-export function Library({ onNavigate, health }: LibraryProps) {
-  const { overview, status, error, reload } = health;
+// F-902 library home (T-15..T-18, AC-6..AC-9) with the F-908 error/empty
+// states wired in (Phase 7, T-30..T-32). Every count/byte figure comes from
+// `health.overview` (`classify_overview`) at render time (AC-7); the scan
+// affordance wires `scan_start` and the job events so a fresh scan reloads the
+// same data. Loading uses the library skeleton; the pre-first-scan and
+// load-failure cases render through the shared F-908 state components rather
+// than ad-hoc inline markup.
+export function Library({ onNavigate, health, onRepickRoot }: LibraryProps) {
+  const { overview, status, error, errorCode, reload } = health;
   const [scanState, setScanState] = useState<ScanRunState>({ phase: "idle" });
   const currentJobIdRef = useRef<number | "pending" | null>(null);
   const mountedRef = useRef(true);
@@ -63,7 +77,15 @@ export function Library({ onNavigate, health }: LibraryProps) {
       if (currentJobIdRef.current !== event.payload.job_id) return;
       currentJobIdRef.current = null;
       if (!mountedRef.current) return;
-      setScanState({ phase: "failed", message: scanFailureMessage(event.payload.code) });
+      // The job:failed event carries only the stable code, not the structured
+      // payload; that is enough to map it to family-safe copy (F-908). A root
+      // that went missing mid-scan routes to the re-pick surface (AC-31).
+      const code = event.payload.code;
+      if (ROOT_MISSING_CODES.has(code)) {
+        setScanState({ phase: "root-missing", code, detail: null });
+      } else {
+        setScanState({ phase: "failed", code, detail: null });
+      }
     });
     const unlistenProgress = events.jobProgress.listen((event) => {
       if (currentJobIdRef.current !== event.payload.job_id) return;
@@ -96,18 +118,23 @@ export function Library({ onNavigate, health }: LibraryProps) {
       setScanState({ phase: "running", jobId: result.data.job_id });
     } else {
       currentJobIdRef.current = null;
-      setScanState({ phase: "failed", message: formatAppError(result.error) });
+      const code = appErrorCode(result.error);
+      const detail = formatAppError(result.error);
+      // A missing/invalid persisted root is the F-909 re-pick case (AC-31);
+      // every other synchronous scan failure is the F-908 scan-failure surface.
+      if (ROOT_MISSING_CODES.has(code)) {
+        setScanState({ phase: "root-missing", code, detail });
+      } else {
+        setScanState({ phase: "failed", code, detail });
+      }
     }
   }, []);
 
   // Scan Stop control (F-104, AC-36): cooperative cancel at the next safe
   // boundary. `scan_cancel` is synchronous and returns whether a running job
   // was actually signalled; the backend never emits a job:completed/failed
-  // event for a cancelled job (the requester already knows), so this is the
-  // one place that transitions local state to the honest "stopped" outcome.
-  // Ignoring any later job:progress/completed/failed for this job_id (by
-  // clearing currentJobIdRef) is what keeps that late traffic from silently
-  // reviving a screen the user already asked to stop.
+  // event for a cancelled job, so this is the one place that transitions local
+  // state to the honest "stopped" outcome.
   const stopScan = useCallback(async () => {
     if (scanState.phase !== "running") return;
     const stopped = await commands.scanCancel(scanState.jobId);
@@ -116,25 +143,26 @@ export function Library({ onNavigate, health }: LibraryProps) {
     setScanState({ phase: "stopped" });
   }, [scanState]);
 
+  // F-909 re-pick action (AC-31): open the picker, persist, and on success
+  // clear the failure and reload the home from the new root.
+  const repickRoot = useCallback(async () => {
+    if (!onRepickRoot) return;
+    const chosen = await onRepickRoot();
+    if (!mountedRef.current || !chosen) return;
+    setScanState({ phase: "idle" });
+    reload();
+  }, [onRepickRoot, reload]);
+
   if (status === "loading") {
     return <LibrarySkeleton />;
   }
 
   if (status === "error") {
+    // The whole home failed to load (a rare classify_overview read failure).
+    // Family-safe surface mapped from the code when carried; the raw cause
+    // rides in the disclosure, never as the sentence (AC-24).
     return (
-      <div className="max-w-[52ch]">
-        <h1 className="font-serif text-[26px] font-medium tracking-[-0.01em]">
-          {STRINGS.library.heading}
-        </h1>
-        <p className="mt-3 text-[14px] leading-relaxed text-danger">{error}</p>
-        <button
-          type="button"
-          onClick={reload}
-          className="mt-4 rounded bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover"
-        >
-          Try again
-        </button>
-      </div>
+      <ErrorCallout copy={errorCode ? copyForCode(errorCode) : null} detail={error} onRetry={reload} />
     );
   }
 
@@ -150,31 +178,39 @@ export function Library({ onNavigate, health }: LibraryProps) {
       {scanState.phase === "stopped" && (
         <p className="mt-2 text-[12.5px] text-ink-3">{STRINGS.library.stopped}</p>
       )}
+      {scanState.phase === "root-missing" && (
+        <ErrorCallout
+          compact
+          copy={copyForCode(scanState.code)}
+          detail={scanState.detail}
+          action={onRepickRoot ? { label: STRINGS.states.rootMissingRepick, onClick: () => void repickRoot() } : null}
+          onRetry={() => void startScan()}
+          retryLabel={STRINGS.states.tryAgain}
+        />
+      )}
       {scanState.phase === "failed" && (
-        <p className="mt-2 text-[12.5px] text-danger">{scanState.message}</p>
+        <ErrorCallout
+          compact
+          copy={scanState.code ? copyForCode(scanState.code) : null}
+          detail={scanState.detail}
+          onRetry={() => void startScan()}
+        />
       )}
     </>
   );
 
   if (!overview) {
+    // The honest pre-first-scan state (AC-6): "never scanned" is never shown as
+    // a library of zero books. Design-system Section 5.2 empty register.
     return (
-      <div className="max-w-[52ch]">
-        <h1 className="font-serif text-[26px] font-medium tracking-[-0.01em] [text-wrap:balance]">
-          {STRINGS.library.noScanYet.heading}
-        </h1>
-        <p className="mt-3 text-[14.5px] leading-[1.55] text-ink-2 [text-wrap:pretty]">
-          {STRINGS.library.noScanYet.body}
-        </p>
-        <button
-          type="button"
-          onClick={startScan}
-          disabled={scanning}
-          className="mt-5 rounded bg-primary px-4 py-2.5 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover disabled:opacity-60"
-        >
-          {scanning ? STRINGS.library.scanning.heading : STRINGS.library.scanNow}
-        </button>
+      <EmptyState
+        icon={<LibraryIcon size={22} />}
+        heading={STRINGS.library.noScanYet.heading}
+        body={STRINGS.library.noScanYet.body}
+        action={{ label: scanning ? STRINGS.library.scanning.heading : STRINGS.library.scanNow, onClick: startScan, disabled: scanning }}
+      >
         {scanStatusArea}
-      </div>
+      </EmptyState>
     );
   }
 

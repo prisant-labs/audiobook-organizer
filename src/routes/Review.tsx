@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
+import { CheckCircle2 } from "lucide-react";
 import { STRINGS } from "@/lib/strings";
+import { copyForCode } from "@/lib/errorCopy";
 import { usePlanReview } from "@/hooks/usePlanReview";
 import { DEFAULT_PLAN_FILTER, filterPlanOps, isPlanFilterActive, type PlanFilterState } from "@/lib/planFilter";
 import { GroupCard } from "@/components/review/GroupCard";
@@ -7,6 +9,9 @@ import { GroupDetail } from "@/components/review/GroupDetail";
 import { OpRow } from "@/components/review/OpRow";
 import { PlanFilter } from "@/components/review/PlanFilter";
 import { ReviewFooter } from "@/components/review/ReviewFooter";
+import { BuildingThePlan } from "@/components/states/BuildingThePlan";
+import { EmptyState } from "@/components/states/EmptyState";
+import { ErrorCallout } from "@/components/states/ErrorCallout";
 
 export interface ReviewProps {
   // The most recently completed scan's id (from `classify_overview`, owned by
@@ -27,7 +32,8 @@ export interface ReviewProps {
 // brief (T-29..T-32) and are meant to supersede these, not be duplicated by
 // them.
 export function Review({ scanId }: ReviewProps) {
-  const { status, review, ops, error, regenerate, toggleGroup, excludeOp } = usePlanReview(scanId);
+  const { status, review, ops, error, errorCode, regenerate, cancel, toggleGroup, excludeOp } =
+    usePlanReview(scanId);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [filter, setFilter] = useState<PlanFilterState>(DEFAULT_PLAN_FILTER);
 
@@ -43,38 +49,45 @@ export function Review({ scanId }: ReviewProps) {
   );
 
   if (status === "no-scan") {
+    // Honest pre-scan empty state (design-system Section 5.2): nothing to
+    // review until the library has been scanned.
     return (
-      <div className="max-w-[52ch]">
-        <h1 className="font-serif text-[26px] font-medium tracking-[-0.01em] [text-wrap:balance]">
-          {STRINGS.review.noScan.heading}
-        </h1>
-        <p className="mt-3 text-[14px] leading-relaxed text-ink-2">{STRINGS.review.noScan.body}</p>
-      </div>
+      <EmptyState
+        icon={<CheckCircle2 size={22} />}
+        heading={STRINGS.review.noScan.heading}
+        body={STRINGS.review.noScan.body}
+      />
     );
   }
 
   if (status === "generating" || status === "loading") {
+    // The DISTINCT plan-building loading state with a real Stop (AC-26,
+    // design-system Section 5.3/5.4). Stop honestly abandons the wait and
+    // drops to the stopped surface below; no library change happens here.
+    return <BuildingThePlan onStop={cancel} />;
+  }
+
+  if (status === "stopped") {
+    // The user stopped the plan build (AC-26). Calm, reversible: build again.
     return (
-      <div className="max-w-[52ch]">
-        <h1 className="font-serif text-[26px] font-medium tracking-[-0.01em]">{STRINGS.review.heading}</h1>
-        <p className="mt-3 text-[13.5px] text-ink-2">{STRINGS.review.generating}</p>
-      </div>
+      <EmptyState
+        heading={STRINGS.states.planBuildStopped.heading}
+        body={STRINGS.states.planBuildStopped.body}
+        action={{ label: STRINGS.states.planBuildStopped.action, onClick: regenerate }}
+      />
     );
   }
 
   if (status === "error" || !review) {
+    // F-908 plan-failure surface (AC-24): family-safe copy mapped from the
+    // code when carried, generic otherwise; the raw cause stays in the
+    // disclosure. Retry re-runs generation.
     return (
-      <div className="max-w-[52ch]">
-        <h1 className="font-serif text-[26px] font-medium tracking-[-0.01em]">{STRINGS.review.heading}</h1>
-        <p className="mt-3 text-[14px] leading-relaxed text-danger">{error}</p>
-        <button
-          type="button"
-          onClick={regenerate}
-          className="mt-4 rounded bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover"
-        >
-          Try again
-        </button>
-      </div>
+      <ErrorCallout
+        copy={errorCode ? copyForCode(errorCode) : null}
+        detail={error}
+        onRetry={regenerate}
+      />
     );
   }
 

@@ -90,7 +90,9 @@ function hookState(overrides: Partial<UsePlanReview> = {}): UsePlanReview {
     ops: [op()],
     opsTruncated: false,
     error: null,
+    errorCode: null,
     regenerate: vi.fn(),
+    cancel: vi.fn(),
     toggleGroup: vi.fn().mockResolvedValue(undefined),
     excludeOp: vi.fn().mockResolvedValue(undefined),
     ...overrides,
@@ -109,6 +111,33 @@ describe("Review", () => {
     mockedUsePlanReview.mockReturnValue(hookState({ status: "generating", review: null, ops: [] }));
     render(<Review scanId={9} />);
     expect(screen.getByText(/Building the tidy-up plan/)).toBeInTheDocument();
+  });
+
+  it("the plan-building state carries a real Stop wired to cancel (AC-26)", async () => {
+    const user = userEvent.setup();
+    const cancel = vi.fn();
+    mockedUsePlanReview.mockReturnValue(
+      hookState({ status: "generating", review: null, ops: [], cancel }),
+    );
+    render(<Review scanId={9} />);
+
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(cancel).toHaveBeenCalledTimes(1);
+    // Never the demo-only "Skip ahead" affordance (FD-02).
+    expect(screen.queryByText(/skip ahead/i)).toBeNull();
+  });
+
+  it("the stopped state offers to build the plan again, calling regenerate (AC-26)", async () => {
+    const user = userEvent.setup();
+    const regenerate = vi.fn();
+    mockedUsePlanReview.mockReturnValue(
+      hookState({ status: "stopped", review: null, ops: [], regenerate }),
+    );
+    render(<Review scanId={9} />);
+
+    expect(screen.getByText(/Building the plan was stopped/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /build the plan again/i }));
+    expect(regenerate).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a retry control on error, calling regenerate()", async () => {

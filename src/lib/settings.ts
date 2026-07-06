@@ -1,5 +1,5 @@
-import { commands, type AppSettings } from "./bindings";
-import { formatAppError } from "./appError";
+import { commands, type AppError, type AppSettings } from "./bindings";
+import { AppErrorException } from "./appError";
 
 // Frontend client for the F-803 singleton settings (T-06). Wraps the generated
 // settings_get / settings_set bindings and unwraps their `Result` shape into a
@@ -10,12 +10,12 @@ import { formatAppError } from "./appError";
 
 export type { AppSettings };
 
-// A settings IPC failure surfaced as a throwable Error carrying the formatted
-// AppError message, so callers can show a plain-language line and (Phase 7)
-// map the code to a family-safe surface.
-export class SettingsError extends Error {
-  constructor(message: string) {
-    super(message);
+// A settings IPC failure surfaced as a throwable carrying the STRUCTURED
+// AppError (via AppErrorException), so the F-908 shell can map its `code` to a
+// family-safe surface (errorCopy.ts), not merely show the formatted message.
+export class SettingsError extends AppErrorException {
+  constructor(error: AppError) {
+    super(error);
     this.name = "SettingsError";
   }
 }
@@ -25,7 +25,7 @@ export class SettingsError extends Error {
 export async function getSettings(): Promise<AppSettings> {
   const result = await commands.settingsGet();
   if (result.status === "error") {
-    throw new SettingsError(formatAppError(result.error));
+    throw new SettingsError(result.error);
   }
   return result.data;
 }
@@ -34,7 +34,7 @@ export async function getSettings(): Promise<AppSettings> {
 export async function saveSettings(next: AppSettings): Promise<AppSettings> {
   const result = await commands.settingsSet(next);
   if (result.status === "error") {
-    throw new SettingsError(formatAppError(result.error));
+    throw new SettingsError(result.error);
   }
   return result.data;
 }

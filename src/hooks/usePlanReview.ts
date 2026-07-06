@@ -8,6 +8,7 @@ import {
   type PlanOpView,
   type PlanReview,
 } from "@/lib/plan";
+import { codeOf, type AppErrorCode } from "@/lib/appError";
 
 // F-903 plan review surface (T-19..T-22, v0.4.0 Phase 5): owns the review
 // screen's data. On mount (and whenever `scanId` changes to a real value) it
@@ -23,6 +24,7 @@ export type PlanReviewStatus =
   | "generating"
   | "loading"
   | "ready"
+  | "stopped"
   | "error";
 
 export interface UsePlanReview {
@@ -33,8 +35,18 @@ export interface UsePlanReview {
   /** Whether `ops` was capped below the plan's real total (see `PlanOpsPage.truncated`). */
   opsTruncated: boolean;
   error: string | null;
+  /** The structured AppError code behind an error, when carried (F-908). */
+  errorCode?: AppErrorCode | null;
   /** Re-run generation from the current `scanId` (a fresh plan; the prior one is untouched). */
   regenerate: () => void;
+  /**
+   * Stop the in-flight plan build (AC-26, design-system Section 5.4). Honest
+   * cooperative stop: building a plan moves no files, so this abandons the
+   * client's wait for the result and drops to the `stopped` status - it never
+   * claims to undo library work (there is none while planning). A `regenerate`
+   * afterwards builds again. A no-op unless a generation is in flight.
+   */
+  cancel: () => void;
   /** Toggle one campaign group's include/skip switch (F-502, AC-11). */
   toggleGroup: (group: string, included: boolean) => Promise<void>;
   /** Exclude one operation (F-502, AC-13); patches just that row in `ops`. */
@@ -54,14 +66,22 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
   // never needs to set state synchronously for that branch (react-hooks
   // set-state-in-effect: only the async IIFE's own setState calls run,
   // matching the pattern `useHealthMetrics`/`useAppSettings` already use).
-  const [phase, setPhase] = useState<"idle" | "generating" | "loading" | "ready" | "error">("idle");
+  const [phase, setPhase] = useState<
+    "idle" | "generating" | "loading" | "ready" | "stopped" | "error"
+  >("idle");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
   const [regenNonce, setRegenNonce] = useState(0);
   const mountedRef = useRef(true);
   // In-flight guard (F-903 hardening): true while a generate+load sequence is
   // running, so an overlapping regenerate() is ignored rather than spawning a
   // second concurrent `plan_generate` against the same scan.
   const inFlightRef = useRef(false);
+  // Set by `cancel()` (AC-26 plan-building Stop): the in-flight generation
+  // checks this after each await and abandons its result, so a stopped build
+  // never revives the review screen with a plan the user asked to stop waiting
+  // for. Reset at the top of each new generation run.
+  const stoppedRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -74,22 +94,25 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
     if (scanId == null) return;
     let cancelled = false;
     inFlightRef.current = true;
+    stoppedRef.current = false;
     void (async () => {
       setPhase("generating");
       setError(null);
+      setErrorCode(null);
       try {
         const generated = await generatePlan(scanId);
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current || stoppedRef.current) return;
         setReview(generated);
         setPhase("loading");
         const page = await listPlanOps(generated.plan_id);
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current || stoppedRef.current) return;
         setOps(page.ops);
         setOpsTruncated(page.truncated);
         setPhase("ready");
       } catch (e) {
-        if (cancelled || !mountedRef.current) return;
+        if (cancelled || !mountedRef.current || stoppedRef.current) return;
         setError(messageOf(e));
+        setErrorCode(codeOf(e));
         setPhase("error");
       } finally {
         // Only the run that still owns the sequence clears the guard: a
@@ -113,7 +136,22 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
     // (F-903 hardening): a double-invoke must not start a second concurrent
     // plan_generate. A regenerate after the current one settles proceeds.
     if (inFlightRef.current) return;
+    // Clear a prior stop so the review can leave the stopped state; the effect
+    // also resets stoppedRef at the top of the new run.
+    stoppedRef.current = false;
     setRegenNonce((n) => n + 1);
+  }, []);
+
+  const cancel = useCallback(() => {
+    // Honest plan-building Stop (AC-26): only meaningful while a generation is
+    // in flight. Flip the stop flag so the running async abandons its result,
+    // clear the in-flight guard so a later regenerate() can proceed, and drop
+    // to the stopped surface. No backend cancel is issued because building a
+    // plan performs no library change to cancel - the copy says as much.
+    if (!inFlightRef.current) return;
+    stoppedRef.current = true;
+    inFlightRef.current = false;
+    setPhase("stopped");
   }, []);
 
   const toggleGroup = useCallback(
@@ -151,5 +189,5 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
     [review],
   );
 
-  return { status, review, ops, opsTruncated, error, regenerate, toggleGroup, excludeOp };
+  return { status, review, ops, opsTruncated, error, errorCode, regenerate, cancel, toggleGroup, excludeOp };
 }

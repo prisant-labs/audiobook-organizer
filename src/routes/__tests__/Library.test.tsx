@@ -146,6 +146,45 @@ describe("Library", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  // F-908 scan-failure and F-909 root-missing surfaces (T-30, AC-24/AC-31).
+  describe("scan failure and root re-pick surfaces", () => {
+    it("renders a family-safe scan-failure surface with retry when scan_start fails (AC-24)", async () => {
+      const user = userEvent.setup();
+      mockedScanStart.mockResolvedValue({
+        status: "error",
+        error: { "scan-failed": { detail: "the drive fell over" } },
+      });
+      render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} />);
+
+      await user.click(screen.getByRole("button", { name: "Scan again" }));
+
+      // The mapped plain sentence, not the raw code, is the family-facing line.
+      expect(await screen.findByText("The scan stopped before it finished.")).toBeInTheDocument();
+      // The raw cause is available only inside the disclosure.
+      expect(screen.getByText(/the drive fell over/)).toBeInTheDocument();
+      // Retry re-attempts the scan.
+      mockedScanStart.mockResolvedValue({ status: "ok", data: { job_id: 3 } });
+      await user.click(screen.getByRole("button", { name: /try again/i }));
+      await waitFor(() => expect(mockedScanStart).toHaveBeenCalledTimes(2));
+    });
+
+    it("routes a missing persisted root to a re-pick surface wired to onRepickRoot (AC-31)", async () => {
+      const user = userEvent.setup();
+      const onRepickRoot = vi.fn().mockResolvedValue(true);
+      mockedScanStart.mockResolvedValue({
+        status: "error",
+        error: { "root-not-found": { path: "E:\\Books" } },
+      });
+      render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} onRepickRoot={onRepickRoot} />);
+
+      await user.click(screen.getByRole("button", { name: "Scan again" }));
+
+      expect(await screen.findByText("Your library folder couldn't be found.")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /choose your library folder again/i }));
+      expect(onRepickRoot).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // F-104 scan Stop control (T-28, AC-36): cooperative cancel, never "Skip ahead".
   describe("scan Stop control", () => {
     it("shows a working Stop control once a scan is running, wired to scan_cancel", async () => {

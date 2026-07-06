@@ -194,4 +194,43 @@ export const STRINGS = {
       "Applying a tidy-up isn't available in this version yet - that arrives in a later update. For now you can review the plan, include or leave out groups, and look at the file details.",
     allExcludedNote: "Turn on at least one group to tidy up.",
   },
+
+  // Error / empty / loading states (F-908, v0.4.0 Phase 7, design-system
+  // Section 5). The per-AppError family sentences and next steps live in the
+  // centralized error-copy module (src/lib/errorCopy.ts, still one module per
+  // FD-23); these are the shared chrome strings the state COMPONENTS render
+  // around that copy. Plain-language register throughout (Section 6): never a
+  // machine code or raw OS error on a family-facing line.
+  states: {
+    // Generic family-safe fallback wording, mirrored by GENERIC_ERROR_COPY.
+    genericHeading: "Something went wrong.",
+    // The disclosure that holds the technical detail (FD-13): the one place a
+    // raw error string / path is allowed, for tier 1. Same label the review
+    // surface uses so "Show file details" means one thing everywhere.
+    showFileDetails: "Show file details",
+    tryAgain: "Try again",
+    // Startup boot (AppRoot), while the settings load resolves.
+    booting: "Getting your library ready...",
+    // Settings could not be read/saved at startup (AppRoot). Reassurance that
+    // the audiobooks are safe; the technical cause sits in the disclosure.
+    settingsUnavailableHeading: "Your settings could not be opened",
+    // Persisted library root is gone at scan time (F-909 re-pick, AC-31): a
+    // calm surface whose one action re-picks the folder through the OS picker.
+    rootMissingRepick: "Choose your library folder again",
+    // Plan-building loading state (AC-26, design-system Section 5.3): DISTINCT
+    // from the scan screen, with a real Stop. Stopping abandons the wait and
+    // returns you; building a plan moves nothing, so this is honest about what
+    // Stop does (it never claims to cancel work mid-file - there is no file
+    // work to cancel while planning).
+    buildingThePlan: {
+      heading: "Building the tidy-up plan",
+      subline: "Working out the safest set of changes.",
+      stop: "Stop",
+    },
+    planBuildStopped: {
+      heading: "Building the plan was stopped.",
+      body: "Nothing was changed - building a plan only reads your library. You can build it again whenever you like.",
+      action: "Build the plan again",
+    },
+  },
 } as const;

@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { navCountsFrom } from "@/hooks/useNavCounts";
 import { useHealthMetrics, type UseHealthMetrics } from "@/hooks/useHealthMetrics";
 import { DEFAULT_ROUTE, type RouteId } from "@/routes";
 import { DEFAULT_THEME, isTheme, type Theme } from "@/lib/theme";
+import { pickLibraryFolder } from "@/lib/dialog";
 import type { AppSettings } from "@/lib/settings";
 import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
@@ -41,6 +42,17 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   const theme: Theme = isTheme(settings.theme) ? settings.theme : DEFAULT_THEME;
   const onThemeChange = (next: Theme) => void onUpdate({ ...settings, theme: next });
 
+  // F-909 re-pick (AC-31): the shell owns the settings + dialog seam, so the
+  // root-missing surface (in Library) delegates re-picking here. Opens the OS
+  // folder picker and persists the new library root; resolves `true` when a
+  // folder was chosen (the frontend never touches the filesystem, FD-29).
+  const onRepickRoot = useCallback(async (): Promise<boolean> => {
+    const path = await pickLibraryFolder();
+    if (path === null) return false;
+    await onUpdate({ ...settings, library_root: path });
+    return true;
+  }, [settings, onUpdate]);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Titlebar theme={theme} onThemeChange={onThemeChange} />
@@ -53,6 +65,7 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
             onUpdate={onUpdate}
             onNavigate={setRoute}
             health={health}
+            onRepickRoot={onRepickRoot}
           />
         </ScreenContainer>
       </div>
@@ -66,16 +79,18 @@ function RouteContent({
   onUpdate,
   onNavigate,
   health,
+  onRepickRoot,
 }: {
   route: RouteId;
   settings: AppSettings;
   onUpdate: (next: AppSettings) => Promise<void>;
   onNavigate: (route: RouteId) => void;
   health: UseHealthMetrics;
+  onRepickRoot: () => Promise<boolean>;
 }) {
   switch (route) {
     case "library":
-      return <Library onNavigate={onNavigate} health={health} />;
+      return <Library onNavigate={onNavigate} health={health} onRepickRoot={onRepickRoot} />;
     case "tidy-up":
       return <Review scanId={health.overview?.scan_id ?? null} />;
     case "duplicates":

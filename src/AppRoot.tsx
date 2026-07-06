@@ -1,20 +1,26 @@
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { DEFAULT_THEME, isTheme, type Theme } from "@/lib/theme";
+import { STRINGS } from "@/lib/strings";
+import { copyForCode } from "@/lib/errorCopy";
 import { AppShell } from "@/components/shell/AppShell";
 import { Frame } from "@/components/shell/Frame";
 import { FirstRun } from "@/routes/FirstRun";
+import { ErrorCallout } from "@/components/states/ErrorCallout";
+import { LoadingSkeleton } from "@/components/states/LoadingSkeleton";
 
-// The application root (v0.4.0 Phase 2). Owns the load of the F-803 settings and
-// routes the three top-level states before the shell:
-//   - loading  -> a calm boot screen
-//   - error    -> a plain settings-unavailable fallback with retry
+// The application root (v0.4.0 Phase 2, error states hardened in Phase 7). Owns
+// the load of the F-803 settings and routes the three top-level states before
+// the shell:
+//   - loading  -> a calm boot placeholder (LoadingSkeleton)
+//   - error    -> the F-908 settings-unavailable surface (ErrorCallout), mapped
+//                 from the AppError code when one was carried, generic otherwise
 //   - no root  -> first-run (F-909); the only path forward is picking a folder
 //   - ready    -> the full AppShell
 // Theme is derived from settings and changed through `update` (persisted via
 // settings_set); useAppSettings applies `data-theme`. The pre-shell screens
 // still get the titlebar (and its theme toggle + window controls) via `Frame`.
 export function AppRoot() {
-  const { settings, status, error, reload, update } = useAppSettings();
+  const { settings, status, error, errorCode, reload, update } = useAppSettings();
   const theme: Theme = settings && isTheme(settings.theme) ? settings.theme : DEFAULT_THEME;
   const onThemeChange = (next: Theme) => {
     if (settings) void update({ ...settings, theme: next });
@@ -23,15 +29,24 @@ export function AppRoot() {
   if (status === "loading") {
     return (
       <Frame theme={theme} onThemeChange={onThemeChange}>
-        <BootScreen />
+        <LoadingSkeleton label={STRINGS.states.booting} centered />
       </Frame>
     );
   }
 
   if (status === "error" || !settings) {
+    // A settings read/save failure at startup (F-908, AC-24). The mapped copy
+    // (settings-failed / db-migration-failed / ...) is the family-facing line;
+    // the raw cause is tucked in the disclosure, never shown bare. Reassurance
+    // that the audiobooks are untouched rides in the mapped next step.
     return (
       <Frame theme={theme} onThemeChange={onThemeChange}>
-        <SettingsUnavailable message={error} onRetry={reload} />
+        <ErrorCallout
+          heading={STRINGS.states.settingsUnavailableHeading}
+          copy={errorCode ? copyForCode(errorCode) : null}
+          detail={error}
+          onRetry={reload}
+        />
       </Frame>
     );
   }
@@ -45,38 +60,4 @@ export function AppRoot() {
   }
 
   return <AppShell settings={settings} onUpdate={update} />;
-}
-
-function BootScreen() {
-  return (
-    <div className="mx-auto flex min-h-full max-w-[40ch] items-center justify-center px-10 py-16">
-      <p className="text-[13.5px] text-ink-3">Getting your library ready...</p>
-    </div>
-  );
-}
-
-// A minimal, plain-language fallback when the settings row cannot be read at
-// startup (a rare storage failure). The full F-908 error surfaces (corrupt-DB
-// recovery, permission denied, and the rest) are Phase 7's task; this is the
-// honest interim so a settings-read failure never leaves a blank window.
-function SettingsUnavailable({ message, onRetry }: { message: string | null; onRetry: () => void }) {
-  return (
-    <div className="mx-auto flex min-h-full max-w-[46ch] flex-col items-start justify-center gap-4 px-10 py-16">
-      <h1 className="font-serif text-[24px] font-medium tracking-[-0.01em]">
-        Your settings could not be opened
-      </h1>
-      <p className="text-[14px] leading-relaxed text-ink-2">
-        Your audiobooks are untouched - this is only the app's own notes. Try again, and if it keeps
-        happening, restart the app.
-      </p>
-      {message && <p className="text-[12.5px] leading-relaxed text-danger">{message}</p>}
-      <button
-        type="button"
-        onClick={onRetry}
-        className="mt-1 rounded bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover"
-      >
-        Try again
-      </button>
-    </div>
-  );
 }

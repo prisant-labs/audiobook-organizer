@@ -1,5 +1,5 @@
-import { commands, type LibraryOverview } from "./bindings";
-import { formatAppError } from "./appError";
+import { commands, type AppError, type LibraryOverview } from "./bindings";
+import { AppErrorException } from "./appError";
 
 // Frontend client for the F-902 library home (T-15, v0.4.0 Phase 4). Wraps the
 // generated `classify_overview` binding and unwraps its `Result` shape.
@@ -12,9 +12,9 @@ import { formatAppError } from "./appError";
 
 export type { LibraryOverview };
 
-export class OverviewError extends Error {
-  constructor(message: string) {
-    super(message);
+export class OverviewError extends AppErrorException {
+  constructor(error: AppError) {
+    super(error);
     this.name = "OverviewError";
   }
 }
@@ -22,7 +22,7 @@ export class OverviewError extends Error {
 export async function getLibraryOverview(): Promise<LibraryOverview | null> {
   const result = await commands.classifyOverview();
   if (result.status === "error") {
-    throw new OverviewError(formatAppError(result.error));
+    throw new OverviewError(result.error);
   }
   return result.data;
 }

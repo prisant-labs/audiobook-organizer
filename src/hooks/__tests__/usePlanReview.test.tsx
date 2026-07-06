@@ -159,6 +159,48 @@ describe("usePlanReview", () => {
     await waitFor(() => expect(mockedGenerate).toHaveBeenCalledTimes(2));
   });
 
+  it("cancel() stops an in-flight plan build and a stopped build never revives the screen (AC-26)", async () => {
+    // A generation that has not settled keeps the build in flight.
+    let resolveGenerate: (r: PlanReview) => void = () => {};
+    mockedGenerate.mockReturnValue(
+      new Promise<PlanReview>((resolve) => {
+        resolveGenerate = resolve;
+      }),
+    );
+    mockedListOps.mockResolvedValue(page([op()]));
+
+    const { result } = renderHook(() => usePlanReview(9));
+    expect(result.current.status).toBe("generating");
+
+    // Stop while it is still building: the honest cooperative stop (no backend
+    // cancel; building moves no files) drops to the stopped surface.
+    act(() => result.current.cancel());
+    expect(result.current.status).toBe("stopped");
+
+    // Even when the abandoned generation later resolves, the stopped build is
+    // NOT revived into a ready review (stoppedRef guards the async result).
+    await act(async () => {
+      resolveGenerate(review());
+    });
+    expect(result.current.status).toBe("stopped");
+    expect(result.current.review).toBeNull();
+
+    // A regenerate afterwards builds again from scratch.
+    mockedGenerate.mockResolvedValue(review());
+    act(() => result.current.regenerate());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+  });
+
+  it("cancel() is a no-op when no generation is in flight", async () => {
+    mockedGenerate.mockResolvedValue(review());
+    mockedListOps.mockResolvedValue(page([op()]));
+    const { result } = renderHook(() => usePlanReview(9));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => result.current.cancel());
+    expect(result.current.status).toBe("ready");
+  });
+
   it("ignores overlapping regenerate() calls while a generation is in flight", async () => {
     // A generation that has not settled keeps the sequence in flight.
     let resolveGenerate: (r: PlanReview) => void = () => {};

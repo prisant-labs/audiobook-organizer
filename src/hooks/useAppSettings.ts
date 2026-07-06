@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSettings, saveSettings, type AppSettings } from "@/lib/settings";
+import { codeOf, type AppErrorCode } from "@/lib/appError";
 import {
   applyTheme,
   clearLegacyTheme,
@@ -27,6 +28,13 @@ export interface UseAppSettings {
   status: SettingsStatus;
   /** A plain-language error message when `status === "error"`. */
   error: string | null;
+  /**
+   * The structured AppError code behind a startup settings failure, when one
+   * was carried (F-908): lets AppRoot render the family-safe surface for
+   * `settings-failed` / `db-migration-failed` etc. `null` falls back to the
+   * generic surface with `error` in the disclosure.
+   */
+  errorCode?: AppErrorCode | null;
   /** Re-run the initial load (used by the error-state retry). */
   reload: () => void;
   /**
@@ -71,6 +79,7 @@ export function useAppSettings(): UseAppSettings {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [status, setStatus] = useState<SettingsStatus>("loading");
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<AppErrorCode | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const settingsRef = useRef<AppSettings | null>(null);
   const mountedRef = useRef(true);
@@ -102,6 +111,7 @@ export function useAppSettings(): UseAppSettings {
       if (!cancelled && mountedRef.current) {
         setStatus("loading");
         setError(null);
+        setErrorCode(null);
       }
       try {
         const loaded = await getSettings();
@@ -112,6 +122,7 @@ export function useAppSettings(): UseAppSettings {
       } catch (e) {
         if (cancelled || !mountedRef.current) return;
         setError(messageOf(e));
+        setErrorCode(codeOf(e));
         setStatus("error");
       }
     })();
@@ -138,5 +149,5 @@ export function useAppSettings(): UseAppSettings {
     [commit],
   );
 
-  return { settings, status, error, reload, update };
+  return { settings, status, error, errorCode, reload, update };
 }
