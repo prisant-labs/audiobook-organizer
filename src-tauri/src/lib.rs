@@ -32,6 +32,7 @@ mod events;
 pub use commands::{run_job_to_terminal, JobEnd};
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use abo_core::job::CancelFlag;
@@ -57,6 +58,15 @@ pub struct AppState {
     /// cooperative stop. A plain `std::sync::Mutex` is enough: every access is a
     /// brief, non-async insert/remove/lookup, never held across an `.await`.
     pub jobs: Arc<Mutex<HashMap<i64, CancelFlag>>>,
+    /// The sanctioned library scan root the backend re-allows at startup
+    /// (FD-29, F-909): the persisted `settings.library_root`, loaded once in
+    /// [`run`]'s setup and updated by `settings_set` when the user re-selects the
+    /// library folder. `scan_start` reads it instead of accepting an arbitrary
+    /// path from the frontend, which is the mechanism that keeps the WebView from
+    /// ever directing the backend at an unsanctioned path. `None` until first-run
+    /// picks a library. A plain `std::sync::Mutex`: every access is a brief,
+    /// non-async snapshot/replace, never held across an `.await`.
+    pub library_root: Arc<Mutex<Option<PathBuf>>>,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -80,6 +90,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::scan_cancel,
             commands::scan_entries,
             commands::db_status,
+            commands::settings::settings_get,
+            commands::settings::settings_set,
         ])
         .events(collect_events![
             events::JobCompleted,
@@ -110,6 +122,13 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(build_log_plugin())
+        // Folder selection ONLY (F-909, FD-29): the OS folder picker so the user
+        // can choose the library root. This is the one capability the security
+        // model adds this release (capabilities/default.json grants exactly
+        // `dialog:allow-open`); there is deliberately no fs and no shell plugin.
+        // The picked path is handed to the backend via `settings_set`; the
+        // WebView is never granted a standing filesystem scope.
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             // Register the event registry so typed emit/listen resolve names.
@@ -136,10 +155,34 @@ pub fn run() {
                 );
             }
 
+            // Startup re-allowance (FD-29, F-909, AC-31): read the persisted
+            // library root and hold it as the sanctioned scan root, so operations
+            // resume against the same library on relaunch without re-picking. In
+            // this architecture the backend owns all filesystem access via
+            // std::fs (there is no tauri-plugin-fs and thus no WebView fs scope to
+            // re-add), so "re-allowance" concretely means loading the sanctioned
+            // root here; scan_start then uses it rather than any frontend path.
+            // A settings read failure at startup is non-fatal: fall back to "no
+            // library configured" (the shell shows first-run) rather than refusing
+            // to launch. Whether a persisted root still exists on disk is checked
+            // at scan time (root-not-found -> F-908 re-pick surface, Phase 7).
+            let library_root = tauri::async_runtime::block_on(async {
+                abo_core::db::settings::get_settings(&pool).await
+            })
+            .map(|settings| settings.library_root.map(PathBuf::from))
+            .unwrap_or_else(|e| {
+                log::warn!("could not read settings at startup: {e}; starting with no library");
+                None
+            });
+            if let Some(root) = &library_root {
+                log::info!("re-allowed persisted library root: {}", root.display());
+            }
+
             app.manage(AppState {
                 pool,
                 db_outcome,
                 jobs: Arc::new(Mutex::new(HashMap::new())),
+                library_root: Arc::new(Mutex::new(library_root)),
             });
             Ok(())
         })
