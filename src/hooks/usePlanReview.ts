@@ -58,6 +58,10 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
   const [error, setError] = useState<string | null>(null);
   const [regenNonce, setRegenNonce] = useState(0);
   const mountedRef = useRef(true);
+  // In-flight guard (F-903 hardening): true while a generate+load sequence is
+  // running, so an overlapping regenerate() is ignored rather than spawning a
+  // second concurrent `plan_generate` against the same scan.
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -69,6 +73,7 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
   useEffect(() => {
     if (scanId == null) return;
     let cancelled = false;
+    inFlightRef.current = true;
     void (async () => {
       setPhase("generating");
       setError(null);
@@ -86,6 +91,14 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
         if (cancelled || !mountedRef.current) return;
         setError(messageOf(e));
         setPhase("error");
+      } finally {
+        // Only the run that still owns the sequence clears the guard: a
+        // superseded (cancelled) run leaves it set for the newer run that
+        // replaced it, so the flag can never be cleared out from under an
+        // in-flight generation.
+        if (!cancelled) {
+          inFlightRef.current = false;
+        }
       }
     })();
     return () => {
@@ -95,7 +108,13 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
 
   const status: PlanReviewStatus = scanId == null ? "no-scan" : phase === "idle" ? "generating" : phase;
 
-  const regenerate = useCallback(() => setRegenNonce((n) => n + 1), []);
+  const regenerate = useCallback(() => {
+    // Ignore an overlapping regenerate while a generation is still in flight
+    // (F-903 hardening): a double-invoke must not start a second concurrent
+    // plan_generate. A regenerate after the current one settles proceeds.
+    if (inFlightRef.current) return;
+    setRegenNonce((n) => n + 1);
+  }, []);
 
   const toggleGroup = useCallback(
     async (group: string, included: boolean) => {

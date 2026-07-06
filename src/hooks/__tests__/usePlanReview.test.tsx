@@ -34,6 +34,7 @@ function group(overrides: Partial<PlanReview["groups"][number]> = {}) {
     headline: "Give 1 loose book its own folder",
     reason: "reason",
     op_count: 1,
+    actionable_count: 1,
     byte_size: 100,
     status: "included" as const,
     warning_count: 0,
@@ -154,6 +155,36 @@ describe("usePlanReview", () => {
     const { result } = renderHook(() => usePlanReview(9));
     await waitFor(() => expect(result.current.status).toBe("ready"));
 
+    act(() => result.current.regenerate());
+    await waitFor(() => expect(mockedGenerate).toHaveBeenCalledTimes(2));
+  });
+
+  it("ignores overlapping regenerate() calls while a generation is in flight", async () => {
+    // A generation that has not settled keeps the sequence in flight.
+    let resolveGenerate: (r: PlanReview) => void = () => {};
+    mockedGenerate.mockReturnValue(
+      new Promise<PlanReview>((resolve) => {
+        resolveGenerate = resolve;
+      }),
+    );
+    mockedListOps.mockResolvedValue(page([]));
+
+    const { result } = renderHook(() => usePlanReview(9));
+    // The mount generation is running (one call so far).
+    expect(result.current.status).toBe("generating");
+    expect(mockedGenerate).toHaveBeenCalledTimes(1);
+
+    // A double-invoke while it is still running is ignored: no second
+    // concurrent plan_generate is started.
+    act(() => result.current.regenerate());
+    act(() => result.current.regenerate());
+    expect(mockedGenerate).toHaveBeenCalledTimes(1);
+
+    // Once the in-flight run settles, a later regenerate proceeds normally.
+    await act(async () => {
+      resolveGenerate(review());
+    });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
     act(() => result.current.regenerate());
     await waitFor(() => expect(mockedGenerate).toHaveBeenCalledTimes(2));
   });
