@@ -27,10 +27,9 @@ export interface AppShellProps {
 // from settings and changed through `onUpdate` (the one source of truth,
 // persisted via settings_set; AppShell does not touch `data-theme` itself -
 // useAppSettings applies it). The Library route now hosts the real F-902
-// library home (T-15..T-18, v0.4.0 Phase 4); the disposable v0.1.0 tracer
-// (`src/App.tsx`) is unreferenced from here but not yet deleted (that file
-// removal is T-37, G-7, Phase 8). The Settings route hosts the real F-803/
-// F-909 Settings screen.
+// library home (T-15..T-18, v0.4.0 Phase 4). The disposable v0.1.0 tracer
+// (`src/App.tsx`) is deleted (T-37, G-7, Phase 8); this is now the only shell.
+// The Settings route hosts the real F-803/F-909 Settings screen.
 export function AppShell({ settings, onUpdate }: AppShellProps) {
   const [route, setRoute] = useState<RouteId>(DEFAULT_ROUTE);
   // ONE `classify_overview` load for the whole shell (T-15): the Sidebar
