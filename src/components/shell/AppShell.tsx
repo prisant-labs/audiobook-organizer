@@ -10,6 +10,7 @@ import { ScreenContainer } from "./ScreenContainer";
 import { ComingSoon } from "./ComingSoon";
 import { Settings } from "@/routes/Settings";
 import { Library } from "@/routes/Library";
+import { Review } from "@/routes/Review";
 
 export interface AppShellProps {
   // The persisted settings (from useAppSettings, owned by AppRoot). AppShell
@@ -76,7 +77,7 @@ function RouteContent({
     case "library":
       return <Library onNavigate={onNavigate} health={health} />;
     case "tidy-up":
-      return <ComingSoon label="Tidy-up" />;
+      return <Review scanId={health.overview?.scan_id ?? null} />;
     case "duplicates":
       return <ComingSoon label="Duplicates" />;
     case "history":

@@ -83,4 +83,44 @@ export const STRINGS = {
       heading: "Reading your library...",
     },
   },
+
+  // Plan review surface (F-903/F-502/F-503/F-504, v0.4.0 Phase 5,
+  // design-system Sections 4.9-4.14 and 6). Every group's headline/reason and
+  // every count/byte figure comes from the real generated plan
+  // (`plan_generate`/`plan_get`), never a literal here (FD-27).
+  review: {
+    heading: "Review the tidy-up",
+    lede: "The plan looks at every book and works out what would tidy it up. Nothing happens until you say so, and you can leave any group out.",
+    generating: "Building the tidy-up plan...",
+    noScan: {
+      heading: "Scan your library first",
+      body: "There is nothing to review yet. Go to your library and scan it, then come back here to review a tidy-up.",
+    },
+    detailEmpty: "Choose a group on the left to see what it would change.",
+    detailNoOps: "There is nothing to show for this group this time.",
+    moreOps: (more: number) =>
+      `...and ${more.toLocaleString("en-US")} more just like these. The full list is in the exported report.`,
+    excludeAction: "Leave this one out",
+    excludeUndoNote: "Left out",
+    fileDetails: "Show file details",
+    filterPlaceholder: "Search by name...",
+    filterGroupAll: "All groups",
+    filterConfidenceAll: "Any confidence",
+    filterWarningAll: "Any status",
+    filterWarningOnly: "Needs a look",
+    filterBlockedOnly: "Held",
+    filterNoMatches: "Nothing matches that search.",
+    // Design-system Section 4.13/6.4 standing footer reassurance line
+    // (distinct from the library home's full FD-10 guarantee enumeration).
+    footerReassurance: "Nothing is deleted. Every change can be undone.",
+    tidyUpNow: "Tidy up now",
+    confirmPrompt: "Ready to tidy up the included groups?",
+    confirmGoAhead: "Go ahead",
+    confirmNotYet: "Not yet",
+    // Applying is v0.5.0 (acting); the confirm affordance is real but honest
+    // about what it cannot do yet, never a fake success.
+    confirmNotAvailable:
+      "Applying a tidy-up isn't available in this version yet - that arrives in a later update. For now you can review the plan, include or leave out groups, and look at the file details.",
+    allExcludedNote: "Turn on at least one group to tidy up.",
+  },
 } as const;
