@@ -1067,6 +1067,24 @@ impl From<crate::error::AppError> for GenerateError {
     }
 }
 
+/// Map a [`GenerateError`] onto the stable IPC taxonomy (v0.4.0 Phase 5,
+/// `plan_generate` command). A `GenerateError::App` already carries a real
+/// [`crate::error::AppError`] (for example `RulesetInvalid`) and passes
+/// through unchanged so the caller sees the precise family-safe code; every
+/// other variant (a database error, a Reports-folder write failure, or a
+/// missing scan/ruleset) folds into [`crate::error::AppError::PlanGenerationFailed`]
+/// with a developer-facing detail string.
+impl From<GenerateError> for crate::error::AppError {
+    fn from(e: GenerateError) -> Self {
+        match e {
+            GenerateError::App(app_err) => app_err,
+            other => crate::error::AppError::PlanGenerationFailed {
+                detail: other.to_string(),
+            },
+        }
+    }
+}
+
 /// The friendly shelf-layout label for a naming preset.
 fn shelf_layout_label(preset: crate::plan::templates::Preset) -> &'static str {
     use crate::plan::templates::Preset;
@@ -1092,6 +1110,86 @@ pub async fn generate_and_report(
     ruleset_id: i64,
     app_data_dir: &Path,
 ) -> Result<GeneratedReport, GenerateError> {
+    let built = build_and_persist_plan(pool, scan_id, ruleset_id).await?;
+
+    // 7. Build the export projections.
+    let export = build_plan_export(
+        built.plan_id,
+        &built.created_at,
+        "draft",
+        &built.plan,
+        &built.verdicts,
+    );
+    let provenance = build_provenance_report(&built.plan);
+
+    // 8. Render the HTML report.
+    let library_label = base_name(&built.root_path, separator_of(&built.root_path)).to_string();
+    let input = ReportInput {
+        plan_id: built.plan_id,
+        scan_id,
+        created_at: &built.created_at,
+        library_root: &built.root_path,
+        library_label: &library_label,
+        shelf_layout: shelf_layout_label(built.ruleset.naming.preset),
+        export: &export,
+        provenance: &provenance,
+        duplicate_groups: &built.duplicate_groups,
+        sample_data: false,
+    };
+    let numbers = headline_numbers(&input);
+    let html = build_html_report(&input);
+
+    // 9. Write every artifact into the Reports folder (F-1002).
+    let written = crate::reports::write_plan_reports(
+        app_data_dir,
+        built.plan_id,
+        &built.created_at,
+        &export,
+        &provenance,
+    )?;
+    let html_path = crate::reports::write_html_report(&written.dir, &html)?;
+
+    Ok(GeneratedReport {
+        plan_id: built.plan_id,
+        written,
+        html_path,
+        html,
+        numbers,
+    })
+}
+
+/// Everything [`build_and_persist_plan`] produced along the way, so a caller
+/// that only needs the persisted plan (v0.4.0 Phase 5's `plan_generate`
+/// command) never re-reads the snapshot, and [`generate_and_report`] can keep
+/// building its export/report projections from the same in-memory values.
+pub struct PersistedPlan {
+    pub plan_id: i64,
+    pub scan_id: i64,
+    pub ruleset_id: i64,
+    pub created_at: String,
+    pub root_path: String,
+    pub ruleset: crate::ruleset::Ruleset,
+    pub plan: crate::plan::builder::BuiltPlan,
+    pub verdicts: Vec<crate::plan::validate::OpVerdict>,
+    pub duplicate_groups: Vec<DuplicateGroup>,
+}
+
+/// The shared prefix of [`generate_and_report`]: read the stored scan and
+/// ruleset, classify and extract, build the plan, detect duplicate
+/// candidates, validate, and persist ONE validated plan (real verdicts, never
+/// `pending`). This is "the v0.3.0 full chain minus report-file writing"
+/// (v0.4.0 Phase 5 plan): the `plan_generate` IPC command calls this directly
+/// so the review surface renders a REAL generated plan without also writing
+/// the F-505/F-507/F-506 Reports-folder artifacts, which stay generate-on-
+/// demand via [`generate_and_report`] / the "Save report" action.
+///
+/// Read-only against the real filesystem: it reads the SNAPSHOT (never the
+/// live library) and writes only the plan header/ops rows.
+pub async fn build_and_persist_plan(
+    pool: &sqlx::SqlitePool,
+    scan_id: i64,
+    ruleset_id: i64,
+) -> Result<PersistedPlan, GenerateError> {
     use crate::classify::classify;
     use crate::parse::extract::{extract, EntryInput};
     use crate::plan::builder::{
@@ -1159,43 +1257,16 @@ pub async fn generate_and_report(
     )
     .await?;
 
-    // 7. Build the export projections.
-    let export = build_plan_export(plan_id, &created_at, "draft", &plan, &verdicts);
-    let provenance = build_provenance_report(&plan);
-
-    // 8. Render the HTML report.
-    let library_label = base_name(&root_path, separator_of(&root_path)).to_string();
-    let input = ReportInput {
+    Ok(PersistedPlan {
         plan_id,
         scan_id,
-        created_at: &created_at,
-        library_root: &root_path,
-        library_label: &library_label,
-        shelf_layout: shelf_layout_label(ruleset.naming.preset),
-        export: &export,
-        provenance: &provenance,
-        duplicate_groups: &duplicate_groups,
-        sample_data: false,
-    };
-    let numbers = headline_numbers(&input);
-    let html = build_html_report(&input);
-
-    // 9. Write every artifact into the Reports folder (F-1002).
-    let written = crate::reports::write_plan_reports(
-        app_data_dir,
-        plan_id,
-        &created_at,
-        &export,
-        &provenance,
-    )?;
-    let html_path = crate::reports::write_html_report(&written.dir, &html)?;
-
-    Ok(GeneratedReport {
-        plan_id,
-        written,
-        html_path,
-        html,
-        numbers,
+        ruleset_id,
+        created_at,
+        root_path,
+        ruleset,
+        plan,
+        verdicts,
+        duplicate_groups,
     })
 }
 

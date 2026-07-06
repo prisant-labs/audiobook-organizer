@@ -28,6 +28,7 @@ pub mod builder;
 pub mod disc;
 pub mod export;
 pub mod provenance;
+pub mod query;
 pub mod report;
 pub mod templates;
 pub mod validate;

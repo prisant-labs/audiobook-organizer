@@ -211,7 +211,14 @@ impl OpVerdict {
 /// trait, so tests inject scarcity ([`FixedFreeSpace`]) and production reads the
 /// real disk ([`RealFreeSpace`]). `None` means "unknown": validation then marks
 /// a cross-volume move but never falsely blocks it for lack of a measurement.
-pub trait FreeSpace {
+///
+/// `Send + Sync` (v0.4.0 Phase 5): [`ValidationEnv`] borrows a `&dyn FreeSpace`,
+/// and [`crate::plan::report::build_and_persist_plan`] (which builds one) is
+/// awaited from a `#[tauri::command]` async fn (`plan_generate`), which
+/// requires its whole future to be `Send`. Both implementors below
+/// ([`RealFreeSpace`], a unit struct, and [`FixedFreeSpace`], a plain
+/// `HashMap`) already satisfy this trivially.
+pub trait FreeSpace: Send + Sync {
     /// Available bytes on `volume` (e.g. `"E:"`), or `None` if unknown.
     fn available_bytes(&self, volume: &str) -> Option<u64>;
 }

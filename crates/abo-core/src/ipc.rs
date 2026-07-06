@@ -363,6 +363,167 @@ pub struct LibraryOverview {
     pub metrics: HealthMetrics,
 }
 
+// ---- Phase 5 shell payloads (F-903 plan review surface, v0.4.0 Phase 5) ----
+
+/// F-405 approval state (`plan_ops.approval`), the wire form of
+/// [`crate::plan::validate::ApprovalState`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlanApproval {
+    Pending,
+    Approved,
+    Rejected,
+    Excluded,
+}
+
+/// F-404 per-operation validation verdict, the wire form of
+/// [`crate::plan::validate::ValidationState`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlanValidation {
+    Valid,
+    Warning,
+    Blocked,
+}
+
+/// The review state of one campaign-group card (F-502, design-system 4.9
+/// `.stag` tag variants). Distinct from [`PlanApproval`] (a per-OPERATION
+/// state): this is the coarser, group-level summary the switch and status
+/// chip render.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum GroupStatus {
+    /// The switch is on: the group's non-blocked, non-excluded ops are
+    /// approved (design-system `.stag.in` "included").
+    Included,
+    /// The switch is off (a deliberate group-level skip); the group's ops
+    /// are left out this round (design-system `.stag.out` "left out").
+    LeftOut,
+    /// The switch cannot be toggled yet: every member is blocked or
+    /// excluded (F-908 blocked/empty-group state, AC-15), the group has no
+    /// members this scan, or (the Copies group, OQ-3) the candidates are
+    /// still waiting on the byte-by-byte check (design-system `.stag.hold`
+    /// "checking copies").
+    Checking,
+}
+
+/// One campaign-group card (F-502, FD-26). Exactly seven of these render, in
+/// [`crate::plan::builder::CampaignGroup::ALL`] order, whatever the plan
+/// holds (a group with no ops still renders its card, `op_count` 0, AC-10).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanGroupView {
+    /// The stable kebab-case group id (`crate::plan::builder::CampaignGroup::slug`),
+    /// e.g. `"loose-books"`; what `plan_set_group_approval` takes back.
+    pub group: String,
+    /// The FD-26 canonical label, e.g. `"loose books"`.
+    pub label: String,
+    /// The card's plain-language headline with the real count folded in,
+    /// e.g. "Give 238 loose books their own folders".
+    pub headline: String,
+    /// The plain-language "why" paragraph under the headline.
+    pub reason: String,
+    /// The user-facing CHANGE count (FD-08 unit: moves/renames/set-asides/
+    /// removals; for the Copies group, duplicate GROUPS).
+    pub op_count: i64,
+    /// Total bytes the group's changes move/set aside.
+    pub byte_size: i64,
+    pub status: GroupStatus,
+    /// How many of the group's ops carry a `warning` verdict.
+    pub warning_count: i64,
+    /// How many of the group's ops carry a `blocked` verdict.
+    pub blocked_count: i64,
+}
+
+/// The full review-surface payload (`plan_generate`/`plan_get`): the seven
+/// group cards plus plan identity. Deliberately does NOT carry the op
+/// listing (that is [`PlanOpsPage`] via `plan_list_ops`) - the two are
+/// fetched separately so toggling a group's switch (which only changes
+/// aggregate counts) never re-sends the whole op list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanReview {
+    pub plan_id: i64,
+    pub scan_id: i64,
+    /// Always exactly seven, in canonical order (AC-10).
+    pub groups: Vec<PlanGroupView>,
+}
+
+/// The matched F-301 pattern shown in an operation's "Show file details"
+/// disclosure (F-504, AC-18): the stable id plus the human-readable shape,
+/// always shown together (FD-13's "never a bare id" rule).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct MatchedPatternView {
+    /// The stable `pattern-N` id (`crate::parse::matchers::MatcherId::as_str`).
+    pub id: String,
+    /// The short human-readable shape (`MatcherId::handle`), e.g.
+    /// "Title by Author (loose root file)".
+    pub name: String,
+}
+
+/// One F-303 extracted field shown in the disclosure, with its own
+/// confidence tier (AC-18, AC-20: low-confidence fields are shown, never
+/// hidden).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ExtractedFieldView {
+    /// `"title" | "author" | "series" | "series-index" | "year"`.
+    pub field: String,
+    pub value: String,
+    /// `"high" | "medium" | "low"`.
+    pub confidence: String,
+}
+
+/// One plan operation for the group-detail pane, the F-503 filter, and the
+/// F-504 disclosure. `source_path`/`target_path` are raw Windows paths;
+/// per FD-13 they must render ONLY inside the "Show file details"
+/// disclosure on primary surfaces, never plainly in the row itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanOpView {
+    /// `plan_ops.id`; what `plan_exclude_op` takes.
+    pub id: i64,
+    /// The stable kebab-case group id (matches [`PlanGroupView::group`]).
+    pub group: String,
+    /// `"mkdir" | "move" | "rename" | "quarantine" | "rmdir-empty" | "no-op"`.
+    pub kind: String,
+    /// The reason qualifier for a `no-op` (`"manual-review"`, `"staging"`).
+    pub kind_reason: Option<String>,
+    pub source_path: String,
+    pub target_path: String,
+    /// The plain-language sentence stating what the op does and why.
+    pub rationale: String,
+    /// `"high" | "medium" | "low"`, the op's overall confidence.
+    pub confidence: String,
+    pub byte_size: i64,
+    pub validation: PlanValidation,
+    /// The stable machine code (e.g. `"snapshot-stale"`), when not `Valid`.
+    pub validation_reason: Option<String>,
+    /// A plain-language "needs you" (warning) or remediation (blocked)
+    /// sentence, never a bare machine code; `None` when `Valid`.
+    pub warning_text: Option<String>,
+    pub approval: PlanApproval,
+    /// The re-derived F-301 match on this op's own source name; `None` when
+    /// the name matched nothing (rare: pattern 8 is a universal fallback) or
+    /// the op has no meaningful source name (`mkdir`).
+    pub matched_pattern: Option<MatchedPatternView>,
+    /// The re-derived F-303 fields, each with its own confidence (AC-18,
+    /// AC-20). Empty when nothing could be read from the name.
+    pub extracted_fields: Vec<ExtractedFieldView>,
+    /// What a rename op's own before/after names removed (only ever set on
+    /// `kind == "rename"`).
+    pub stripped_noise: Option<String>,
+}
+
+/// The flat, filterable op listing (`plan_list_ops`, F-503/F-504): every
+/// non-`mkdir` row across all seven groups, capped defensively (see
+/// `crate::plan::query::MAX_OPS_RETURNED`). The group-detail pane and the
+/// filter box both read from this one list client-side; filtering is
+/// view-only and never mutates approval (AC-17).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanOpsPage {
+    pub ops: Vec<PlanOpView>,
+    /// The real total row count (may exceed `ops.len()` if `truncated`).
+    pub total: i64,
+    pub truncated: bool,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -486,6 +647,16 @@ mod contract {
         assert_ipc_ready::<ProblemMetric>();
         assert_ipc_ready::<HealthMetrics>();
         assert_ipc_ready::<LibraryOverview>();
+        // F-903 plan review surface (v0.4.0 Phase 5).
+        assert_ipc_ready::<PlanApproval>();
+        assert_ipc_ready::<PlanValidation>();
+        assert_ipc_ready::<GroupStatus>();
+        assert_ipc_ready::<PlanGroupView>();
+        assert_ipc_ready::<PlanReview>();
+        assert_ipc_ready::<MatchedPatternView>();
+        assert_ipc_ready::<ExtractedFieldView>();
+        assert_ipc_ready::<PlanOpView>();
+        assert_ipc_ready::<PlanOpsPage>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();

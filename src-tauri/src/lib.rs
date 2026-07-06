@@ -7,6 +7,9 @@
 //! `tauri_specta::Builder`, generated `src/lib/bindings.ts`). Phase 6 wires the
 //! disposable tracer-slice UI on top of it. All product logic lives in
 //! `abo-core`; this shell stays thin (reference architecture Section 4).
+//! v0.4.0 Phase 5 adds the F-903 plan review commands (`commands::plan`):
+//! `plan_generate`/`plan_get`/`plan_list_ops`/`plan_set_group_approval`/
+//! `plan_exclude_op`.
 //!   - commands -> IPC command handlers (payload contract lives in abo-core::ipc)
 //!   - events   -> backend -> frontend typed event emission
 //!
@@ -94,6 +97,11 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::db_status,
             commands::settings::settings_get,
             commands::settings::settings_set,
+            commands::plan::plan_generate,
+            commands::plan::plan_get,
+            commands::plan::plan_list_ops,
+            commands::plan::plan_set_group_approval,
+            commands::plan::plan_exclude_op,
         ])
         .events(collect_events![
             events::JobCompleted,

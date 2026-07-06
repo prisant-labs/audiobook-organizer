@@ -184,6 +184,19 @@ pub enum AppError {
     /// v0.3.0 only plans and validates.
     #[error("no operations are approved")]
     NothingApproved,
+
+    // ---- Plan review family (v0.4.0 Phase 5: F-903 review surface) ----
+    /// A plan generation run (build -> validate -> persist) could not complete.
+    /// Wraps a database, filesystem-read, or not-found failure from
+    /// [`crate::plan::report::build_and_persist_plan`] into one family-safe
+    /// code; `detail` is developer-facing.
+    #[error("the tidy-up plan could not be built: {detail}")]
+    PlanGenerationFailed { detail: String },
+
+    /// A plan query or approval command named a `plan_id` that does not exist
+    /// (never generated, or its scan/ruleset predecessor is gone).
+    #[error("plan not found: {plan_id}")]
+    PlanNotFound { plan_id: i64 },
 }
 
 impl AppError {
@@ -214,6 +227,9 @@ impl AppError {
             AppError::CrossVolumeSpaceInsufficient { .. } => "cross-volume-space-insufficient",
             AppError::CycleDetected { .. } => "cycle-detected",
             AppError::NothingApproved => "nothing-approved",
+            // Plan review family
+            AppError::PlanGenerationFailed { .. } => "plan-generation-failed",
+            AppError::PlanNotFound { .. } => "plan-not-found",
         }
     }
 
@@ -311,6 +327,17 @@ impl AppError {
                 "No changes have been approved yet, so there is nothing to do. Approve at least \
                  one group or operation first."
             }
+            // Plan review family
+            AppError::PlanGenerationFailed { .. } => {
+                "The tidy-up plan could not be built. Scan the library again and try building \
+                 the plan once more. If this keeps happening, the disk may be full or the app \
+                 data folder may be on a synced location (OneDrive); free space or move the app \
+                 data out of the synced folder."
+            }
+            AppError::PlanNotFound { .. } => {
+                "This tidy-up plan could not be found; it may have been built in an earlier \
+                 session. Build a new plan from the current scan and review that instead."
+            }
         }
     }
 }
@@ -382,6 +409,10 @@ mod tests {
                 target_path: r"E:\Books\A\B".into(),
             },
             AppError::NothingApproved,
+            AppError::PlanGenerationFailed {
+                detail: "database is locked".into(),
+            },
+            AppError::PlanNotFound { plan_id: 42 },
         ]
     }
 

@@ -204,6 +204,29 @@ impl CampaignGroup {
             CampaignGroup::EmptyFolders => "empty folders",
         }
     }
+
+    /// The stable kebab-case identifier this group crosses IPC as (v0.4.0
+    /// Phase 5, `crate::plan::query`/`crate::ipc::PlanGroupView::group`).
+    /// Distinct from [`InternalPass::as_str`] (the fine-grained pass name
+    /// stored in `plan_ops.op_group`): this is the coarser seven-group id the
+    /// review UI's group cards and their approval commands key off.
+    pub fn slug(self) -> &'static str {
+        match self {
+            CampaignGroup::Staging => "staging",
+            CampaignGroup::LooseBooks => "loose-books",
+            CampaignGroup::MessyNames => "messy-names",
+            CampaignGroup::BoxSets => "box-sets",
+            CampaignGroup::Bundles => "bundles",
+            CampaignGroup::Copies => "copies",
+            CampaignGroup::EmptyFolders => "empty-folders",
+        }
+    }
+
+    /// Recover a [`CampaignGroup`] from its [`CampaignGroup::slug`]. `None`
+    /// for an unrecognized string (never fabricates a group).
+    pub fn from_slug(s: &str) -> Option<Self> {
+        CampaignGroup::ALL.iter().copied().find(|g| g.slug() == s)
+    }
 }
 
 /// One snapshot entry the builder operates over: identity + structure + the
