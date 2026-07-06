@@ -189,6 +189,44 @@ pub struct EntryRow {
     pub depth: i64,
 }
 
+/// The singleton application settings (F-803), the wire form of the one
+/// `settings` row (migrations 0001/0002/0003). Returned by `settings_get` and
+/// accepted by `settings_set`.
+///
+/// Field-to-column mapping and the one deliberate name divergence:
+///
+/// - `library_root` -> `settings.library_root`. The sanctioned scan root the
+///   backend re-allows at startup (FD-29, F-909). `None` means no library is
+///   configured yet, which is exactly how the shell detects first-run.
+/// - `set_aside_root` -> `settings.quarantine_root`. The field is named for the
+///   plain-language "set aside" vocabulary the UI uses (FD-31), while the column
+///   and every internal type keep "quarantine". The IPC boundary is the seam
+///   where the internal term becomes the family-facing one, so the crossing
+///   payload speaks the user's vocabulary and the storage keeps the engine's.
+/// - `reports_root` -> `settings.reports_root`. Optional Reports-folder override
+///   (F-1002); `None` uses the default beside the app data.
+/// - `theme` -> `settings.theme`. `"day"` or `"evening"` (FD-09). Always a valid
+///   theme string: `get_settings` normalizes any unexpected stored value back to
+///   `"day"` so the UI never receives a theme it cannot render.
+/// - `scan_retention_count` -> `settings.scan_retention_count` (FD-20, AC-35).
+///
+/// A root stored as an empty string is normalized to `None` on read, and a
+/// `Some("")` is written as SQL NULL, so "unset" has one representation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct AppSettings {
+    /// The sanctioned library scan root (FD-29, F-909); `None` until first-run.
+    pub library_root: Option<String>,
+    /// Where set-aside items land (the `quarantine_root` column, FD-31); `None`
+    /// uses the default beside the app data.
+    pub set_aside_root: Option<String>,
+    /// Optional override for the Reports folder (F-1002); `None` uses the default.
+    pub reports_root: Option<String>,
+    /// UI theme, `"day"` or `"evening"` (FD-09). Never any other value on read.
+    pub theme: String,
+    /// Snapshot retention: keep the last N scans (FD-20, AC-35). Default 10.
+    pub scan_retention_count: i64,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -296,6 +334,8 @@ mod contract {
         assert_ipc_ready::<ScanWarningKind>();
         assert_ipc_ready::<EntryRow>();
         assert_ipc_ready::<AppError>();
+        // F-803 app settings (v0.4.0 Phase 2).
+        assert_ipc_ready::<AppSettings>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();
