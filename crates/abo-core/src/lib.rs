@@ -86,11 +86,11 @@ pub mod fixtures;
 
 // v0.2.0 Phase 7 adds `probe`: the FD-14 tag-quality probe (release gate G-08),
 // a bounded, READ-ONLY sample of embedded audio tags measured against the
-// folder-first parse. It compiles only under the `probe` Cargo feature (which
-// also pulls the optional `lofty` dependency); it is never in the default build,
-// never in the shell, and never on any product code path this release ships. It
-// is a measurement instrument for the G-08 verdict, not a runtime feature
-// (embedded-tag extraction as a real feature is F-1101, deferred past v1 per
-// D-15/FD-03).
+// folder-first parse. The MODULE compiles only under the `probe` Cargo feature
+// and is never in the default build or the shell; it is a measurement instrument
+// for the G-08 verdict, not a runtime feature. As of v0.4.0 Phase 3 its `lofty`
+// dependency is no longer optional (lofty was promoted to a normal dependency for
+// F-907 cover extraction, `scan::cover`), so `probe` gates only this module now;
+// enabling covers does NOT enable the probe.
 #[cfg(feature = "probe")]
 pub mod probe;

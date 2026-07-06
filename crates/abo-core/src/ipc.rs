@@ -227,6 +227,29 @@ pub struct AppSettings {
     pub scan_retention_count: i64,
 }
 
+/// One book's cover art (F-907, v0.4.0 Phase 3), the wire form returned by the
+/// `cover_get` command. `None` from that command means "no cover" and the
+/// frontend renders the deterministic fallback tile instead (AC-23).
+///
+/// The bytes cross IPC as base64 (`data:` payload), not as a filesystem path and
+/// not as a raw byte array: base64 keeps the payload compact and, decisively,
+/// means the WebView is handed already-read image data over typed IPC rather than
+/// any filesystem or asset-protocol scope. The library root never becomes
+/// WebView-readable (FD-29). The frontend composes `data:${mime};base64,${base64}`
+/// as the `<img>` source.
+///
+/// `mime` is sniffed from the bytes (e.g. `image/jpeg`, `image/png`), so a
+/// mislabeled sidecar or corrupt frame is rejected before it reaches here (the
+/// book then shows the fallback tile). The bytes are the raw, UNDECODED image as
+/// stored in the file (plan T-11 defers decoding/downscaling).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct CoverImage {
+    /// The image mime type, sniffed from the bytes (e.g. `image/jpeg`).
+    pub mime: String,
+    /// Standard base64 (RFC 4648, `=`-padded) of the raw image bytes.
+    pub base64: String,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -336,6 +359,8 @@ mod contract {
         assert_ipc_ready::<AppError>();
         // F-803 app settings (v0.4.0 Phase 2).
         assert_ipc_ready::<AppSettings>();
+        // F-907 cover art (v0.4.0 Phase 3).
+        assert_ipc_ready::<CoverImage>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();
