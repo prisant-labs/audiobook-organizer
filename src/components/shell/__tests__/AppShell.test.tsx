@@ -2,15 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AppShell } from "../AppShell";
+import type { AppSettings } from "@/lib/settings";
 
 // The tracer (mounted behind the "Library" route, see AppShell.tsx) calls
 // through src/lib/bindings.ts, which needs a real Tauri webview
 // (`window.__TAURI_INTERNALS__`) to resolve. Mocked here so the shell can be
 // rendered in jsdom without an unhandled rejection; this is the "mocked
-// binding" pattern test-strategy.md/the implementation plan use throughout
-// (e.g. Phase 2's settings round-trip test). vi.mock calls are hoisted above
-// imports by Vitest's transform, so this takes effect before AppShell (and
-// the App tracer it mounts) import the real module.
+// binding" pattern the implementation plan uses throughout. vi.mock calls are
+// hoisted above imports by Vitest's transform.
 vi.mock("../../../lib/bindings", () => ({
   commands: {
     dbStatus: vi.fn().mockResolvedValue({ recovered: false, backup_path: null }),
@@ -23,20 +22,33 @@ vi.mock("../../../lib/bindings", () => ({
   },
 }));
 
-// AC-1/AC-2 integration: the shell renders the titlebar, sidebar, and the
-// screen container together; the theme toggle flips `data-theme` on the
-// document root to exactly "day" or "evening", and switching the active nav
-// item moves `aria-current` rather than duplicating it.
+const SETTINGS: AppSettings = {
+  library_root: "E:\\Books",
+  set_aside_root: null,
+  reports_root: null,
+  theme: "day",
+  scan_retention_count: 10,
+};
+
+function renderShell(onUpdate = vi.fn().mockResolvedValue(undefined)) {
+  render(<AppShell settings={SETTINGS} onUpdate={onUpdate} />);
+  return onUpdate;
+}
+
+// AC-1: the shell renders the titlebar, sidebar, and screen container together;
+// the active nav item carries aria-current and only one at a time. Theme changes
+// are delegated to the parent via onUpdate (useAppSettings applies data-theme;
+// AppShell itself does not, so the assertion is on the callback).
 describe("AppShell", () => {
   it("renders the titlebar, sidebar, and a screen container", () => {
-    render(<AppShell />);
+    renderShell();
     expect(screen.getByRole("group", { name: "Theme" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Main" })).toBeInTheDocument();
     expect(document.querySelector("main")).not.toBeNull();
   });
 
   it("defaults to the Library route as the active item", () => {
-    render(<AppShell />);
+    renderShell();
     expect(screen.getByRole("button", { name: "Library" })).toHaveAttribute(
       "aria-current",
       "page",
@@ -45,7 +57,7 @@ describe("AppShell", () => {
 
   it("moves aria-current when a different nav item is clicked, never leaving two active", async () => {
     const user = userEvent.setup();
-    render(<AppShell />);
+    renderShell();
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
 
@@ -54,19 +66,25 @@ describe("AppShell", () => {
       "page",
     );
     expect(screen.getByRole("button", { name: "Library" })).not.toHaveAttribute("aria-current");
-    expect(screen.getAllByRole("button").filter((b) => b.getAttribute("aria-current"))).toHaveLength(
-      1,
-    );
+    expect(
+      screen.getAllByRole("button").filter((b) => b.getAttribute("aria-current")),
+    ).toHaveLength(1);
   });
 
-  it("toggling the theme control sets data-theme to exactly day or evening", async () => {
+  it("toggling the theme control persists the flipped theme through onUpdate", async () => {
     const user = userEvent.setup();
-    render(<AppShell />);
+    const onUpdate = renderShell();
 
     await user.click(screen.getByRole("button", { name: "Evening" }));
-    expect(document.documentElement.dataset.theme).toBe("evening");
+    expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ theme: "evening" }));
+  });
 
-    await user.click(screen.getByRole("button", { name: "Day" }));
-    expect(document.documentElement.dataset.theme).toBe("day");
+  it("routes the Settings nav item to the real Settings screen", async () => {
+    const user = userEvent.setup();
+    renderShell();
+
+    await user.click(screen.getByRole("button", { name: "Settings" }));
+    // The Settings screen shows the configured library folder (F-803/F-909).
+    expect(screen.getByText("E:\\Books")).toBeInTheDocument();
   });
 });

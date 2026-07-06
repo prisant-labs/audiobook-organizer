@@ -50,6 +50,21 @@ export default tseslint.config(
                 "Do not call invoke directly. Use the generated typed bindings in src/lib/bindings.ts (FD-29).",
             },
           ],
+          // frontend-never-touches-fs (FD-29, T-10). The filesystem plugin must
+          // never be imported anywhere in the frontend: all filesystem access
+          // lives in abo-core behind typed IPC, and folder SELECTION goes through
+          // tauri-plugin-dialog (a picker that returns a path string, not fs
+          // access). This is a whole-module ban (any import from plugin-fs),
+          // complementing the no-raw-invoke rule and the grep in the manual QA
+          // checklist. `@tauri-apps/plugin-dialog` is deliberately NOT banned - it
+          // is the one sanctioned, backend-mediated folder-selection path.
+          patterns: [
+            {
+              group: ["@tauri-apps/plugin-fs", "@tauri-apps/plugin-fs/*"],
+              message:
+                "The frontend must never access the filesystem. All file I/O lives in abo-core behind typed IPC; folder selection uses @tauri-apps/plugin-dialog (FD-29, architecture Section 5).",
+            },
+          ],
         },
       ],
       // no-raw-invoke, dynamic-import half. `no-restricted-imports` only sees

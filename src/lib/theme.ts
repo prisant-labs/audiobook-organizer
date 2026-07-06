@@ -7,41 +7,60 @@ export type Theme = "day" | "evening";
 
 export const DEFAULT_THEME: Theme = "day";
 
-// TODO(v0.4.0 Phase 2, T-06/T-09): AC-2 requires the choice to persist across
-// restarts "via settings (F-803)", but the settings_get/settings_set command
-// wrappers over the singleton settings row are a Phase 2 deliverable that
-// does not exist yet. localStorage is an interim persistence shim so the
-// toggle is not a no-op across restarts today; swap getStoredTheme/
-// persistTheme below for calls through src/lib/bindings.ts once the settings
-// binding lands, and drop the localStorage key entirely (do not keep both).
-const STORAGE_KEY = "abo.theme";
-
-function isTheme(value: string | null): value is Theme {
+export function isTheme(value: string | null | undefined): value is Theme {
   return value === "day" || value === "evening";
 }
 
-export function getStoredTheme(): Theme {
-  try {
-    const stored = window.localStorage.getItem(STORAGE_KEY);
-    return isTheme(stored) ? stored : DEFAULT_THEME;
-  } catch {
-    // localStorage can throw (privacy mode, disabled storage); fall back to
-    // the default rather than crash the shell over a persistence nicety.
-    return DEFAULT_THEME;
-  }
-}
-
-export function persistTheme(theme: Theme): void {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, theme);
-  } catch {
-    // Best-effort only; see getStoredTheme.
-  }
-}
-
 // Applies the theme to the document root. Safe to call before React mounts
-// (main.tsx calls this synchronously pre-render to avoid a flash of the
-// wrong theme).
+// (main.tsx calls this synchronously pre-paint to avoid a flash of the wrong
+// theme).
 export function applyTheme(theme: Theme): void {
   document.documentElement.dataset.theme = theme;
+}
+
+// ---- Legacy localStorage shim migration (v0.4.0 Phase 2) ----
+//
+// Phase 1 persisted the theme in localStorage as an interim shim, because the
+// settings_get/settings_set IPC did not exist yet. Phase 2 lands that IPC and
+// moves theme persistence into the singleton settings row (F-803). Per AC-2 the
+// choice now persists "via settings (F-803)", so the settings row is the single
+// source of truth going forward.
+//
+// The one remaining role of localStorage is a ONE-TIME migration: on the first
+// launch after this upgrade, a user may still carry a Phase-1 theme choice in
+// localStorage. `useAppSettings` reads it once (`readLegacyTheme`), writes it
+// into settings if it differs, and then removes it (`clearLegacyTheme`), so from
+// then on settings wins and the key is gone. There is no dual-write: nothing in
+// the app writes this key anymore.
+const LEGACY_STORAGE_KEY = "abo.theme";
+
+// Read the legacy Phase-1 theme, or null if absent/unreadable/invalid. Used
+// only for the one-time migration into settings.
+export function readLegacyTheme(): Theme | null {
+  try {
+    const stored = window.localStorage.getItem(LEGACY_STORAGE_KEY);
+    return isTheme(stored) ? stored : null;
+  } catch {
+    // localStorage can throw (privacy mode, disabled storage); treat as absent.
+    return null;
+  }
+}
+
+// Remove the legacy key after migrating (or when it is stale), so settings is
+// the sole source of truth and the shim leaves no residue.
+export function clearLegacyTheme(): void {
+  try {
+    window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+  } catch {
+    // Best-effort only; see readLegacyTheme.
+  }
+}
+
+// The synchronous pre-paint theme hint (main.tsx), applied before the async
+// settings load resolves so the shell does not flash the wrong theme. It uses a
+// pending legacy value if one exists (the migrating user), else the Day default;
+// the async settings load then reconciles to the authoritative persisted value.
+// This is a paint hint only, never an authoritative read.
+export function bootTheme(): Theme {
+  return readLegacyTheme() ?? DEFAULT_THEME;
 }
