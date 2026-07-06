@@ -1,5 +1,6 @@
 //! F-801 (ruleset model and persistence) database layer: sqlx CRUD for the
-//! `rulesets` table (migration 0002).
+//! `rulesets` table (migration 0002; `is_active` added by migration 0004,
+//! v0.4.0 Phase 6, F-906).
 //!
 //! v0.3.0 Phase 1 (this module) is plumbing only: it stores and reads
 //! whatever `body_json` it is given, verbatim. Schema validation of that
@@ -14,6 +15,16 @@
 //! Like `db::activity`, every query uses the sqlx RUNTIME API
 //! (`sqlx::query`, binding at runtime): no compile-time `query!` macros, so
 //! the build never needs `DATABASE_URL`.
+//!
+//! # The active ruleset (v0.4.0 Phase 6, F-906)
+//!
+//! `plan_generate` always builds against whichever row carries `is_active =
+//! 1` (there is at most one at a time, see [`set_active_ruleset`]); saving a
+//! ruleset in the editor makes it the active one ("Apply/save semantics per
+//! the spec: a saved change persists the active ruleset"). [`delete_ruleset`]
+//! itself has no opinion on "in use" - the command layer (`ruleset_delete`)
+//! is where that guard belongs, since it needs to compare against what is
+//! currently active, a policy decision rather than plain CRUD.
 
 use sqlx::{Row, SqlitePool};
 
@@ -26,6 +37,9 @@ pub struct RulesetRow {
     pub schema_version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Whether this is the one ruleset `plan_generate` currently builds
+    /// against (F-906). At most one row carries `true` at a time.
+    pub is_active: bool,
 }
 
 /// A ruleset to insert: everything but the id and timestamps, which this
@@ -66,7 +80,7 @@ pub async fn insert_ruleset(
 /// Fetch one ruleset by id, or `None` if it does not exist.
 pub async fn get_ruleset(pool: &SqlitePool, id: i64) -> Result<Option<RulesetRow>, sqlx::Error> {
     let row = sqlx::query(
-        "SELECT id, name, body_json, schema_version, created_at, updated_at \
+        "SELECT id, name, body_json, schema_version, created_at, updated_at, is_active \
          FROM rulesets WHERE id = ?",
     )
     .bind(id)
@@ -78,7 +92,7 @@ pub async fn get_ruleset(pool: &SqlitePool, id: i64) -> Result<Option<RulesetRow
 /// List every ruleset, oldest first (insertion order via id).
 pub async fn list_rulesets(pool: &SqlitePool) -> Result<Vec<RulesetRow>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, name, body_json, schema_version, created_at, updated_at \
+        "SELECT id, name, body_json, schema_version, created_at, updated_at, is_active \
          FROM rulesets ORDER BY id",
     )
     .fetch_all(pool)
@@ -86,26 +100,81 @@ pub async fn list_rulesets(pool: &SqlitePool) -> Result<Vec<RulesetRow>, sqlx::E
     Ok(rows.into_iter().map(row_to_ruleset).collect())
 }
 
-/// Overwrite an existing ruleset's body in place (a named ruleset being
-/// edited, as opposed to plan regeneration which always creates a new
+/// How many rulesets exist. Used by the command layer to decide whether a
+/// delete would remove the user's only ruleset (F-906).
+pub async fn count_rulesets(pool: &SqlitePool) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar("SELECT COUNT(*) FROM rulesets")
+        .fetch_one(pool)
+        .await
+}
+
+/// Fetch the one ACTIVE ruleset (`is_active = 1`), or `None` if no ruleset has
+/// ever been activated yet (a brand-new database before the first seed/save).
+/// At most one row is ever active (see [`set_active_ruleset`]), so `LIMIT 1`
+/// is a defensive cap, not a real ambiguity.
+pub async fn get_active_ruleset(pool: &SqlitePool) -> Result<Option<RulesetRow>, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT id, name, body_json, schema_version, created_at, updated_at, is_active \
+         FROM rulesets WHERE is_active = 1 LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_ruleset))
+}
+
+/// Make `id` the one active ruleset (F-906 "Apply/save semantics": a saved
+/// change persists the active ruleset), clearing any previously-active row
+/// first. Runs inside a transaction so the "at most one active row"
+/// invariant never observes two active rows (or zero, once any ruleset has
+/// ever been activated) between the two statements.
+pub async fn set_active_ruleset(pool: &SqlitePool, id: i64, now: &str) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("UPDATE rulesets SET is_active = 0 WHERE is_active = 1")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE rulesets SET is_active = 1, updated_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
+/// Overwrite an existing ruleset's name and body in place (a named ruleset
+/// being edited, as opposed to plan regeneration which always creates a new
 /// `plans` row). Does not validate `body_json`; see module doc. Bumps
 /// `updated_at` to `now`; `created_at` is untouched.
 pub async fn update_ruleset_body(
     pool: &SqlitePool,
     id: i64,
+    name: &str,
     body_json: &str,
     schema_version: i64,
     now: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "UPDATE rulesets SET body_json = ?, schema_version = ?, updated_at = ? WHERE id = ?",
+        "UPDATE rulesets SET name = ?, body_json = ?, schema_version = ?, updated_at = ? \
+         WHERE id = ?",
     )
+    .bind(name)
     .bind(body_json)
     .bind(schema_version)
     .bind(now)
     .bind(id)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// Delete a ruleset by id. Plain plumbing: whether `id` is currently the
+/// active ruleset (or the user's only one) is a policy question the command
+/// layer answers BEFORE calling this (see the module doc); deleting an
+/// unknown id is a silent no-op, matching SQL `DELETE`'s own semantics.
+pub async fn delete_ruleset(pool: &SqlitePool, id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM rulesets WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -117,6 +186,7 @@ fn row_to_ruleset(row: sqlx::sqlite::SqliteRow) -> RulesetRow {
         schema_version: row.get("schema_version"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
+        is_active: row.get::<i64, _>("is_active") != 0,
     }
 }
 
@@ -161,6 +231,10 @@ mod tests {
         assert_eq!(fetched.schema_version, 1);
         assert_eq!(fetched.created_at, "2026-07-04T00:00:00Z");
         assert_eq!(fetched.updated_at, "2026-07-04T00:00:00Z");
+        assert!(
+            !fetched.is_active,
+            "a freshly inserted ruleset starts inactive"
+        );
     }
 
     /// A missing id returns `None`, not an error.
@@ -205,11 +279,11 @@ mod tests {
         assert_eq!(all[1].id, second);
     }
 
-    /// Updating a ruleset's body changes `body_json`/`schema_version`/
-    /// `updated_at` but leaves `created_at` untouched, and never inserts a
-    /// second row (distinct from plan regeneration's always-insert
-    /// contract: a ruleset is an editable named row, not an immutable plan
-    /// header).
+    /// Updating a ruleset's name and body changes `name`/`body_json`/
+    /// `schema_version`/`updated_at` but leaves `created_at` untouched, and
+    /// never inserts a second row (distinct from plan regeneration's
+    /// always-insert contract: a ruleset is an editable named row, not an
+    /// immutable plan header).
     #[tokio::test]
     async fn update_ruleset_body_overwrites_in_place() {
         let (_db, pool) = fresh_pool().await;
@@ -226,9 +300,16 @@ mod tests {
         .await
         .expect("insert_ruleset");
 
-        update_ruleset_body(&pool, id, r#"{"v":2}"#, 2, "2026-07-04T01:00:00Z")
-            .await
-            .expect("update_ruleset_body");
+        update_ruleset_body(
+            &pool,
+            id,
+            "Renamed",
+            r#"{"v":2}"#,
+            2,
+            "2026-07-04T01:00:00Z",
+        )
+        .await
+        .expect("update_ruleset_body");
 
         let all = list_rulesets(&pool).await.expect("list_rulesets");
         assert_eq!(all.len(), 1, "update must not insert a second row");
@@ -237,9 +318,123 @@ mod tests {
             .await
             .expect("get_ruleset")
             .expect("ruleset must exist");
+        assert_eq!(fetched.name, "Renamed");
         assert_eq!(fetched.body_json, r#"{"v":2}"#);
         assert_eq!(fetched.schema_version, 2);
         assert_eq!(fetched.created_at, "2026-07-04T00:00:00Z");
         assert_eq!(fetched.updated_at, "2026-07-04T01:00:00Z");
+    }
+
+    // ---- F-906 (v0.4.0 Phase 6): active ruleset + delete + count. --------
+
+    /// A brand-new database has no active ruleset yet.
+    #[tokio::test]
+    async fn fresh_db_has_no_active_ruleset() {
+        let (_db, pool) = fresh_pool().await;
+        assert_eq!(get_active_ruleset(&pool).await.expect("query"), None);
+    }
+
+    /// Activating a ruleset marks it active and clears any previously-active
+    /// row, so at most one row is ever active (AC-32/AC-33 "the active
+    /// ruleset" the editor saves against).
+    #[tokio::test]
+    async fn set_active_ruleset_clears_the_previous_one() {
+        let (_db, pool) = fresh_pool().await;
+        let first = insert_ruleset(
+            &pool,
+            &NewRuleset {
+                name: "First",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            "2026-07-04T00:00:00Z",
+        )
+        .await
+        .expect("insert first");
+        let second = insert_ruleset(
+            &pool,
+            &NewRuleset {
+                name: "Second",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            "2026-07-04T00:00:01Z",
+        )
+        .await
+        .expect("insert second");
+
+        set_active_ruleset(&pool, first, "2026-07-04T00:00:02Z")
+            .await
+            .expect("activate first");
+        assert_eq!(
+            get_active_ruleset(&pool)
+                .await
+                .expect("query")
+                .map(|r| r.id),
+            Some(first)
+        );
+
+        set_active_ruleset(&pool, second, "2026-07-04T00:00:03Z")
+            .await
+            .expect("activate second");
+        let active = get_active_ruleset(&pool)
+            .await
+            .expect("query")
+            .expect("one active row");
+        assert_eq!(
+            active.id, second,
+            "activating the second must clear the first"
+        );
+
+        let all = list_rulesets(&pool).await.expect("list_rulesets");
+        let active_count = all.iter().filter(|r| r.is_active).count();
+        assert_eq!(active_count, 1, "exactly one row is ever active");
+    }
+
+    /// `delete_ruleset` removes the row; deleting an unknown id is a no-op,
+    /// not an error (matching SQL DELETE's own semantics; the command layer
+    /// is responsible for refusing to delete the active/only ruleset).
+    #[tokio::test]
+    async fn delete_ruleset_removes_the_row_and_tolerates_unknown_ids() {
+        let (_db, pool) = fresh_pool().await;
+        let id = insert_ruleset(
+            &pool,
+            &NewRuleset {
+                name: "Temp",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            "2026-07-04T00:00:00Z",
+        )
+        .await
+        .expect("insert");
+
+        delete_ruleset(&pool, id).await.expect("delete");
+        assert_eq!(get_ruleset(&pool, id).await.expect("query"), None);
+        assert_eq!(count_rulesets(&pool).await.expect("count"), 0);
+
+        // Deleting again (already gone) is a tolerated no-op.
+        delete_ruleset(&pool, id).await.expect("delete again");
+        // Deleting an id that never existed is likewise a tolerated no-op.
+        delete_ruleset(&pool, 999).await.expect("delete unknown");
+    }
+
+    /// `count_rulesets` tracks inserts and deletes.
+    #[tokio::test]
+    async fn count_rulesets_tracks_inserts() {
+        let (_db, pool) = fresh_pool().await;
+        assert_eq!(count_rulesets(&pool).await.expect("count"), 0);
+        insert_ruleset(
+            &pool,
+            &NewRuleset {
+                name: "A",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            "2026-07-04T00:00:00Z",
+        )
+        .await
+        .expect("insert");
+        assert_eq!(count_rulesets(&pool).await.expect("count"), 1);
     }
 }

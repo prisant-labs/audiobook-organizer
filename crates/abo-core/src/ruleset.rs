@@ -71,7 +71,7 @@ pub const RULESET_SCHEMA_VERSION: i64 = 1;
 /// see [`parse_and_validate`]). This keeps a persisted body unambiguous and
 /// makes AC-29 rejection behavior sharp; the writer is always
 /// [`Ruleset::to_body_json`], so a round-trip is lossless.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(deny_unknown_fields)]
 pub struct Ruleset {
     /// Schema version of this body; must equal [`RULESET_SCHEMA_VERSION`].
@@ -86,7 +86,7 @@ pub struct Ruleset {
 
 /// F-401 naming: which preset renders target paths, and the series-index
 /// zero-pad width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct NamingPolicy {
     /// The shipped preset (default [`Preset::AbsAuthorFirst`], D-02).
@@ -98,7 +98,7 @@ pub struct NamingPolicy {
 
 /// Where a pack/collection shell goes after its books are fully extracted
 /// (FD-01). The decision-gate default is [`PackShellDestination::Quarantine`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum PackShellDestination {
     /// Move the emptied shell to quarantine (never delete). The FD-01 default.
@@ -110,7 +110,7 @@ pub enum PackShellDestination {
 
 /// What happens to a book's sidecars (ebook / cover / description) relative to
 /// the book when it moves. Default [`SidecarPolicy::KeepWithBook`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum SidecarPolicy {
     /// Sidecars travel with their book into the canonical target folder.
@@ -121,7 +121,7 @@ pub enum SidecarPolicy {
 }
 
 /// The action applied to one class of non-audio clutter file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClutterAction {
     /// Leave the file in place with its book (no op).
@@ -136,7 +136,7 @@ pub enum ClutterAction {
 /// formats (F-205's `0 M4B` case). Default [`PreferredFormat::M4b`]; the
 /// non-preferred copy is quarantined (the never-delete-audio invariant), never
 /// silently deleted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum PreferredFormat {
     /// Keep the `.m4b` single-file copy; quarantine the loser. The default.
@@ -151,7 +151,7 @@ pub enum PreferredFormat {
 /// `scan::typing` file classes: the plan builder maps a concrete file to the
 /// matching category. Note a `.txt`/description sidecar is governed by
 /// [`StructurePolicy::sidecars`] (keep-with-book), not by this clutter policy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub struct ClutterPolicy {
     /// Ebook files (epub/pdf/mobi/...). Default [`ClutterAction::Keep`].
@@ -181,7 +181,7 @@ pub enum ClutterKind {
 }
 
 /// F-402 structure policies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct StructurePolicy {
     /// Enforce one book per folder (split multi-book folders). Default `true`.
@@ -201,7 +201,7 @@ pub struct StructurePolicy {
 }
 
 /// F-402/F-302 cleanup toggles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct CleanupPolicy {
     /// Run the F-302 strip-noise pass (ripper tags, bitrate/size markers,

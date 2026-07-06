@@ -166,7 +166,9 @@ export const commands = {
 	 *  Generate a REAL plan from a completed scan and return its review surface
 	 *  (F-903): build -> detect duplicates -> validate -> persist, then the
 	 *  seven group cards. `scan_id` is a completed snapshot's id (from
-	 *  `classify_overview` or `job:completed`'s scan payload).
+	 *  `classify_overview` or `job:completed`'s scan payload). Always builds
+	 *  against the ACTIVE ruleset (F-906, [`ensure_active_ruleset`]), seeding the
+	 *  shipped default (D-02 `abs-author-first`) on a brand-new database.
 	 */
 	planGenerate: (scanId: number) => typedError<PlanReview, AppError>(__TAURI_INVOKE("plan_generate", { scanId })),
 	/**
@@ -198,6 +200,62 @@ export const commands = {
 	 *  row without re-fetching the whole listing.
 	 */
 	planExcludeOp: (planOpId: number) => typedError<PlanOpView, AppError>(__TAURI_INVOKE("plan_exclude_op", { planOpId })),
+	/**
+	 *  The F-906 ruleset editor's live re-plan preview (AC-33): re-plan `scan_id`
+	 *  against `ruleset` (a DRAFT that may not yet be saved) and return the same
+	 *  seven-card counts shape the review screen renders - WITHOUT persisting
+	 *  anything (no `plans`/`plan_ops` row is ever written for a preview; see
+	 *  [`abo_core::plan::report::preview_plan_review`]'s doc comment). Debounced
+	 *  and cancellable on the frontend side (the same re-entrancy guard pattern
+	 *  `usePlanReview` already establishes for `plan_generate`); this command
+	 *  itself is a plain, side-effect-free read plus in-memory compute, so
+	 *  calling it repeatedly and discarding stale responses is always safe.
+	 */
+	planPreview: (scanId: number, ruleset: Ruleset) => typedError<PlanPreview, AppError>(__TAURI_INVOKE("plan_preview", { scanId, ruleset })),
+	/**
+	 *  List every saved ruleset (F-801 CRUD, AC-32), lightest-weight shape (no
+	 *  policy body) for the editor's "load a different saved ruleset" affordance.
+	 */
+	rulesetList: () => typedError<RulesetSummary[], AppError>(__TAURI_INVOKE("ruleset_list")),
+	/**  Read one ruleset's full editable detail (F-801 CRUD, AC-32). */
+	rulesetGet: (rulesetId: number) => typedError<RulesetDetail, AppError>(__TAURI_INVOKE("ruleset_get", { rulesetId })),
+	/**
+	 *  Read the active ruleset's full editable detail, seeding the shipped
+	 *  default (D-02) if nothing has ever been saved or activated yet - so the
+	 *  F-906 editor always has something to load, even before the user's first
+	 *  scan/plan (which is what previously bootstrapped the one ruleset row).
+	 */
+	rulesetGetActive: () => typedError<RulesetDetail, AppError>(__TAURI_INVOKE("ruleset_get_active")),
+	/**
+	 *  Create or update a ruleset and make it the ACTIVE one (F-801 CRUD, AC-32;
+	 *  AC-33's "apply/save" semantics). Validates the body BEFORE writing
+	 *  anything (AC-29, `Ruleset::validate`), so a malformed draft is never
+	 *  persisted half-valid.
+	 */
+	rulesetSave: (request: RulesetSaveRequest) => typedError<RulesetDetail, AppError>(__TAURI_INVOKE("ruleset_save", { request })),
+	/**
+	 *  Delete a saved ruleset (F-801 CRUD, AC-32). Refuses to delete the
+	 *  currently ACTIVE ruleset ([`AppError::RulesetInUse`]): deleting it would
+	 *  leave nothing for `plan_generate` to build against, so the caller must
+	 *  activate a different ruleset first (`ruleset_save` on another row, or a
+	 *  future dedicated activate action).
+	 */
+	rulesetDelete: (rulesetId: number) => typedError<null, AppError>(__TAURI_INVOKE("ruleset_delete", { rulesetId })),
+	/**
+	 *  How many rulesets are currently saved (used by the frontend to decide
+	 *  whether deleting the active one is even a reachable action - it never is
+	 *  with only one saved, since that one is always active).
+	 */
+	rulesetCount: () => typedError<number, AppError>(__TAURI_INVOKE("ruleset_count")),
+	/**
+	 *  The three F-401 shipped presets, each rendered against one fixed sample
+	 *  book (`abo_core::plan::templates::example_path`), for the editor's preset
+	 *  picker (F-906: "three presets with plain-language descriptions + example
+	 *  path preview rendered from each template" - the plain-language
+	 *  descriptions live in the frontend's centralized strings module, FD-23;
+	 *  this command supplies only the rendered example path per preset).
+	 */
+	rulesetPresetExamples: (seriesIndexWidth: number) => __TAURI_INVOKE<PresetExampleView[]>("ruleset_preset_examples", { seriesIndexWidth }),
 };
 
 /** Events */
@@ -226,7 +284,7 @@ export type AppError =
  */
 ({ "db-migration-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The existing database was unreadable and was reset. The corrupt file was
  *  preserved (moved aside, never deleted) at `backup_path`, and a fresh,
@@ -235,7 +293,7 @@ export type AppError =
  */
 ({ "db-corrupt-recovered": {
 	backup_path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The singleton application settings row (F-803) could not be read or
  *  written. A rare SQLite error on the settings CRUD path (`settings_get` /
@@ -248,15 +306,15 @@ export type AppError =
  */
 ({ "settings-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root does not exist. Return before any DB row is written. */
 ({ "root-not-found": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root exists but is not a directory (e.g. a file was chosen). */
 ({ "root-not-directory": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A single entry could not be read because the OS denied access. Defined
  *  and ready for v0.2.0: the v0.1.0 walk records such entries and counts
@@ -268,7 +326,7 @@ export type AppError =
  */
 ({ "permission-denied": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A junction or reparse point was recorded but deliberately not followed
  *  (D-09), so the walk cannot loop through a link back into the tree.
@@ -279,7 +337,7 @@ export type AppError =
  */
 ({ "junction-skipped": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An internal failure while writing the snapshot (a SQLite/transaction
  *  error during the scans/entries write path). The walk itself never fails
@@ -287,7 +345,7 @@ export type AppError =
  */
 ({ "scan-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A WizTree CSV import (F-102) could not fully parse. `row` is the 1-based
  *  index of the offending data row (the row after the header, preamble
@@ -304,7 +362,7 @@ export type AppError =
  */
 ({ "csv-parse": {
 	row: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A ruleset's JSON body could not be accepted: it is not valid JSON, is
  *  missing a required field, has a field of the wrong type, carries a
@@ -316,7 +374,33 @@ export type AppError =
  */
 ({ "ruleset-invalid": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  `ruleset_get`/`ruleset_delete` named a `ruleset_id` that does not exist
+ *  (never created, or already deleted).
+ */
+({ "ruleset-not-found": {
+	ruleset_id: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  `ruleset_delete` refused to delete `ruleset_id` because it is
+ *  currently the ACTIVE ruleset (the one `plan_generate` builds against).
+ *  Deleting it would leave nothing active without the caller explicitly
+ *  choosing a replacement first, so this is a policy refusal, not a
+ *  database error.
+ */
+({ "ruleset-in-use": {
+	ruleset_id: number,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A ruleset database operation (list/get/save/delete/activate) failed at
+ *  the SQLite layer. `detail` is developer-facing; distinct from
+ *  [`RulesetInvalid`](AppError::RulesetInvalid), which is a rejected body,
+ *  not a database failure.
+ */
+({ "ruleset-operation-failed": {
+	detail: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A source path recorded at plan time no longer exists at validation time
  *  (the snapshot went stale). The operation cannot run against a vanished
@@ -324,21 +408,21 @@ export type AppError =
  */
 ({ "snapshot-stale": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never } | 
 /**
  *  Two operations in the same plan produce the same target path (compared
  *  case-insensitively for NTFS), so one would clobber the other.
  */
 ({ "collision-in-plan": {
 	path: string,
-} }) & { "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An operation's target path already exists on disk (compared
  *  case-insensitively for NTFS) and is not being vacated by the plan.
  */
 ({ "collision-on-disk": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A target path exceeds the maximum length even with the Windows
  *  extended-length (`\\?\`) allowance. `length` is the measured character
@@ -347,7 +431,7 @@ export type AppError =
 ({ "path-too-long": {
 	path: string,
 	length: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A path component is not a legal filesystem name (an illegal character, or
  *  a trailing dot/space). This is the backstop to the F-304 name normalizer.
@@ -355,7 +439,7 @@ export type AppError =
 ({ "illegal-component": {
 	path: string,
 	component: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A path component is (or begins with) a reserved Windows device name
  *  (CON, PRN, AUX, NUL, COM1-9, LPT1-9). Backstop to F-304.
@@ -363,7 +447,7 @@ export type AppError =
 ({ "reserved-name": {
 	path: string,
 	component: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The cross-volume operations targeting `volume` sum to more bytes
  *  (`needed`) than the volume has free (`available`), so the
@@ -373,7 +457,7 @@ export type AppError =
 	volume: string,
 	needed: number,
 	available: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An operation would move a source into its own subtree (target lies inside
  *  source), which is a cycle no filesystem can perform.
@@ -381,7 +465,7 @@ export type AppError =
 ({ "cycle-detected": {
 	source_path: string,
 	target_path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A proceed/apply was requested but no operation is in the `approved`
  *  state, so there is nothing to do. Defined for the v0.5.0 apply path;
@@ -396,14 +480,14 @@ export type AppError =
  */
 ({ "plan-generation-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A plan query or approval command named a `plan_id` that does not exist
  *  (never generated, or its scan/ruleset predecessor is gone).
  */
 ({ "plan-not-found": {
 	plan_id: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never };
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never };
 
 /**
  *  The singleton application settings (F-803), the wire form of the one
@@ -486,6 +570,46 @@ export type ClassMetric = {
 	class: FolderClass,
 	folder_count: number,
 	byte_total: number,
+};
+
+/**  F-402/F-302 cleanup toggles. */
+export type CleanupPolicy = {
+	/**
+	 *  Run the F-302 strip-noise pass (ripper tags, bitrate/size markers,
+	 *  rank/year prefixes, ...). Default `true`.
+	 */
+	strip_noise: boolean,
+};
+
+/**  The action applied to one class of non-audio clutter file. */
+export type ClutterAction = 
+/**  Leave the file in place with its book (no op). */
+"keep" | 
+/**  Move the file into a book subfolder. */
+"move-to-subfolder" | 
+/**  Move the file to quarantine (never delete). */
+"quarantine";
+
+/**
+ *  Per-file-class non-audio clutter policy (F-402). The fields are policy
+ *  CATEGORIES named exactly as the spec's AC-6 enumerates them, not raw
+ *  `scan::typing` file classes: the plan builder maps a concrete file to the
+ *  matching category. Note a `.txt`/description sidecar is governed by
+ *  [`StructurePolicy::sidecars`] (keep-with-book), not by this clutter policy.
+ */
+export type ClutterPolicy = {
+	/**  Ebook files (epub/pdf/mobi/...). Default [`ClutterAction::Keep`]. */
+	ebook: ClutterAction,
+	/**  Cover images. Default [`ClutterAction::Keep`]. */
+	cover: ClutterAction,
+	/**  `.nfo` release-info files. Default [`ClutterAction::Quarantine`]. */
+	nfo: ClutterAction,
+	/**  `.sfv` checksum files. Default [`ClutterAction::Quarantine`]. */
+	sfv: ClutterAction,
+	/**  Playlist files (m3u/cue). Default [`ClutterAction::Quarantine`]. */
+	playlist: ClutterAction,
+	/**  Weblink files (url/html). Default [`ClutterAction::Quarantine`]. */
+	weblink: ClutterAction,
 };
 
 /**
@@ -834,6 +958,30 @@ export type MetricUnit = "folders" | "files" | "bytes" |
 "groups";
 
 /**
+ *  F-401 naming: which preset renders target paths, and the series-index
+ *  zero-pad width.
+ */
+export type NamingPolicy = {
+	/**  The shipped preset (default [`Preset::AbsAuthorFirst`], D-02). */
+	preset: Preset,
+	/**
+	 *  `{SeriesIndex}` zero-pad width (default [`DEFAULT_SERIES_INDEX_WIDTH`]);
+	 *  must be at least 1.
+	 */
+	series_index_width: number,
+};
+
+/**
+ *  Where a pack/collection shell goes after its books are fully extracted
+ *  (FD-01). The decision-gate default is [`PackShellDestination::Quarantine`].
+ */
+export type PackShellDestination = 
+/**  Move the emptied shell to quarantine (never delete). The FD-01 default. */
+"quarantine" | 
+/**  Leave the emptied shell exactly where it is (no op emitted for it). */
+"leave-in-place";
+
+/**
  *  F-405 approval state (`plan_ops.approval`), the wire form of
  *  [`crate::plan::validate::ApprovalState`].
  */
@@ -944,6 +1092,25 @@ export type PlanOpsPage = {
 };
 
 /**
+ *  The live re-plan preview (`plan_preview`, AC-33): the same seven-card
+ *  shape [`PlanReview::groups`] renders, but for a DRAFT ruleset that has not
+ *  been saved (and never will be, if the preview is all the user wanted) -
+ *  this is why there is no `plan_id` here: nothing is persisted to build it
+ *  (no `plans`/`plan_ops` row is ever written for a preview; plan_ops
+ *  immutability applies to real plans only, and a preview is not one).
+ */
+export type PlanPreview = {
+	scan_id: number,
+	/**
+	 *  Always exactly seven, in canonical order, exactly like
+	 *  [`PlanReview::groups`] (AC-10). A group newly blocked by the draft
+	 *  ruleset shows up here with a non-zero `blocked_count`, never as a
+	 *  silent drop (F-906 edge case).
+	 */
+	groups: PlanGroupView[],
+};
+
+/**
  *  The full review-surface payload (`plan_generate`/`plan_get`): the seven
  *  group cards plus plan identity. Deliberately does NOT carry the op
  *  listing (that is [`PlanOpsPage`] via `plan_list_ops`) - the two are
@@ -962,6 +1129,61 @@ export type PlanReview = {
  *  [`crate::plan::validate::ValidationState`].
  */
 export type PlanValidation = "valid" | "warning" | "blocked";
+
+/**
+ *  The preferred canonical audio format kept when a book holds parallel
+ *  formats (F-205's `0 M4B` case). Default [`PreferredFormat::M4b`]; the
+ *  non-preferred copy is quarantined (the never-delete-audio invariant), never
+ *  silently deleted.
+ */
+export type PreferredFormat = 
+/**  Keep the `.m4b` single-file copy; quarantine the loser. The default. */
+"m4b" | 
+/**  Keep the `.mp3` chaptered copy; quarantine the loser. */
+"mp3";
+
+/**
+ *  One of the three shipped F-401 presets. [`Preset::AbsAuthorFirst`] is the
+ *  default (D-02, closing the strategy brief's open question 1).
+ * 
+ *  Serializes as its spec-native kebab-case name (`abs-author-first`,
+ *  `title-first`, `hybrid-genre`) so an F-801 ruleset body (see
+ *  [`crate::ruleset`]) reads exactly as the spec's F-401 preset strings.
+ * 
+ *  `specta::Type` (v0.4.0 Phase 6, F-906): this crosses the tauri-specta IPC
+ *  seam as part of [`crate::ruleset::NamingPolicy`], for the ruleset editor's
+ *  preset picker (`ruleset_get`/`ruleset_save`) and the example-path preview
+ *  (`ruleset_preset_examples`, see [`example_path`]).
+ */
+export type Preset = 
+/**  `{Author}/{Series}/Book {SeriesIndex} - {Year} - {Title}/` (default). */
+"abs-author-first" | 
+/**
+ *  `{Title} - {Author} ({Year})/` - a single flat per-book folder,
+ *  independent of series membership.
+ */
+"title-first" | 
+/**
+ *  Genre kept as a top-level shelf, ABS-native below: the same shape as
+ *  [`Preset::AbsAuthorFirst`] with an optional leading `{Genre}/`
+ *  segment (see the module doc's "Genre is not a parsed field" section
+ *  for what happens when no genre value is supplied).
+ */
+"hybrid-genre";
+
+/**
+ *  One F-401 preset's plain-language example (`ruleset_preset_examples`): a
+ *  fixed sample book rendered under this preset, so the editor's preset
+ *  picker can show what each choice actually looks like before the user
+ *  picks it. `example_path` is display-only sample data (never a real book;
+ *  see [`crate::plan::templates::example_path`]) - plain-language
+ *  description text lives in the frontend's centralized strings module
+ *  (FD-23), not here.
+ */
+export type PresetExampleView = {
+	preset: Preset,
+	example_path: string,
+};
 
 /**
  *  A per-problem metric, carrying its own explicit unit (FD-08). `count` is in
@@ -991,6 +1213,67 @@ export type ProblemMetric = {
 export type ReasonKind = "warn" | "alert";
 
 /**
+ *  A complete, validated ruleset: the F-401 naming choice plus the F-402
+ *  structure and cleanup policies, versioned so `abo-core` and any future CLI
+ *  share one shape (F-801).
+ * 
+ *  Serialization is strict and complete: every field is written, and on read
+ *  every field is required (a body missing any section or field is rejected -
+ *  see [`parse_and_validate`]). This keeps a persisted body unambiguous and
+ *  makes AC-29 rejection behavior sharp; the writer is always
+ *  [`Ruleset::to_body_json`], so a round-trip is lossless.
+ */
+export type Ruleset = {
+	/**  Schema version of this body; must equal [`RULESET_SCHEMA_VERSION`]. */
+	schema_version: number,
+	/**  F-401 naming template choice. */
+	naming: NamingPolicy,
+	/**  F-402 structure policies. */
+	structure: StructurePolicy,
+	/**  F-402/F-302 cleanup toggles. */
+	cleanup: CleanupPolicy,
+};
+
+/**
+ *  One ruleset's full editable detail (`ruleset_get`/`ruleset_save`'s
+ *  success return): identity plus the complete, validated
+ *  [`crate::ruleset::Ruleset`] body the editor's preset picker and policy
+ *  toggles bind to.
+ */
+export type RulesetDetail = {
+	id: number,
+	name: string,
+	is_active: boolean,
+	ruleset: Ruleset,
+};
+
+/**
+ *  The `ruleset_save` input (AC-32): `id: None` creates a new named ruleset;
+ *  `id: Some(existing)` overwrites that row in place. Either way, saving
+ *  makes the result the ACTIVE ruleset ("a saved change persists the active
+ *  ruleset; the review screen regenerates from it").
+ */
+export type RulesetSaveRequest = {
+	id: number | null,
+	name: string,
+	ruleset: Ruleset,
+};
+
+/**
+ *  One row for the F-906 ruleset editor's "load a different saved ruleset"
+ *  list (`ruleset_list`): light enough to list many rulesets without sending
+ *  every one's full policy body. `is_active` marks the one row `plan_generate`
+ *  currently builds against.
+ */
+export type RulesetSummary = {
+	id: number,
+	name: string,
+	preset: Preset,
+	is_active: boolean,
+	updated_at: string,
+};
+
+/**
  *  One series cluster on the "Series on your shelves" shelf (design-system
  *  Section 4.8). `name` is the series name (falling back to the container
  *  folder's own name when no series field parsed, so a real series-container
@@ -1002,6 +1285,38 @@ export type SeriesCluster = {
 	name: string,
 	author: string | null,
 	book_count: number,
+};
+
+/**
+ *  What happens to a book's sidecars (ebook / cover / description) relative to
+ *  the book when it moves. Default [`SidecarPolicy::KeepWithBook`].
+ */
+export type SidecarPolicy = 
+/**  Sidecars travel with their book into the canonical target folder. */
+"keep-with-book" | 
+/**  Sidecars are quarantined instead of moved with the book. */
+"quarantine";
+
+/**  F-402 structure policies. */
+export type StructurePolicy = {
+	/**  Enforce one book per folder (split multi-book folders). Default `true`. */
+	one_book_per_folder: boolean,
+	/**
+	 *  Where a fully-extracted pack shell goes (FD-01). Default
+	 *  [`PackShellDestination::Quarantine`].
+	 */
+	pack_shell: PackShellDestination,
+	/**  How sidecars are handled. Default [`SidecarPolicy::KeepWithBook`]. */
+	sidecars: SidecarPolicy,
+	/**  Per-class non-audio clutter policy. */
+	clutter: ClutterPolicy,
+	/**
+	 *  Preferred canonical format on parallel formats. Default
+	 *  [`PreferredFormat::M4b`].
+	 */
+	preferred_format: PreferredFormat,
+	/**  Remove verified-empty folders. Default `true`. */
+	empty_folder_removal: boolean,
 };
 
 /* Tauri Specta runtime */

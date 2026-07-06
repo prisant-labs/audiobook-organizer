@@ -529,6 +529,73 @@ pub struct PlanOpsPage {
     pub truncated: bool,
 }
 
+// ---- Phase 6 shell payloads (F-906 ruleset editor + live re-plan) ----
+
+/// One row for the F-906 ruleset editor's "load a different saved ruleset"
+/// list (`ruleset_list`): light enough to list many rulesets without sending
+/// every one's full policy body. `is_active` marks the one row `plan_generate`
+/// currently builds against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RulesetSummary {
+    pub id: i64,
+    pub name: String,
+    pub preset: crate::plan::templates::Preset,
+    pub is_active: bool,
+    pub updated_at: String,
+}
+
+/// One ruleset's full editable detail (`ruleset_get`/`ruleset_save`'s
+/// success return): identity plus the complete, validated
+/// [`crate::ruleset::Ruleset`] body the editor's preset picker and policy
+/// toggles bind to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RulesetDetail {
+    pub id: i64,
+    pub name: String,
+    pub is_active: bool,
+    pub ruleset: crate::ruleset::Ruleset,
+}
+
+/// The `ruleset_save` input (AC-32): `id: None` creates a new named ruleset;
+/// `id: Some(existing)` overwrites that row in place. Either way, saving
+/// makes the result the ACTIVE ruleset ("a saved change persists the active
+/// ruleset; the review screen regenerates from it").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RulesetSaveRequest {
+    pub id: Option<i64>,
+    pub name: String,
+    pub ruleset: crate::ruleset::Ruleset,
+}
+
+/// One F-401 preset's plain-language example (`ruleset_preset_examples`): a
+/// fixed sample book rendered under this preset, so the editor's preset
+/// picker can show what each choice actually looks like before the user
+/// picks it. `example_path` is display-only sample data (never a real book;
+/// see [`crate::plan::templates::example_path`]) - plain-language
+/// description text lives in the frontend's centralized strings module
+/// (FD-23), not here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PresetExampleView {
+    pub preset: crate::plan::templates::Preset,
+    pub example_path: String,
+}
+
+/// The live re-plan preview (`plan_preview`, AC-33): the same seven-card
+/// shape [`PlanReview::groups`] renders, but for a DRAFT ruleset that has not
+/// been saved (and never will be, if the preview is all the user wanted) -
+/// this is why there is no `plan_id` here: nothing is persisted to build it
+/// (no `plans`/`plan_ops` row is ever written for a preview; plan_ops
+/// immutability applies to real plans only, and a preview is not one).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct PlanPreview {
+    pub scan_id: i64,
+    /// Always exactly seven, in canonical order, exactly like
+    /// [`PlanReview::groups`] (AC-10). A group newly blocked by the draft
+    /// ruleset shows up here with a non-zero `blocked_count`, never as a
+    /// silent drop (F-906 edge case).
+    pub groups: Vec<PlanGroupView>,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -668,5 +735,13 @@ mod contract {
         assert_ipc_ready::<JobCompletedPayload>();
         assert_ipc_ready::<JobFailedPayload>();
         assert_ipc_ready::<JobProgressPayload>();
+        // F-906 ruleset editor + live re-plan (v0.4.0 Phase 6).
+        assert_ipc_ready::<crate::ruleset::Ruleset>();
+        assert_ipc_ready::<crate::plan::templates::Preset>();
+        assert_ipc_ready::<RulesetSummary>();
+        assert_ipc_ready::<RulesetDetail>();
+        assert_ipc_ready::<RulesetSaveRequest>();
+        assert_ipc_ready::<PresetExampleView>();
+        assert_ipc_ready::<PlanPreview>();
     }
 }

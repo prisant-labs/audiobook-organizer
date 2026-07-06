@@ -118,6 +118,27 @@ pub enum AppError {
     #[error("ruleset body is invalid: {detail}")]
     RulesetInvalid { detail: String },
 
+    // ---- Ruleset editor family (v0.4.0 Phase 6: F-906 ruleset editor) ----
+    /// `ruleset_get`/`ruleset_delete` named a `ruleset_id` that does not exist
+    /// (never created, or already deleted).
+    #[error("ruleset not found: {ruleset_id}")]
+    RulesetNotFound { ruleset_id: i64 },
+
+    /// `ruleset_delete` refused to delete `ruleset_id` because it is
+    /// currently the ACTIVE ruleset (the one `plan_generate` builds against).
+    /// Deleting it would leave nothing active without the caller explicitly
+    /// choosing a replacement first, so this is a policy refusal, not a
+    /// database error.
+    #[error("ruleset {ruleset_id} is in use and cannot be deleted")]
+    RulesetInUse { ruleset_id: i64 },
+
+    /// A ruleset database operation (list/get/save/delete/activate) failed at
+    /// the SQLite layer. `detail` is developer-facing; distinct from
+    /// [`RulesetInvalid`](AppError::RulesetInvalid), which is a rejected body,
+    /// not a database failure.
+    #[error("ruleset could not be read or saved: {detail}")]
+    RulesetOperationFailed { detail: String },
+
     // ---- Plan family (v0.3.0 Phase 5: F-404 plan validation) ----
     //
     // The machine codes below are the breakdown Section 8 "Plan" family. They
@@ -217,6 +238,10 @@ impl AppError {
             AppError::CsvParse { .. } => "csv-parse",
             // Ruleset family
             AppError::RulesetInvalid { .. } => "ruleset-invalid",
+            // Ruleset editor family
+            AppError::RulesetNotFound { .. } => "ruleset-not-found",
+            AppError::RulesetInUse { .. } => "ruleset-in-use",
+            AppError::RulesetOperationFailed { .. } => "ruleset-operation-failed",
             // Plan family
             AppError::SnapshotStale { .. } => "snapshot-stale",
             AppError::CollisionInPlan { .. } => "collision-in-plan",
@@ -285,6 +310,21 @@ impl AppError {
                 "This ruleset could not be saved because its settings were not valid. This is \
                  usually an out-of-date or hand-edited ruleset file; reset it to the defaults or \
                  re-create it, then save again."
+            }
+            // Ruleset editor family
+            AppError::RulesetNotFound { .. } => {
+                "This ruleset could not be found; it may already have been deleted. Choose \
+                 another ruleset, or create a new one."
+            }
+            AppError::RulesetInUse { .. } => {
+                "This is the ruleset you're using right now, so it can't be deleted. Choose a \
+                 different one first, then delete this one."
+            }
+            AppError::RulesetOperationFailed { .. } => {
+                "Your shelf-organizing settings could not be read or saved. Restart the app and \
+                 try again. If this keeps happening, the disk may be full or the app data folder \
+                 may be on a synced location (OneDrive); free space or move the app data out of \
+                 the synced folder."
             }
             // Plan family
             AppError::SnapshotStale { .. } => {
@@ -377,6 +417,11 @@ mod tests {
             AppError::CsvParse { row: 42 },
             AppError::RulesetInvalid {
                 detail: "missing field `naming`".into(),
+            },
+            AppError::RulesetNotFound { ruleset_id: 7 },
+            AppError::RulesetInUse { ruleset_id: 7 },
+            AppError::RulesetOperationFailed {
+                detail: "database is locked".into(),
             },
             AppError::SnapshotStale {
                 path: r"E:\Books\Gone.m4b".into(),

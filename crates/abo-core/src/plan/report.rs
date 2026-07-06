@@ -1270,6 +1270,86 @@ pub async fn build_and_persist_plan(
     })
 }
 
+/// The F-906 ruleset editor's live re-plan preview (AC-33): the SAME
+/// build -> detect-duplicates -> validate pipeline [`build_and_persist_plan`]
+/// runs (steps 1-5 there), but for a DRAFT [`crate::ruleset::Ruleset`] that
+/// has not been (and may never be) saved, and with step 6
+/// (`persist_validated_plan`) skipped entirely: this NEVER writes a
+/// `plans`/`plan_ops` row (plan_ops immutability applies to real, persisted
+/// plans; a preview is not one, ever - not even a draft one).
+///
+/// Returns the same seven-card shape [`crate::plan::query::build_plan_review`]
+/// already produces for a real plan (via
+/// [`crate::plan::query::synthetic_op_rows`]), so the editor's live counts
+/// use the exact same group-status/count logic the review screen does, with
+/// zero duplicated aggregation code. `ruleset` is already validated by the
+/// caller (or arrives pre-validated from a typed IPC struct); this function
+/// does not re-validate it, since a live preview runs on every toggle change
+/// and should not re-derive a validation error the caller already has a
+/// clearer path to report.
+pub async fn preview_plan_review(
+    pool: &sqlx::SqlitePool,
+    scan_id: i64,
+    ruleset: &crate::ruleset::Ruleset,
+) -> Result<crate::ipc::PlanPreview, GenerateError> {
+    use crate::classify::classify;
+    use crate::parse::extract::{extract, EntryInput};
+    use crate::plan::builder::{
+        build_plan, classify_inputs_from_plan_nodes, plan_nodes_from_snapshot,
+    };
+    use crate::plan::query::{build_plan_review, synthetic_op_rows};
+    use crate::plan::validate::{validate_plan, RealFreeSpace, ValidationEnv};
+    use std::collections::HashSet;
+
+    // 1. Load the scan root (no ruleset row to load: the draft ruleset comes
+    // straight from the caller).
+    let root_path: Option<String> = sqlx::query_scalar("SELECT root_path FROM scans WHERE id = ?")
+        .bind(scan_id)
+        .fetch_optional(pool)
+        .await?;
+    let root_path = root_path.ok_or(GenerateError::NotFound("scan"))?;
+
+    // 2. Read the immutable snapshot (never the live filesystem).
+    let rows = crate::scan::get_scan_entries(pool, scan_id).await?;
+    let nodes = plan_nodes_from_snapshot(&rows);
+
+    // 3. Classify + extract (the pure pipeline the builder consumes).
+    let classify_inputs = classify_inputs_from_plan_nodes(&nodes);
+    let classifications = classify(&classify_inputs);
+    let entry_inputs: Vec<EntryInput> = nodes
+        .iter()
+        .map(|n| EntryInput {
+            id: n.id,
+            parent: n.parent,
+            name: n.name.clone(),
+            kind: n.kind,
+        })
+        .collect();
+    let merged = extract(&entry_inputs);
+
+    // 4. Build the plan (in memory only) and detect duplicate candidates.
+    let plan = build_plan(&nodes, &classifications, &merged, ruleset, &root_path);
+    let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
+    let duplicate_groups = detect_duplicates(&dupe_entries);
+
+    // 5. Validate against a fresh view of the snapshot's own paths (all
+    // present) - the same env `build_and_persist_plan` uses, so a preview's
+    // blocked/warning counts match what a real regenerate would show.
+    let existing: HashSet<String> = nodes.iter().map(|n| n.path.clone()).collect();
+    let free_space = RealFreeSpace;
+    let long_paths = crate::scan::longpath::long_paths_enabled();
+    let env = ValidationEnv::new(&existing, long_paths, &free_space);
+    let verdicts = validate_plan(&plan, &env);
+
+    // 6. Project to the seven-card shape - NO persistence step here, ever.
+    let synthetic_rows = synthetic_op_rows(&plan, &verdicts);
+    let review = build_plan_review(0, scan_id, &synthetic_rows, &duplicate_groups);
+    Ok(crate::ipc::PlanPreview {
+        scan_id,
+        groups: review.groups,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

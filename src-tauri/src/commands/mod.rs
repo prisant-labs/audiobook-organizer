@@ -13,6 +13,7 @@
 //! v0.4.0 Phase 2 adds the F-803 settings commands (see [`settings`]).
 
 pub mod plan;
+pub mod ruleset;
 pub mod settings;
 
 use std::panic::AssertUnwindSafe;

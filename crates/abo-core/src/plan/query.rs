@@ -57,7 +57,10 @@ use crate::ipc::{
 use crate::parse::extract::{
     extract, Confidence as FieldConfidence, EntryInput, NodeKind as ExtractNodeKind,
 };
-use crate::plan::builder::{group_for_op_group, plan_nodes_from_snapshot, CampaignGroup};
+use crate::plan::builder::{
+    group_for_op_group, plan_nodes_from_snapshot, BuiltPlan, CampaignGroup,
+};
+use crate::plan::validate::OpVerdict;
 use crate::scan::typing::{classify_path, FileClass};
 
 /// The op kinds that count as a user-facing "change" (mirrors
@@ -524,6 +527,49 @@ fn blocked_reason_text(reason: Option<&str>) -> Option<String> {
         _ => return None,
     };
     Some(err.remediation().to_string())
+}
+
+/// Project an in-memory, UNPERSISTED [`BuiltPlan`] plus its verdicts into the
+/// same [`PlanOpRow`] shape [`build_plan_review`] already knows how to fold
+/// into the seven group cards (F-906, AC-33's live re-plan preview).
+///
+/// This is the seam that lets the live preview reuse every bit of group
+/// aggregation and status logic in this module (counts, byte sizes, the
+/// included/left-out/checking rules) WITHOUT a second copy of that logic and
+/// WITHOUT ever writing a `plans`/`plan_ops` row: `id`/`plan_id`/`seq` are
+/// synthetic (never real database ids - a preview has no plan to belong to),
+/// and `approval` is always `"pending"` (nothing has been reviewed yet; a
+/// preview is diagnostic-only, never a persisted, approvable plan).
+pub fn synthetic_op_rows(plan: &BuiltPlan, verdicts: &[OpVerdict]) -> Vec<PlanOpRow> {
+    assert_eq!(
+        plan.ops.len(),
+        verdicts.len(),
+        "verdicts must align 1:1 with plan ops"
+    );
+    plan.ops
+        .iter()
+        .zip(verdicts.iter())
+        .enumerate()
+        .map(|(i, (op, v))| PlanOpRow {
+            id: i as i64,
+            plan_id: 0,
+            seq: i as i64,
+            op_group: op.op_group.clone(),
+            kind: op.kind.clone(),
+            kind_reason: op.kind_reason.clone(),
+            source_path: op.source_path.clone(),
+            target_path: op.target_path.clone(),
+            rationale: op.rationale.clone(),
+            rule_id: op.rule_id.clone(),
+            confidence: op.confidence.clone(),
+            byte_size: op.byte_size,
+            validation_state: v.state.as_str().to_string(),
+            validation_reason: v.reason_code().map(|s| s.to_string()),
+            provenance_json: op.provenance_json.clone(),
+            approval: "pending".to_string(),
+            approval_updated_at: None,
+        })
+        .collect()
 }
 
 // ---- impure orchestration ----
@@ -996,6 +1042,54 @@ mod tests {
         let text = view.warning_text.expect("a plain-language reason");
         assert!(!text.contains("snapshot-stale"), "must not leak the code");
         assert!(text.to_lowercase().contains("scan"));
+    }
+
+    /// F-906 (AC-33): `synthetic_op_rows` projects a [`BuiltPlan`] + verdicts
+    /// into rows `build_plan_review` folds into group cards, with synthetic
+    /// (never-real) ids and `approval` always `"pending"`.
+    #[test]
+    fn synthetic_op_rows_carries_pending_approval_and_real_verdicts() {
+        use crate::plan::builder::{PlanStats, PlannedOp};
+        use crate::plan::validate::OpVerdict;
+
+        let plan = BuiltPlan {
+            ops: vec![PlannedOp {
+                op_group: "loose-root-books".to_string(),
+                kind: "move".to_string(),
+                kind_reason: None,
+                source_path: r"E:\lib\A.m4b".to_string(),
+                target_path: r"E:\lib\Author\A.m4b".to_string(),
+                rationale: "test rationale.".to_string(),
+                rule_id: "test-rule".to_string(),
+                confidence: "high".to_string(),
+                byte_size: 500,
+                provenance_json: None,
+            }],
+            stats: PlanStats {
+                total_ops: 1,
+                manual_review_ops: 0,
+                per_group: vec![],
+            },
+        };
+        let verdicts = vec![OpVerdict::valid()];
+
+        let rows = synthetic_op_rows(&plan, &verdicts);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].plan_id, 0, "a preview belongs to no real plan");
+        assert_eq!(rows[0].approval, "pending");
+        assert_eq!(rows[0].validation_state, "valid");
+        assert_eq!(rows[0].byte_size, 500);
+
+        // The synthetic rows fold into the same seven-card review a real
+        // plan's rows do.
+        let review = build_plan_review(0, 1, &rows, &[]);
+        let loose = review
+            .groups
+            .iter()
+            .find(|g| g.group == "loose-books")
+            .unwrap();
+        assert_eq!(loose.op_count, 1);
+        assert_eq!(loose.status, GroupStatus::Included);
     }
 
     /// `plan_ops_for`/`plan_review_for` sanity: no fixture surprise where two

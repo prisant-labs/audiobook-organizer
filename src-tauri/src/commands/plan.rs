@@ -16,67 +16,62 @@
 //! see this module's test coverage note and the task report for the
 //! follow-up this leaves for P7.
 //!
-//! No ruleset editor exists yet (F-906 is Phase 6, T-26): `plan_generate`
-//! bootstraps the one default ruleset (D-02 `abs-author-first`) on first use
-//! via [`ensure_default_ruleset`] rather than taking a `ruleset_id` argument
-//! the frontend has no UI to supply yet.
+//! v0.4.0 Phase 6 (F-906) adds the live re-plan preview (`plan_preview`) and
+//! switches `plan_generate` from its own ad hoc "first ruleset row" bootstrap
+//! to the shared `commands::ruleset::ensure_active_ruleset` (the ACTIVE
+//! ruleset, the one the F-906 editor's Apply/save semantics point at).
 
-use abo_core::db::rulesets::{insert_ruleset, list_rulesets, NewRuleset};
-use abo_core::ipc::{AppError, PlanOpView, PlanOpsPage, PlanReview};
-use abo_core::plan::report::build_and_persist_plan;
+use abo_core::ipc::{AppError, PlanOpView, PlanOpsPage, PlanPreview, PlanReview};
+use abo_core::plan::report::{build_and_persist_plan, preview_plan_review};
 use abo_core::plan::validate::{
     set_group_approval, set_op_approval, ApprovalAction, ApprovalError,
 };
 use abo_core::plan::{builder::CampaignGroup, query};
-use abo_core::ruleset::default_ruleset;
+use abo_core::ruleset::Ruleset;
 use abo_core::scan::walk::now_iso8601_utc;
 
+use crate::commands::ruleset::ensure_active_ruleset;
 use crate::AppState;
-
-/// Build (or reuse) the one default ruleset row (D-02, FD-05) and return its
-/// id. There is no ruleset editor yet (F-906, Phase 6), so this is the
-/// bootstrap every `plan_generate` call uses until that surface lands.
-async fn ensure_default_ruleset(pool: &sqlx::SqlitePool) -> Result<i64, AppError> {
-    let existing = list_rulesets(pool)
-        .await
-        .map_err(|e| AppError::PlanGenerationFailed {
-            detail: e.to_string(),
-        })?;
-    if let Some(first) = existing.into_iter().next() {
-        return Ok(first.id);
-    }
-    let body = default_ruleset().to_body_json();
-    let now = now_iso8601_utc();
-    insert_ruleset(
-        pool,
-        &NewRuleset {
-            name: "Default",
-            body_json: &body,
-            schema_version: 1,
-        },
-        &now,
-    )
-    .await
-    .map_err(|e| AppError::PlanGenerationFailed {
-        detail: e.to_string(),
-    })
-}
 
 /// Generate a REAL plan from a completed scan and return its review surface
 /// (F-903): build -> detect duplicates -> validate -> persist, then the
 /// seven group cards. `scan_id` is a completed snapshot's id (from
-/// `classify_overview` or `job:completed`'s scan payload).
+/// `classify_overview` or `job:completed`'s scan payload). Always builds
+/// against the ACTIVE ruleset (F-906, [`ensure_active_ruleset`]), seeding the
+/// shipped default (D-02 `abs-author-first`) on a brand-new database.
 #[tauri::command]
 #[specta::specta]
 pub async fn plan_generate(
     state: tauri::State<'_, AppState>,
     scan_id: i64,
 ) -> Result<PlanReview, AppError> {
-    let ruleset_id = ensure_default_ruleset(&state.pool).await?;
-    let built = build_and_persist_plan(&state.pool, scan_id, ruleset_id)
+    let active = ensure_active_ruleset(&state.pool).await?;
+    let built = build_and_persist_plan(&state.pool, scan_id, active.id)
         .await
         .map_err(AppError::from)?;
     query::plan_review_for(&state.pool, built.plan_id).await
+}
+
+/// The F-906 ruleset editor's live re-plan preview (AC-33): re-plan `scan_id`
+/// against `ruleset` (a DRAFT that may not yet be saved) and return the same
+/// seven-card counts shape the review screen renders - WITHOUT persisting
+/// anything (no `plans`/`plan_ops` row is ever written for a preview; see
+/// [`abo_core::plan::report::preview_plan_review`]'s doc comment). Debounced
+/// and cancellable on the frontend side (the same re-entrancy guard pattern
+/// `usePlanReview` already establishes for `plan_generate`); this command
+/// itself is a plain, side-effect-free read plus in-memory compute, so
+/// calling it repeatedly and discarding stale responses is always safe.
+#[tauri::command]
+#[specta::specta]
+pub async fn plan_preview(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+    ruleset: Ruleset,
+) -> Result<PlanPreview, AppError> {
+    ruleset.validate()?;
+    preview_plan_review(&state.pool, scan_id, &ruleset)
+        .await
+        .map_err(AppError::from)
 }
 
 /// Re-fetch a previously generated plan's review surface (F-903), for
