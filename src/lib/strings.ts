@@ -103,6 +103,11 @@ export const STRINGS = {
     excludeAction: "Leave this one out",
     excludeUndoNote: "Left out",
     fileDetails: "Show file details",
+    // F-504 honesty caveat (FIX 2): shown beside the re-derived pattern/fields
+    // block so the reader knows it reflects only this item's own name, not any
+    // detail inherited from a parent folder. Suppressed for box sets and
+    // bundles (the backend omits the whole block there).
+    ownNameCaveat: "Based on this item's own name.",
     filterPlaceholder: "Search by name...",
     filterGroupAll: "All groups",
     filterConfidenceAll: "Any confidence",

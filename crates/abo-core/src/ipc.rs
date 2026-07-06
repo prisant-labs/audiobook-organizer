@@ -425,6 +425,11 @@ pub struct PlanGroupView {
     /// The user-facing CHANGE count (FD-08 unit: moves/renames/set-asides/
     /// removals; for the Copies group, duplicate GROUPS).
     pub op_count: i64,
+    /// How many of the group's changes would ACTUALLY run: `op_count` minus the
+    /// blocked and individually excluded ops. This is what the footer's
+    /// "M changes" total sums over an included group, so a group holding
+    /// blocked/excluded ops never inflates the count of what a tidy-up would do.
+    pub actionable_count: i64,
     /// Total bytes the group's changes move/set aside.
     pub byte_size: i64,
     pub status: GroupStatus,

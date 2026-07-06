@@ -16,7 +16,10 @@ export interface ReviewFooterProps {
 // excluded", Section 7).
 export function ReviewFooter({ groups }: ReviewFooterProps) {
   const included = groups.filter((g) => g.status === "included");
-  const totalChanges = included.reduce((sum, g) => sum + g.op_count, 0);
+  // Sum only ops that would ACTUALLY run: `actionable_count` already excludes
+  // each group's blocked and individually-excluded ops (FIX 5), so a group
+  // holding held ops never inflates the "M changes" total.
+  const totalChanges = included.reduce((sum, g) => sum + g.actionable_count, 0);
   const allExcluded = included.length === 0;
 
   return (

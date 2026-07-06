@@ -87,4 +87,27 @@ describe("FileDetails", () => {
     expect(screen.queryByText(/Matched pattern/)).toBeNull();
     expect(screen.queryByText(/Stripped from the name/)).toBeNull();
   });
+
+  it("shows the own-name caveat when a re-derived block is present (FIX 2 honesty)", async () => {
+    const user = userEvent.setup();
+    render(<FileDetails op={op()} />);
+    await user.click(screen.getByText("Show file details"));
+    expect(screen.getByText("Based on this item's own name.")).toBeInTheDocument();
+  });
+
+  it("suppresses the own-name caveat when the block is omitted (box sets / bundles)", () => {
+    // The backend returns null/empty for inheritance-heavy groups, so the
+    // caveat that annotates that block must not render either.
+    render(
+      <FileDetails
+        op={op({
+          group: "box-sets",
+          matched_pattern: null,
+          extracted_fields: [],
+          stripped_noise: null,
+        })}
+      />,
+    );
+    expect(screen.queryByText("Based on this item's own name.")).toBeNull();
+  });
 });

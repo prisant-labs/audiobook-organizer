@@ -120,10 +120,16 @@ fn build_group_view(
         .iter()
         .filter(|o| o.validation_state == "blocked")
         .count() as i64;
-    let blocked_or_excluded = changes
+    // The ops that would ACTUALLY run: neither blocked nor individually
+    // excluded. This is both the LeftOut/Included discriminator below and the
+    // `actionable_count` the footer sums (never `op_count`, which includes
+    // blocked/excluded ops that stay put).
+    let actionable: Vec<&&PlanOpRow> = changes
         .iter()
-        .filter(|o| o.validation_state == "blocked" || o.approval == "excluded")
-        .count();
+        .filter(|o| o.validation_state != "blocked" && o.approval != "excluded")
+        .collect();
+    let actionable_count = actionable.len() as i64;
+    let blocked_or_excluded = changes.len() - actionable.len();
 
     let (status, reason) = if changes.is_empty() {
         (
@@ -138,10 +144,6 @@ fn build_group_view(
                 .to_string(),
         )
     } else {
-        let actionable: Vec<&&PlanOpRow> = changes
-            .iter()
-            .filter(|o| o.validation_state != "blocked" && o.approval != "excluded")
-            .collect();
         let all_rejected =
             !actionable.is_empty() && actionable.iter().all(|o| o.approval == "rejected");
         let status = if all_rejected {
@@ -158,6 +160,7 @@ fn build_group_view(
         headline: group_headline(group, op_count.max(0) as u64),
         reason,
         op_count,
+        actionable_count,
         byte_size,
         status,
         warning_count,
@@ -179,6 +182,9 @@ fn copies_group_view(duplicate_groups: &[DuplicateGroup]) -> PlanGroupView {
         headline: group_headline(CampaignGroup::Copies, op_count.max(0) as u64),
         reason: group_reason(CampaignGroup::Copies).to_string(),
         op_count,
+        // The Copies group is always held (Checking) this release, so nothing
+        // in it ever runs; it never contributes to the footer's actionable sum.
+        actionable_count: 0,
         byte_size,
         status: GroupStatus::Checking,
         warning_count: 0,
@@ -249,7 +255,8 @@ fn group_reason(group: CampaignGroup) -> &'static str {
 /// why the matched pattern and per-field confidence are RE-DERIVED here
 /// rather than read from a stored column.
 pub fn build_plan_op_view(op: &PlanOpRow) -> PlanOpView {
-    let group = group_for_op_group(&op.op_group)
+    let campaign_group = group_for_op_group(&op.op_group);
+    let group = campaign_group
         .map(|g| g.slug().to_string())
         .unwrap_or_else(|| op.op_group.clone());
 
@@ -270,11 +277,27 @@ pub fn build_plan_op_view(op: &PlanOpRow) -> PlanOpView {
         PlanValidation::Valid => None,
     };
 
-    let (matched_pattern, extracted_fields) = if op.kind != "mkdir" && !op.source_path.is_empty() {
-        disclosure_from_name(&op.source_path)
-    } else {
-        (None, Vec::new())
-    };
+    // F-504 disclosure honesty (FIX 2): the matched pattern and per-field
+    // confidence are RE-DERIVED from the op's OWN source name (see module doc).
+    // For the inheritance-heavy groups - box sets and bundles - a field a book
+    // actually inherits from its ancestor folder (its author, typically) is not
+    // present in the item's own name, so a re-derived per-field block would
+    // MISREPORT those fields. For those two groups we therefore OMIT the block
+    // entirely (None / empty) rather than show a value the engine did not use;
+    // the honest mechanism - storing per-field provenance at plan build time -
+    // is deferred to v0.6.0 (F-608 hardening; see the P5 report DEBT note). The
+    // remaining groups keep the block, and the frontend adds a plain caveat
+    // ("Based on this item's own name.") making the own-name basis explicit.
+    let inheritance_heavy = matches!(
+        campaign_group,
+        Some(CampaignGroup::BoxSets) | Some(CampaignGroup::Bundles)
+    );
+    let (matched_pattern, extracted_fields) =
+        if inheritance_heavy || op.kind == "mkdir" || op.source_path.is_empty() {
+            (None, Vec::new())
+        } else {
+            disclosure_from_name(&op.source_path)
+        };
 
     let stripped_noise = if op.kind == "rename" {
         diff_noise(&op.source_path, &op.target_path)
@@ -700,6 +723,60 @@ mod tests {
         assert_eq!(loose.op_count, 1);
     }
 
+    /// FIX 5: an included group's `actionable_count` counts only the ops that
+    /// would actually run - blocked and individually-excluded ops are left out,
+    /// even though `op_count` still reports the group's full change total.
+    #[test]
+    fn actionable_count_excludes_blocked_and_excluded_ops() {
+        let ops = vec![
+            op(
+                1,
+                "loose-root-books",
+                "move",
+                "E:/lib/A.m4b",
+                "E:/lib/Author/A.m4b",
+                10,
+                "valid",
+                None,
+                "pending",
+            ),
+            op(
+                2,
+                "loose-root-books",
+                "move",
+                "E:/lib/B.m4b",
+                "E:/lib/Author/B.m4b",
+                10,
+                "blocked",
+                Some("snapshot-stale"),
+                "pending",
+            ),
+            op(
+                3,
+                "loose-root-books",
+                "move",
+                "E:/lib/C.m4b",
+                "E:/lib/Author/C.m4b",
+                10,
+                "valid",
+                None,
+                "excluded",
+            ),
+        ];
+        let review = build_plan_review(1, 1, &ops, &[]);
+        let loose = review
+            .groups
+            .iter()
+            .find(|g| g.group == "loose-books")
+            .unwrap();
+        assert_eq!(loose.status, GroupStatus::Included);
+        assert_eq!(loose.op_count, 3, "op_count is the full change total");
+        assert_eq!(
+            loose.actionable_count, 1,
+            "only the one valid, non-excluded op would actually run"
+        );
+    }
+
     /// AC-15: when every member of a group is blocked or excluded, the group
     /// renders the blocked/empty (`Checking`) state, not a normal card.
     #[test]
@@ -847,6 +924,36 @@ mod tests {
             .find(|f| f.field == "author")
             .expect("an author field");
         assert_eq!(author.value, "Yuval Noah Harari");
+    }
+
+    /// FIX 2 / F-504 honesty: ops in the inheritance-heavy groups (box sets,
+    /// bundles) OMIT the re-derived per-field block entirely, because a field a
+    /// book inherits from an ancestor folder is not in the item's own name and
+    /// would be misreported. The backend returns None/empty for those groups.
+    #[test]
+    fn inheritance_heavy_ops_omit_the_rederived_disclosure() {
+        for op_group in ["split-multi-book", "flatten-packs"] {
+            let row = op(
+                1,
+                op_group,
+                "move",
+                "E:/lib/Some Box Set/Book One by Some Author.m4b",
+                "E:/lib/Some Author/Book One/Book One by Some Author.m4b",
+                1000,
+                "valid",
+                None,
+                "pending",
+            );
+            let view = build_plan_op_view(&row);
+            assert!(
+                view.matched_pattern.is_none(),
+                "{op_group}: matched pattern must be omitted (inheritance-heavy)"
+            );
+            assert!(
+                view.extracted_fields.is_empty(),
+                "{op_group}: per-field confidence must be omitted (inheritance-heavy)"
+            );
+        }
     }
 
     /// AC-18 "stripped noise": a rename op's before/after basenames diff to

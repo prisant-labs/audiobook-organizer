@@ -13,6 +13,7 @@ function group(overrides: Partial<PlanGroupView> = {}): PlanGroupView {
     headline: "Give 238 loose books their own folders",
     reason: "These audiobooks are sitting as single files instead of their own folder.",
     op_count: 238,
+    actionable_count: 238,
     byte_size: 67.9 * 1024 ** 3,
     status: "included",
     warning_count: 0,

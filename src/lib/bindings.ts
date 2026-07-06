@@ -864,6 +864,13 @@ export type PlanGroupView = {
 	 *  removals; for the Copies group, duplicate GROUPS).
 	 */
 	op_count: number,
+	/**
+	 *  How many of the group's changes would ACTUALLY run: `op_count` minus the
+	 *  blocked and individually excluded ops. This is what the footer's
+	 *  "M changes" total sums over an included group, so a group holding
+	 *  blocked/excluded ops never inflates the count of what a tidy-up would do.
+	 */
+	actionable_count: number,
 	/**  Total bytes the group's changes move/set aside. */
 	byte_size: number,
 	status: GroupStatus,

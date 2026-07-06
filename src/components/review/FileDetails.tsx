@@ -42,6 +42,9 @@ export function FileDetails({ op }: FileDetailsProps) {
             Stripped from the name: <span className="text-ink-2">{op.stripped_noise}</span>
           </p>
         )}
+        {(op.matched_pattern || op.extracted_fields.length > 0) && (
+          <p className="text-[10.5px] italic text-ink-3">{STRINGS.review.ownNameCaveat}</p>
+        )}
       </div>
     </details>
   );

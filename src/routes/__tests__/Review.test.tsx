@@ -29,18 +29,21 @@ const SEVEN_SLUGS = [
 ];
 
 function group(overrides: Partial<PlanGroupView> = {}): PlanGroupView {
-  return {
+  const merged = {
     group: "loose-books",
     label: "loose books",
     headline: "Give 3 loose books their own folders",
     reason: "These audiobooks are sitting as single files instead of their own folder.",
     op_count: 3,
     byte_size: 3000,
-    status: "included",
+    status: "included" as const,
     warning_count: 0,
     blocked_count: 0,
     ...overrides,
   };
+  // Default the actionable count to the full op_count unless a test overrides
+  // it, so footer-sum assertions that only set op_count still add up.
+  return { ...merged, actionable_count: overrides.actionable_count ?? merged.op_count };
 }
 
 function sevenGroups(overrides: Partial<Record<string, Partial<PlanGroupView>>> = {}): PlanGroupView[] {
