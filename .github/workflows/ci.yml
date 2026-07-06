@@ -240,9 +240,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: windows-latest, ga: true }   # the real GA bar
-          - { os: macos-latest,  ga: false }   # honesty only: compiles + bundles
+        # macOS (honesty only: compiles + bundles) bills at a 10x minutes
+        # multiplier on private repos; running it on every PR exhausted the
+        # org's Actions quota on 2026-07-05. The include list is therefore
+        # event-conditional: pull_request runs Windows only (the GA bar);
+        # push events (main and tags) add the macOS honesty leg back.
+        include: ${{ github.event_name == 'push' && fromJSON('[{"os":"windows-latest","ga":true},{"os":"macos-latest","ga":false}]') || fromJSON('[{"os":"windows-latest","ga":true}]') }}
     # Reality adaptation (Phase 7): ci-plan.md's template presets
     # `continue-on-error: ${{ !matrix.ga }}` from the start, which would make the
     # macOS leg allow-fail-capable on day one. This phase's brief calls for NOT
