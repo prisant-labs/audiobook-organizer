@@ -48,6 +48,11 @@ pub use crate::error::AppError;
 /// [`crate::classify`], where the pure `health_metrics` computation lives.
 pub use crate::classify::{ClassMetric, FolderClass, HealthMetrics, MetricUnit, ProblemMetric};
 
+/// Re-exported so the `apply_start` command's `mode` argument is reachable under
+/// `abo_core::ipc` (AC-4). Defined in [`crate::exec`], where the executor owns the
+/// dry-run vs Real distinction (F-607).
+pub use crate::exec::ApplyMode;
+
 /// The category of a [`ScanWarning`].
 ///
 /// The two per-entry kinds ([`JunctionSkipped`](ScanWarningKind::JunctionSkipped)
@@ -596,6 +601,30 @@ pub struct PlanPreview {
     pub groups: Vec<PlanGroupView>,
 }
 
+// ---- Phase 1 shell payloads (F-607 executor seam, v0.5.0 Phase 1) ----
+
+/// The result of an `apply_start` run (v0.5.0 Phase 1 dry-run seam), returned by
+/// the `apply_start` command. Reports the plan and apply-job the run belongs to,
+/// whether it was a dry run, and how many approved operations the executor
+/// walked.
+///
+/// This is the SKELETON return for the seam phase: it proves the dry-run walk ran
+/// against a `MemFs` seeded from the plan's snapshot without touching disk (AC-2).
+/// The F-904 apply + activity surface (a later phase) grows the real event-driven
+/// progress contract on top of the same command; `dry_run` is always `true` here
+/// because a Real apply is refused with `apply-not-supported` this phase (D-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ApplyReport {
+    /// The `plans.id` this run applied.
+    pub plan_id: i64,
+    /// The apply `jobs.id` recorded for this run.
+    pub job_id: i64,
+    /// Whether this was a dry run (always `true` this phase).
+    pub dry_run: bool,
+    /// How many approved operations the executor walked.
+    pub ops_walked: i64,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -729,6 +758,9 @@ mod contract {
         assert_ipc_ready::<ExtractedFieldView>();
         assert_ipc_ready::<PlanOpView>();
         assert_ipc_ready::<PlanOpsPage>();
+        // F-607 executor seam (v0.5.0 Phase 1).
+        assert_ipc_ready::<ApplyMode>();
+        assert_ipc_ready::<ApplyReport>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();

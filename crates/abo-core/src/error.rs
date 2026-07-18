@@ -218,6 +218,21 @@ pub enum AppError {
     /// (never generated, or its scan/ruleset predecessor is gone).
     #[error("plan not found: {plan_id}")]
     PlanNotFound { plan_id: i64 },
+
+    // ---- Apply family (v0.5.0 Phase 1: F-607 executor seam) ----
+    /// A `Real` (non-dry-run) apply was requested, but this build implements only
+    /// the dry-run walk (v0.5.0 Phase 1 Vfs seam); the executor's operation logic
+    /// lands in a later phase. Returned BEFORE any filesystem work, so an
+    /// intermediate build can never half-apply (D-09 safety invariant).
+    #[error("real apply is not available in this build yet")]
+    ApplyNotSupported,
+
+    /// An apply job could not be recorded or closed (a SQLite error on the apply
+    /// job's own bookkeeping row). This is the app-database side of starting or
+    /// finishing an apply run; a filesystem failure during an actual operation is
+    /// surfaced by the executor's later phases with their own codes.
+    #[error("apply job could not be recorded: {detail}")]
+    ApplyFailed { detail: String },
 }
 
 impl AppError {
@@ -255,6 +270,9 @@ impl AppError {
             // Plan review family
             AppError::PlanGenerationFailed { .. } => "plan-generation-failed",
             AppError::PlanNotFound { .. } => "plan-not-found",
+            // Apply family
+            AppError::ApplyNotSupported => "apply-not-supported",
+            AppError::ApplyFailed { .. } => "apply-failed",
         }
     }
 
@@ -378,6 +396,16 @@ impl AppError {
                 "This tidy-up plan could not be found; it may have been built in an earlier \
                  session. Build a new plan from the current scan and review that instead."
             }
+            // Apply family
+            AppError::ApplyNotSupported => {
+                "Making changes for real is not available in this version yet. You can preview \
+                 what a tidy-up would do; making changes for real arrives in a later version."
+            }
+            AppError::ApplyFailed { .. } => {
+                "The app could not record this tidy-up run. Try again. If this keeps happening, \
+                 the disk may be full or the app data folder may be on a synced location \
+                 (OneDrive); free space or move the app data out of the synced folder."
+            }
         }
     }
 }
@@ -458,6 +486,10 @@ mod tests {
                 detail: "database is locked".into(),
             },
             AppError::PlanNotFound { plan_id: 42 },
+            AppError::ApplyNotSupported,
+            AppError::ApplyFailed {
+                detail: "database is locked".into(),
+            },
         ]
     }
 

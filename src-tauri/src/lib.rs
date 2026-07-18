@@ -15,6 +15,10 @@
 //! re-plan preview `commands::plan::plan_preview` and the scan Stop control
 //! (`scan_cancel`, already wired since v0.2.0; this phase gives it a real
 //! frontend affordance, AC-36).
+//! v0.5.0 (acting) Phase 1 adds the F-607 executor seam command
+//! (`commands::apply::apply_start`): a dry-run walk of an approved plan against an
+//! in-memory `MemFs`. A Real apply is refused with `apply-not-supported` this
+//! phase (D-09); the operation logic and the F-904 apply surface land later.
 //!   - commands -> IPC command handlers (payload contract lives in abo-core::ipc)
 //!   - events   -> backend -> frontend typed event emission
 //!
@@ -115,6 +119,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::ruleset::ruleset_delete,
             commands::ruleset::ruleset_count,
             commands::ruleset::ruleset_preset_examples,
+            commands::apply::apply_start,
         ])
         .events(collect_events![
             events::JobCompleted,

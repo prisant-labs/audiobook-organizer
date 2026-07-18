@@ -256,6 +256,18 @@ export const commands = {
 	 *  this command supplies only the rendered example path per preset).
 	 */
 	rulesetPresetExamples: (seriesIndexWidth: number) => __TAURI_INVOKE<PresetExampleView[]>("ruleset_preset_examples", { seriesIndexWidth }),
+	/**
+	 *  Start applying an approved plan (F-607 seam).
+	 * 
+	 *  v0.5.0 Phase 1 supports [`ApplyMode::DryRun`] only: it loads the plan, seeds a
+	 *  `MemFs` from the plan's snapshot (path + size + is_dir), records an apply
+	 *  `jobs` row, and walks the plan's APPROVED operations through the executor
+	 *  against memory, touching no real path (AC-2). [`ApplyMode::Real`] is refused
+	 *  immediately with [`AppError::ApplyNotSupported`] - before any database read or
+	 *  executor construction - so no filesystem work can begin while the operation
+	 *  logic is a skeleton (D-09).
+	 */
+	applyStart: (planId: number, mode: ApplyMode) => typedError<ApplyReport, AppError>(__TAURI_INVOKE("apply_start", { planId, mode })),
 };
 
 /** Events */
@@ -284,7 +296,7 @@ export type AppError =
  */
 ({ "db-migration-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The existing database was unreadable and was reset. The corrupt file was
  *  preserved (moved aside, never deleted) at `backup_path`, and a fresh,
@@ -293,7 +305,7 @@ export type AppError =
  */
 ({ "db-corrupt-recovered": {
 	backup_path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The singleton application settings row (F-803) could not be read or
  *  written. A rare SQLite error on the settings CRUD path (`settings_get` /
@@ -306,15 +318,15 @@ export type AppError =
  */
 ({ "settings-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root does not exist. Return before any DB row is written. */
 ({ "root-not-found": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**  The scan root exists but is not a directory (e.g. a file was chosen). */
 ({ "root-not-directory": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A single entry could not be read because the OS denied access. Defined
  *  and ready for v0.2.0: the v0.1.0 walk records such entries and counts
@@ -326,7 +338,7 @@ export type AppError =
  */
 ({ "permission-denied": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A junction or reparse point was recorded but deliberately not followed
  *  (D-09), so the walk cannot loop through a link back into the tree.
@@ -337,7 +349,7 @@ export type AppError =
  */
 ({ "junction-skipped": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An internal failure while writing the snapshot (a SQLite/transaction
  *  error during the scans/entries write path). The walk itself never fails
@@ -345,7 +357,7 @@ export type AppError =
  */
 ({ "scan-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A WizTree CSV import (F-102) could not fully parse. `row` is the 1-based
  *  index of the offending data row (the row after the header, preamble
@@ -362,7 +374,7 @@ export type AppError =
  */
 ({ "csv-parse": {
 	row: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A ruleset's JSON body could not be accepted: it is not valid JSON, is
  *  missing a required field, has a field of the wrong type, carries a
@@ -374,14 +386,14 @@ export type AppError =
  */
 ({ "ruleset-invalid": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  `ruleset_get`/`ruleset_delete` named a `ruleset_id` that does not exist
  *  (never created, or already deleted).
  */
 ({ "ruleset-not-found": {
 	ruleset_id: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  `ruleset_delete` refused to delete `ruleset_id` because it is
  *  currently the ACTIVE ruleset (the one `plan_generate` builds against).
@@ -391,7 +403,7 @@ export type AppError =
  */
 ({ "ruleset-in-use": {
 	ruleset_id: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A ruleset database operation (list/get/save/delete/activate) failed at
  *  the SQLite layer. `detail` is developer-facing; distinct from
@@ -400,7 +412,7 @@ export type AppError =
  */
 ({ "ruleset-operation-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A source path recorded at plan time no longer exists at validation time
  *  (the snapshot went stale). The operation cannot run against a vanished
@@ -408,21 +420,21 @@ export type AppError =
  */
 ({ "snapshot-stale": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never } | 
 /**
  *  Two operations in the same plan produce the same target path (compared
  *  case-insensitively for NTFS), so one would clobber the other.
  */
 ({ "collision-in-plan": {
 	path: string,
-} }) & { "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An operation's target path already exists on disk (compared
  *  case-insensitively for NTFS) and is not being vacated by the plan.
  */
 ({ "collision-on-disk": {
 	path: string,
-} }) & { "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A target path exceeds the maximum length even with the Windows
  *  extended-length (`\\?\`) allowance. `length` is the measured character
@@ -431,7 +443,7 @@ export type AppError =
 ({ "path-too-long": {
 	path: string,
 	length: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A path component is not a legal filesystem name (an illegal character, or
  *  a trailing dot/space). This is the backstop to the F-304 name normalizer.
@@ -439,7 +451,7 @@ export type AppError =
 ({ "illegal-component": {
 	path: string,
 	component: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A path component is (or begins with) a reserved Windows device name
  *  (CON, PRN, AUX, NUL, COM1-9, LPT1-9). Backstop to F-304.
@@ -447,7 +459,7 @@ export type AppError =
 ({ "reserved-name": {
 	path: string,
 	component: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  The cross-volume operations targeting `volume` sum to more bytes
  *  (`needed`) than the volume has free (`available`), so the
@@ -457,7 +469,7 @@ export type AppError =
 	volume: string,
 	needed: number,
 	available: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  An operation would move a source into its own subtree (target lies inside
  *  source), which is a cycle no filesystem can perform.
@@ -465,7 +477,7 @@ export type AppError =
 ({ "cycle-detected": {
 	source_path: string,
 	target_path: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A proceed/apply was requested but no operation is in the `approved`
  *  state, so there is nothing to do. Defined for the v0.5.0 apply path;
@@ -480,14 +492,30 @@ export type AppError =
  */
 ({ "plan-generation-failed": {
 	detail: string,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
 /**
  *  A plan query or approval command named a `plan_id` that does not exist
  *  (never generated, or its scan/ruleset predecessor is gone).
  */
 ({ "plan-not-found": {
 	plan_id: number,
-} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never };
+} }) & { "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never } | 
+/**
+ *  A `Real` (non-dry-run) apply was requested, but this build implements only
+ *  the dry-run walk (v0.5.0 Phase 1 Vfs seam); the executor's operation logic
+ *  lands in a later phase. Returned BEFORE any filesystem work, so an
+ *  intermediate build can never half-apply (D-09 safety invariant).
+ */
+"apply-not-supported" | 
+/**
+ *  An apply job could not be recorded or closed (a SQLite error on the apply
+ *  job's own bookkeeping row). This is the app-database side of starting or
+ *  finishing an apply run; a filesystem failure during an actual operation is
+ *  surfaced by the executor's later phases with their own codes.
+ */
+({ "apply-failed": {
+	detail: string,
+} }) & { "collision-in-plan"?: never; "collision-on-disk"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never };
 
 /**
  *  The singleton application settings (F-803), the wire form of the one
@@ -528,6 +556,44 @@ export type AppSettings = {
 	theme: string,
 	/**  Snapshot retention: keep the last N scans (FD-20, AC-35). Default 10. */
 	scan_retention_count: number,
+};
+
+/**
+ *  Which filesystem an apply runs against - the `mode` argument of `apply_start`.
+ * 
+ *  [`DryRun`](ApplyMode::DryRun) walks the plan against a [`MemFs`] seeded from
+ *  the snapshot (a first-class preview, D-04); [`Real`](ApplyMode::Real) would
+ *  walk it against [`RealFs`]. In v0.5.0 Phase 1 a Real apply is refused at the
+ *  command boundary while the operation logic is a skeleton (D-09 safety
+ *  invariant), so no intermediate build can half-apply.
+ */
+export type ApplyMode = 
+/**  Walk against memory; touch no real path. */
+"dry-run" | 
+/**  Walk against the real filesystem (not available in this build yet). */
+"real";
+
+/**
+ *  The result of an `apply_start` run (v0.5.0 Phase 1 dry-run seam), returned by
+ *  the `apply_start` command. Reports the plan and apply-job the run belongs to,
+ *  whether it was a dry run, and how many approved operations the executor
+ *  walked.
+ * 
+ *  This is the SKELETON return for the seam phase: it proves the dry-run walk ran
+ *  against a `MemFs` seeded from the plan's snapshot without touching disk (AC-2).
+ *  The F-904 apply + activity surface (a later phase) grows the real event-driven
+ *  progress contract on top of the same command; `dry_run` is always `true` here
+ *  because a Real apply is refused with `apply-not-supported` this phase (D-09).
+ */
+export type ApplyReport = {
+	/**  The `plans.id` this run applied. */
+	plan_id: number,
+	/**  The apply `jobs.id` recorded for this run. */
+	job_id: number,
+	/**  Whether this was a dry run (always `true` this phase). */
+	dry_run: boolean,
+	/**  How many approved operations the executor walked. */
+	ops_walked: number,
 };
 
 /**
