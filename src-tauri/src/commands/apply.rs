@@ -329,4 +329,85 @@ mod tests {
             4096
         );
     }
+
+    /// A halted walk (here a source-vanished op against an empty MemFs) drives
+    /// `walk_and_finalize` down its halt branch: it surfaces the halt code, marks the
+    /// apply `jobs` row `failed`, and exports NO undo file (an undo file over all
+    /// approved ops would claim moves that never happened - the journal is the
+    /// durable record instead).
+    #[tokio::test]
+    async fn a_halted_walk_marks_the_job_failed_and_writes_no_undo_file() {
+        use abo_core::db::open_db;
+        use abo_core::db::plans::PlanOpRow;
+        use abo_core::exec::MANIFEST_JSON_BASENAME;
+
+        let db = tempfile::TempDir::new().expect("db tempdir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        // Acquire the running apply job (the lock + the row walk_and_finalize marks).
+        let job_id = acquire_apply_job(&pool, ApplyMode::DryRun, "2026-07-18T00:00:00Z")
+            .await
+            .expect("acquire apply job");
+
+        // An approved move whose source does not exist in the (empty) MemFs, so the
+        // TOCTOU re-check halts with source-vanished.
+        let op = PlanOpRow {
+            id: 1,
+            plan_id: 1,
+            seq: 0,
+            op_group: "loose-root-books".to_string(),
+            kind: "move".to_string(),
+            kind_reason: None,
+            source_path: "E:/lib/GONE.m4b".to_string(),
+            target_path: "E:/lib/Author/GONE.m4b".to_string(),
+            rationale: "test.".to_string(),
+            rule_id: "test-rule".to_string(),
+            confidence: "high".to_string(),
+            byte_size: 0,
+            validation_state: "valid".to_string(),
+            validation_reason: None,
+            provenance_json: None,
+            approval: "approved".to_string(),
+            approval_updated_at: None,
+        };
+        let executor = Executor::new(MemFs::new(), job_id, vec![op]);
+        let journal = SqliteJournal::new(pool.clone());
+        let reports = tempfile::TempDir::new().expect("reports tempdir");
+
+        let err = walk_and_finalize(
+            &pool,
+            executor,
+            &journal,
+            reports.path(),
+            1,
+            ApplyMode::DryRun,
+            job_id,
+            "2026-07-18T00:00:00Z",
+        )
+        .await
+        .expect_err("a halted walk surfaces the halt as an error");
+        assert_eq!(err.code(), "source-vanished");
+
+        // The jobs row is marked failed (the lock is released), not left running.
+        let state: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("job state");
+        assert_eq!(state, "failed");
+
+        // No undo file was exported for the halted run.
+        assert!(
+            !reports.path().join(MANIFEST_JSON_BASENAME).exists(),
+            "a halted run must not export an undo file"
+        );
+
+        // The journal is consistent: the one intent has a terminal (failed) row.
+        let phases: Vec<String> =
+            sqlx::query_scalar("SELECT phase FROM journal WHERE job_id = ? ORDER BY id")
+                .bind(job_id)
+                .fetch_all(&pool)
+                .await
+                .expect("journal rows");
+        assert_eq!(phases, vec!["intent".to_string(), "failed".to_string()]);
+    }
 }

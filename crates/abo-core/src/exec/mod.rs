@@ -469,6 +469,13 @@ impl<V: Vfs> Executor<V> {
     /// EXACTLY once and return the second attempt's result (whatever it is). Any
     /// other error returns immediately with no retry. Two attempts is the hard cap;
     /// a second access-denied propagates and the caller halts the group.
+    ///
+    /// The retry is PER-Vfs-CALL, not per-operation: each seam call an op makes
+    /// (`create_dir_all`, `rename`, or the `metadata`/`copy_file`/`remove_file` of a
+    /// cross-volume move) is wrapped separately, so a multi-call op is bounded by two
+    /// attempts PER call, not two attempts for the whole op. That is deliberate: each
+    /// call is an independent chance for a transient access-denied to clear, and the
+    /// total stays bounded by the small, fixed number of seam calls an op makes.
     fn retrying<T>(&self, mut op: impl FnMut() -> Result<T, VfsError>) -> Result<T, VfsError> {
         let first = op();
         match first {
@@ -1415,6 +1422,88 @@ mod tests {
             let obj = serde_json::to_value(&entry).unwrap();
             assert!(obj.get("mode").is_none() && obj.get("dry_run").is_none());
         }
+    }
+
+    /// A multi-op plan that fails MID-WALK: op 2 of 3 halts, so op 1 completed
+    /// (intent + done), op 2 has intent + failed, and op 3 - after the halt - has NO
+    /// rows at all. ops_walked counts only the completed op, and the halt names op 2.
+    #[tokio::test]
+    async fn a_mid_walk_halt_stops_and_leaves_later_ops_unwalked() {
+        // Seed so op1's source exists and op3's would too, but op2's does not.
+        let fs = MemFs::from_seed(&[
+            dir("E:/lib"),
+            file("E:/lib/A.m4b", 10),
+            file("E:/lib/C.m4b", 30),
+        ]);
+        let op1 = approved_op(10, 0, "E:/lib/A.m4b", "E:/lib/Author/A.m4b");
+        let op2 = approved_op(20, 1, "E:/lib/GONE.m4b", "E:/lib/Author/GONE.m4b");
+        let op3 = approved_op(30, 2, "E:/lib/C.m4b", "E:/lib/Author/C.m4b");
+        let executor = Executor::new(fs, 1, vec![op1, op2, op3]);
+        let journal = MemJournal::new();
+        let outcome = executor
+            .run(&journal, "2026-07-18T00:00:00Z")
+            .await
+            .expect("walk");
+
+        let halt = outcome.halt.expect("op 2 halts the walk");
+        assert_eq!(halt.op_id, 20);
+        assert_eq!(halt.code, "source-vanished");
+        assert_eq!(outcome.ops_walked, 1, "only op 1 completed");
+
+        let rows = journal.entries();
+        let phases = |op_id: i64| -> Vec<JournalPhase> {
+            rows.iter()
+                .filter(|r| r.op_id == op_id)
+                .map(|r| r.phase)
+                .collect()
+        };
+        assert_eq!(
+            phases(10),
+            vec![JournalPhase::Intent, JournalPhase::Done],
+            "op 1 completed"
+        );
+        assert_eq!(
+            phases(20),
+            vec![JournalPhase::Intent, JournalPhase::Failed],
+            "op 2 has intent + failed"
+        );
+        assert!(phases(30).is_empty(), "op 3, after the halt, has no rows");
+        assert_journal_consistent(&rows);
+        // op 3's source was never touched (the walk stopped at op 2).
+        assert!(executor.vfs().exists(Path::new("E:/lib/C.m4b")));
+    }
+
+    /// The mkdir and rmdir-empty op kinds dispatch end to end. Field mapping matches
+    /// the builder: a `mkdir` carries its folder in `target_path` (empty source); an
+    /// `rmdir-empty` carries the folder in `source_path` (and target_path).
+    #[tokio::test]
+    async fn mkdir_and_rmdir_empty_dispatch_end_to_end() {
+        let fs = MemFs::from_seed(&[dir("E:/lib"), dir("E:/lib/EmptyDir")]);
+        let mut mkdir = approved_op(1, 0, "", "E:/lib/NewDir");
+        mkdir.kind = "mkdir".to_string();
+        let mut rmdir = approved_op(2, 1, "E:/lib/EmptyDir", "E:/lib/EmptyDir");
+        rmdir.kind = "rmdir-empty".to_string();
+
+        let executor = Executor::new(fs, 1, vec![mkdir, rmdir]);
+        let journal = MemJournal::new();
+        let outcome = executor
+            .run(&journal, "2026-07-18T00:00:00Z")
+            .await
+            .expect("walk");
+
+        assert!(outcome.halt.is_none());
+        assert_eq!(outcome.ops_walked, 2);
+        let fs = executor.vfs();
+        assert!(
+            fs.is_dir(Path::new("E:/lib/NewDir")),
+            "mkdir created the folder"
+        );
+        assert!(
+            !fs.exists(Path::new("E:/lib/EmptyDir")),
+            "rmdir-empty removed the empty folder"
+        );
+        // Each op journaled intent + done.
+        assert_eq!(journal.entries().len(), 4);
     }
 
     /// DISPATCH_OP_KINDS lists exactly the kinds dispatch handles, and each is a
