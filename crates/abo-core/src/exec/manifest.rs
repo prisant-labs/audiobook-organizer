@@ -137,16 +137,23 @@ pub enum ManifestError {
 }
 
 /// The kinds an undo can reverse. A `move`/`rename` reverses by moving back; a
-/// `mkdir` reverses by removing the created (empty) directory; a `set-aside`
-/// (quarantine) reverses by moving the item back; an emptied-folder removal
-/// reverses by recreating it; a `no-op` did nothing to reverse. FD-10 guarantees
-/// no audiobook is ever deleted, so the current op set is fully reversible; an
-/// unknown future kind flips [`Manifest::reversible`] to `false` honestly rather
-/// than claiming an undo it cannot perform.
+/// `mkdir` reverses by removing the created (empty) directory; a `quarantine`
+/// (set-aside) reverses by moving the item back; an `rmdir-empty` reverses by
+/// recreating the folder; a `no-op` did nothing to reverse. FD-10 guarantees no
+/// audiobook is ever deleted, so the current op set is fully reversible; an unknown
+/// future kind flips [`Manifest::reversible`] to `false` honestly rather than
+/// claiming an undo it cannot perform.
+///
+/// The accepted list is EXACTLY [`crate::exec::DISPATCH_OP_KINDS`], the kinds the
+/// executor's dispatch understands (which is exactly what the plan builder emits).
+/// A test pins the two lists together so they can never drift. NOTE: `quarantine`
+/// is the STORED op kind; `set-aside` is only its plain-language DISPLAY term (the
+/// F-505 export scrub), never a value in `plan_ops.kind`, so it is deliberately not
+/// listed here - the manifest reads raw stored kinds.
 fn is_reversible_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "move" | "rename" | "mkdir" | "set-aside" | "quarantine" | "rmdir-empty" | "no-op"
+        "move" | "rename" | "mkdir" | "quarantine" | "rmdir-empty" | "no-op"
     )
 }
 
@@ -503,6 +510,37 @@ mod tests {
             Err(ManifestError::DryRunNotReversible),
             "an unmarked legacy file fails safe: no reverse ops"
         );
+    }
+
+    /// P2 obligation: the manifest's reversible-kind list is pinned to the
+    /// executor's dispatch op-kind vocabulary ([`crate::exec::DISPATCH_OP_KINDS`]),
+    /// so the two can never drift. Every kind the executor dispatches is classified
+    /// reversible-or-not here (all six current kinds are reversible, FD-10), and
+    /// nothing outside that set is silently accepted as reversible - the display-only
+    /// `set-aside` term is proven NOT to be a stored kind.
+    #[test]
+    fn reversible_kinds_are_pinned_to_the_dispatch_op_kinds() {
+        // Every op kind the executor dispatches is classified here (all reversible).
+        for kind in crate::exec::DISPATCH_OP_KINDS {
+            assert!(
+                is_reversible_kind(kind),
+                "dispatch kind '{kind}' must be classified by is_reversible_kind"
+            );
+        }
+        // The reversible set is EXACTLY the dispatch set (no extras), so a kind the
+        // dispatch does not emit is never claimed reversible.
+        let extras = ["set-aside", "copy", "delete", "hardlink", ""];
+        for kind in extras {
+            assert!(
+                !crate::exec::DISPATCH_OP_KINDS.contains(&kind),
+                "'{kind}' is not a dispatch op kind"
+            );
+            assert!(
+                !is_reversible_kind(kind),
+                "'{kind}' is not a stored op kind and must not be reversible \
+                 (set-aside is display-only, never a plan_ops.kind)"
+            );
+        }
     }
 
     /// OQ-1: a reader rejects an undo file whose schema version is higher than it
