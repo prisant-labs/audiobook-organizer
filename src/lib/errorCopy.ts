@@ -283,6 +283,20 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: false,
     tone: "warn",
   },
+
+  // -- Pause / Stop controls (v0.5.0: pausing between books, F-608) ------------
+  "nothing-to-pause": {
+    sentence: "There's no tidy-up running to pause.",
+    nextStep: "Start a tidy-up first - you can pause it between books while it runs.",
+    retryable: false,
+    tone: "warn",
+  },
+  "nothing-to-resume": {
+    sentence: "This tidy-up isn't paused, so there's nothing to resume.",
+    nextStep: "If a tidy-up is paused, use Resume to continue it between books.",
+    retryable: false,
+    tone: "warn",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-

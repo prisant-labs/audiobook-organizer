@@ -43,6 +43,12 @@ mod events;
 // layer module-private.
 pub use commands::{run_job_to_terminal, JobEnd};
 
+// Re-exported for the apply panic-safety integration test (`tests/apply_terminal.rs`):
+// the apply terminal-state wrapper, its pause/Stop control type, and the control
+// registry, so the test can drive a spawned apply's terminal path (including a
+// panic inside the walk releasing the single-writer in-process flag) directly.
+pub use commands::apply::{run_apply_to_terminal, ApplyControl, ApplyControlRegistry};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -85,8 +91,16 @@ pub struct AppState {
     /// with `job-already-running` before any database work. An `AtomicBool` (not a
     /// lock guard) so it is safe to read across the apply's `.await` points; the
     /// durable `running` apply `jobs` row is the cross-restart backstop. Reset on
-    /// every exit path by an RAII guard in `apply_start`.
+    /// every exit path (including a panic) by an RAII guard living in the SPAWNED
+    /// apply task, so the flag frees when the walk ends, not when `apply_start`
+    /// returns (which is now immediate).
     pub apply_in_flight: Arc<AtomicBool>,
+    /// Live pause/resume/Stop controls for in-flight apply jobs (F-608, F-104),
+    /// keyed by `jobs.id`. `apply_start` inserts one when it spawns the walk and it
+    /// is removed when the job reaches a terminal state; `job_pause`/`job_resume`/
+    /// `job_stop` look one up to control a running apply. A paused apply keeps its
+    /// entry here AND its single-writer lock (a paused apply is still THE apply).
+    pub apply_controls: commands::apply::ApplyControlRegistry,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -132,6 +146,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::rollback::rollback_prepare_partial,
             commands::job::job_status,
             commands::job::acknowledge_check,
+            commands::job::job_pause,
+            commands::job::job_resume,
+            commands::job::job_stop,
         ])
         .events(collect_events![
             events::JobCompleted,
@@ -269,6 +286,7 @@ pub fn run() {
                 jobs: Arc::new(Mutex::new(HashMap::new())),
                 library_root: Arc::new(Mutex::new(library_root)),
                 apply_in_flight: Arc::new(AtomicBool::new(false)),
+                apply_controls: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
         })

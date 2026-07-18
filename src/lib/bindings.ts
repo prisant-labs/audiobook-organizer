@@ -257,18 +257,28 @@ export const commands = {
 	 */
 	rulesetPresetExamples: (seriesIndexWidth: number) => __TAURI_INVOKE<PresetExampleView[]>("ruleset_preset_examples", { seriesIndexWidth }),
 	/**
-	 *  Start applying an approved plan (F-601/F-607).
+	 *  Start applying an approved plan as a background job (F-601/F-607/F-904),
+	 *  returning immediately with the new apply `jobs.id`.
 	 * 
 	 *  Loads the plan, acquires the single-writer lock (AC-8), records the apply
-	 *  `jobs` row carrying `mode`, and walks the plan's APPROVED operations through the
-	 *  executor: a `DryRun` against a snapshot-seeded `MemFs` (AC-2), a `Real` apply
-	 *  against `RealFs` (the actual disk). Journal-before-act (F-602, AC-10): each op's
-	 *  intent row is flushed and committed BEFORE the filesystem call, a terminal
-	 *  `done`/`failed` row after. An operation that fails halts the group and surfaces
-	 *  the matching error (AC-5/6/7/9); a clean run exports the self-contained undo
-	 *  file and re-emits the F-507 provenance report (AC-11, AC-12).
+	 *  `jobs` row carrying `mode`, registers an [`ApplyControl`] so the pause/resume/
+	 *  stop commands can reach the running job (F-608, F-104), then SPAWNS the walk on
+	 *  the async runtime and returns [`JobStarted`] straight away - like `scan_start`,
+	 *  so the IPC call never blocks on the walk and the caller learns `job_id` while
+	 *  the apply is still running (which is what makes `job_pause(job_id)` usable).
+	 * 
+	 *  The spawned walk runs the plan's APPROVED operations through the executor: a
+	 *  `DryRun` against a snapshot-seeded `MemFs` (AC-2), a `Real` apply against
+	 *  `RealFs` (the actual disk). Journal-before-act (F-602, AC-10): each op's intent
+	 *  row is flushed and committed BEFORE the filesystem call, a terminal `done`/
+	 *  `failed` row after. It drives the `jobs` row to a terminal state -
+	 *  `completed`, `failed` (a halted op, AC-5/6/7/9), or `stopped` (a cooperative
+	 *  Stop, AC-26) - releasing both the durable lock (the terminal row) and the
+	 *  in-process flag (on the spawned task's exit) on EVERY path, including a panic.
+	 *  The per-job outcome (verified ops, discrepancy block) is read back via
+	 *  [`job_status`](super::job::job_status).
 	 */
-	applyStart: (planId: number, mode: ApplyMode) => typedError<ApplyReport, AppError>(__TAURI_INVOKE("apply_start", { planId, mode })),
+	applyStart: (planId: number, mode: ApplyMode) => typedError<JobStarted, AppError>(__TAURI_INVOKE("apply_start", { planId, mode })),
 	/**
 	 *  Prepare an undo of a completed tidy-up (F-604, AC-14): produce a validated,
 	 *  previewable inverse plan from its undo file and return the new plan id.
@@ -295,6 +305,42 @@ export const commands = {
 	 *  never blocked, so this only ever re-opens forward tidying.
 	 */
 	acknowledgeCheck: (jobId: number) => typedError<JobStatus, AppError>(__TAURI_INVOKE("acknowledge_check", { jobId })),
+	/**
+	 *  Pause a running apply job between books (F-608, FD-02, AC-24).
+	 * 
+	 *  Sets the job's pause flag; the executor stops BEFORE its next operation and
+	 *  parks there (never mid-operation). Pausing is metadata-only in-memory state -
+	 *  NEVER a journal event (AC-25) - and the paused apply keeps holding the
+	 *  single-writer lock (it is still THE apply). Errors plainly with
+	 *  [`AppError::NothingToPause`] if no tidy-up is in progress to pause (already
+	 *  finished, never started, or an unknown id).
+	 * 
+	 *  Synchronous: it only flips an in-memory flag in managed state, so it needs no
+	 *  async runtime and returns instantly without waiting for the walk to park.
+	 */
+	jobPause: (jobId: number) => typedError<null, AppError>(__TAURI_INVOKE("job_pause", { jobId })),
+	/**
+	 *  Resume a paused apply job (F-608, FD-02, AC-24): continue from the next
+	 *  operation. Errors plainly with [`AppError::NothingToResume`] if the tidy-up is
+	 *  not currently paused (running normally, already finished, or an unknown id).
+	 * 
+	 *  Synchronous, like [`job_pause`].
+	 */
+	jobResume: (jobId: number) => typedError<null, AppError>(__TAURI_INVOKE("job_resume", { jobId })),
+	/**
+	 *  Request a cooperative Stop of a running apply job (F-104, FD-02, AC-26).
+	 * 
+	 *  Flips the job's Stop flag; the executor cancels at its next safe operation
+	 *  boundary, leaving a consistent journal and a coherent partial state (the job
+	 *  ends in the distinct `stopped` terminal state, with no undo file for the
+	 *  partial forward job). Returns `true` if a running apply was found and
+	 *  signalled, `false` if none exists (already finished, never started, or unknown
+	 *  id) - a clear no-op status, not an error, exactly like the scan Stop
+	 *  (`scan_cancel`).
+	 * 
+	 *  Synchronous: it only flips an in-memory flag and wakes any parked walk.
+	 */
+	jobStop: (jobId: number) => __TAURI_INVOKE<boolean>("job_stop", { jobId }),
 };
 
 /** Events */
@@ -629,7 +675,18 @@ export type AppError =
  *  (AC-20). This gate is FORWARD-only: preparing or running an UNDO is never
  *  refused this way, because undo is the remedy for such a difference.
  */
-"tidying-blocked";
+"tidying-blocked" | 
+/**
+ *  `job_pause` was asked to pause, but no tidy-up is in progress to pause
+ *  (it already finished, was never started, or the id is unknown).
+ */
+"nothing-to-pause" | 
+/**
+ *  `job_resume` was asked to resume, but the tidy-up is not paused (it is
+ *  running normally, already finished, or the id is unknown), so there is
+ *  nothing to resume.
+ */
+"nothing-to-resume";
 
 /**
  *  The singleton application settings (F-803), the wire form of the one
@@ -686,45 +743,6 @@ export type ApplyMode =
 "dry-run" | 
 /**  Walk against the real filesystem (the actual disk). */
 "real";
-
-/**
- *  The result of an `apply_start` run (v0.5.0 Phase 1 dry-run seam), returned by
- *  the `apply_start` command. Reports the plan and apply-job the run belongs to,
- *  whether it was a dry run, and how many approved operations the executor
- *  walked.
- * 
- *  This is the SKELETON return for the seam phase: it proves the dry-run walk ran
- *  against a `MemFs` seeded from the plan's snapshot without touching disk (AC-2).
- *  The F-904 apply + activity surface (a later phase) grows the real event-driven
- *  progress contract on top of the same command; `dry_run` is always `true` here
- *  because a Real apply is refused with `apply-not-supported` this phase (D-09).
- */
-export type ApplyReport = {
-	/**  The `plans.id` this run applied. */
-	plan_id: number,
-	/**  The apply `jobs.id` recorded for this run. */
-	job_id: number,
-	/**  Whether this was a dry run (always `true` this phase). */
-	dry_run: boolean,
-	/**  How many approved operations the executor walked. */
-	ops_walked: number,
-	/**
-	 *  How many of the walked operations the after-the-fact check (F-604, AC-18)
-	 *  confirmed: target exists, size matches the snapshot, source gone.
-	 */
-	verified_ops: number,
-	/**
-	 *  How many walked operations the after-the-fact check found a difference on
-	 *  (a move journaled as done that reality contradicts). Zero on a clean apply.
-	 */
-	discrepancy_count: number,
-	/**
-	 *  Whether this apply raised an unacknowledged discrepancy block (AC-20). When
-	 *  true, further FORWARD tidy-ups are paused until it is acknowledged; undo is
-	 *  never blocked.
-	 */
-	blocked: boolean,
-};
 
 /**
  *  One example book on the "Worth a look first" shelf (F-902, v0.4.0 Phase 4,

@@ -17,6 +17,7 @@ use abo_core::ipc::{AppError, JobStatus};
 use abo_core::scan::walk::now_iso8601_utc;
 use sqlx::SqlitePool;
 
+use crate::commands::apply::ApplyControlRegistry;
 use crate::AppState;
 
 /// The status of one apply job and its after-the-fact check (F-604): lifecycle
@@ -44,6 +45,93 @@ pub async fn acknowledge_check(
     let now = now_iso8601_utc();
     acknowledge_block(&state.pool, job_id, &now).await?;
     build_job_status(&state.pool, job_id).await
+}
+
+/// Pause a running apply job between books (F-608, FD-02, AC-24).
+///
+/// Sets the job's pause flag; the executor stops BEFORE its next operation and
+/// parks there (never mid-operation). Pausing is metadata-only in-memory state -
+/// NEVER a journal event (AC-25) - and the paused apply keeps holding the
+/// single-writer lock (it is still THE apply). Errors plainly with
+/// [`AppError::NothingToPause`] if no tidy-up is in progress to pause (already
+/// finished, never started, or an unknown id).
+///
+/// Synchronous: it only flips an in-memory flag in managed state, so it needs no
+/// async runtime and returns instantly without waiting for the walk to park.
+#[tauri::command]
+#[specta::specta]
+pub fn job_pause(state: tauri::State<'_, AppState>, job_id: i64) -> Result<(), AppError> {
+    pause_apply(&state.apply_controls, job_id)
+}
+
+/// Resume a paused apply job (F-608, FD-02, AC-24): continue from the next
+/// operation. Errors plainly with [`AppError::NothingToResume`] if the tidy-up is
+/// not currently paused (running normally, already finished, or an unknown id).
+///
+/// Synchronous, like [`job_pause`].
+#[tauri::command]
+#[specta::specta]
+pub fn job_resume(state: tauri::State<'_, AppState>, job_id: i64) -> Result<(), AppError> {
+    resume_apply(&state.apply_controls, job_id)
+}
+
+/// Request a cooperative Stop of a running apply job (F-104, FD-02, AC-26).
+///
+/// Flips the job's Stop flag; the executor cancels at its next safe operation
+/// boundary, leaving a consistent journal and a coherent partial state (the job
+/// ends in the distinct `stopped` terminal state, with no undo file for the
+/// partial forward job). Returns `true` if a running apply was found and
+/// signalled, `false` if none exists (already finished, never started, or unknown
+/// id) - a clear no-op status, not an error, exactly like the scan Stop
+/// (`scan_cancel`).
+///
+/// Synchronous: it only flips an in-memory flag and wakes any parked walk.
+#[tauri::command]
+#[specta::specta]
+pub fn job_stop(state: tauri::State<'_, AppState>, job_id: i64) -> bool {
+    stop_apply(&state.apply_controls, job_id)
+}
+
+/// Pause the registered control for `job_id` (the [`job_pause`] core logic, factored
+/// out so it is unit-testable without a Tauri `State`). Errors plainly when no
+/// control is registered (no apply in progress).
+fn pause_apply(registry: &ApplyControlRegistry, job_id: i64) -> Result<(), AppError> {
+    let reg = registry.lock().expect("apply control registry poisoned");
+    match reg.get(&job_id) {
+        Some(control) => {
+            control.pause();
+            Ok(())
+        }
+        None => Err(AppError::NothingToPause),
+    }
+}
+
+/// Resume the registered control for `job_id` (the [`job_resume`] core logic).
+/// Errors plainly unless a control is registered AND currently paused, so resuming
+/// a never-paused (or unknown) job is a plain error, not a silent no-op.
+fn resume_apply(registry: &ApplyControlRegistry, job_id: i64) -> Result<(), AppError> {
+    let reg = registry.lock().expect("apply control registry poisoned");
+    match reg.get(&job_id) {
+        Some(control) if control.is_paused() => {
+            control.resume();
+            Ok(())
+        }
+        _ => Err(AppError::NothingToResume),
+    }
+}
+
+/// Signal a cooperative Stop on the registered control for `job_id` (the
+/// [`job_stop`] core logic). Returns whether a running apply was found (a Stop of a
+/// not-running job is a harmless no-op, like the scan Stop).
+fn stop_apply(registry: &ApplyControlRegistry, job_id: i64) -> bool {
+    let reg = registry.lock().expect("apply control registry poisoned");
+    match reg.get(&job_id) {
+        Some(control) => {
+            control.stop();
+            true
+        }
+        None => false,
+    }
 }
 
 /// Read the `jobs` row and the block state into a [`JobStatus`]. The discrepancy
@@ -136,5 +224,87 @@ mod tests {
         let after = build_job_status(&pool, job_id).await.expect("status");
         assert!(!after.blocks_further_tidying);
         assert_eq!(after.discrepancy_count, 0);
+    }
+
+    // ---- Phase 7: pause/resume/stop command logic (AC-24, AC-26) ----
+
+    use crate::commands::apply::ApplyControl;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    /// A registry holding one control for `job_id`, as `apply_start` would register
+    /// while an apply runs.
+    fn registry_with(job_id: i64) -> (ApplyControlRegistry, Arc<ApplyControl>) {
+        let control = Arc::new(ApplyControl::new());
+        let mut map = HashMap::new();
+        map.insert(job_id, control.clone());
+        (Arc::new(Mutex::new(map)), control)
+    }
+
+    /// AC-24: pausing a running apply sets its pause flag; resuming a paused apply
+    /// clears it. The control the executor consults is the same instance the
+    /// commands flip.
+    #[test]
+    fn pause_then_resume_flips_the_running_apply_control() {
+        let (registry, control) = registry_with(42);
+        assert!(!control.is_paused(), "a fresh control is not paused");
+
+        pause_apply(&registry, 42).expect("pausing a running apply succeeds");
+        assert!(
+            control.is_paused(),
+            "pause set the flag the executor parks on"
+        );
+
+        resume_apply(&registry, 42).expect("resuming a paused apply succeeds");
+        assert!(!control.is_paused(), "resume cleared the pause flag");
+    }
+
+    /// AC-24 (brief step 4): pausing a job that is not running errors plainly, not a
+    /// silent no-op.
+    #[test]
+    fn pausing_a_job_that_is_not_running_errors_plainly() {
+        let empty: ApplyControlRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let err = pause_apply(&empty, 99).expect_err("no apply is running to pause");
+        assert_eq!(err.code(), "nothing-to-pause");
+    }
+
+    /// AC-24 (brief step 4): resuming a job that was never paused errors plainly -
+    /// both when the job is running-but-not-paused and when no such job exists.
+    #[test]
+    fn resuming_a_never_paused_job_errors_plainly() {
+        // Running but not paused.
+        let (registry, _control) = registry_with(7);
+        let err =
+            resume_apply(&registry, 7).expect_err("a running, un-paused apply is not resumable");
+        assert_eq!(err.code(), "nothing-to-resume");
+
+        // No such running apply at all.
+        let empty: ApplyControlRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let err = resume_apply(&empty, 7).expect_err("no apply is running to resume");
+        assert_eq!(err.code(), "nothing-to-resume");
+    }
+
+    /// AC-26: Stop signals the running apply's control (cooperative cancel) and
+    /// reports it was signalled; a Stop of a not-running job is a harmless `false`
+    /// no-op (mirroring the scan Stop), never an error.
+    #[test]
+    fn stop_signals_a_running_apply_and_noops_otherwise() {
+        let (registry, control) = registry_with(5);
+        assert!(!control.is_stopping());
+
+        assert!(
+            stop_apply(&registry, 5),
+            "a running apply is signalled to stop"
+        );
+        assert!(
+            control.is_stopping(),
+            "Stop set the cancel flag the executor observes at its next boundary"
+        );
+
+        let empty: ApplyControlRegistry = Arc::new(Mutex::new(HashMap::new()));
+        assert!(
+            !stop_apply(&empty, 5),
+            "stopping a not-running apply is a false no-op, not an error"
+        );
     }
 }
