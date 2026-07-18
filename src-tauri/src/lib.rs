@@ -45,6 +45,7 @@ pub use commands::{run_job_to_terminal, JobEnd};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use abo_core::job::CancelFlag;
@@ -79,6 +80,13 @@ pub struct AppState {
     /// picks a library. A plain `std::sync::Mutex`: every access is a brief,
     /// non-async snapshot/replace, never held across an `.await`.
     pub library_root: Arc<Mutex<Option<PathBuf>>>,
+    /// The in-process single-writer apply guard (F-601, AC-8): set true while an
+    /// apply runs, so a second `apply_start` in THIS process is refused instantly
+    /// with `job-already-running` before any database work. An `AtomicBool` (not a
+    /// lock guard) so it is safe to read across the apply's `.await` points; the
+    /// durable `running` apply `jobs` row is the cross-restart backstop. Reset on
+    /// every exit path by an RAII guard in `apply_start`.
+    pub apply_in_flight: Arc<AtomicBool>,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -218,11 +226,32 @@ pub fn run() {
                 log::info!("swept {swept} stale cover cache file(s) at startup");
             }
 
+            // Crash-detected release of the single-writer apply lock (F-601, AC-8):
+            // a `running` apply `jobs` row a previous session left behind (killed
+            // mid-apply) is reclaimed here, so it never blocks a fresh apply. Only
+            // touches apply jobs; a stranded scan is left as-is. Best-effort: a DB
+            // error only defers the reclaim to the next launch.
+            let reclaimed = tauri::async_runtime::block_on(async {
+                abo_core::exec::lock::reclaim_stranded_apply_jobs(
+                    &pool,
+                    &abo_core::scan::walk::now_iso8601_utc(),
+                )
+                .await
+            });
+            match reclaimed {
+                Ok(n) if n > 0 => {
+                    log::warn!("reclaimed {n} stranded apply lock(s) left by a prior session");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("could not reclaim stranded apply locks at startup: {e}"),
+            }
+
             app.manage(AppState {
                 pool,
                 db_outcome,
                 jobs: Arc::new(Mutex::new(HashMap::new())),
                 library_root: Arc::new(Mutex::new(library_root)),
+                apply_in_flight: Arc::new(AtomicBool::new(false)),
             });
             Ok(())
         })
