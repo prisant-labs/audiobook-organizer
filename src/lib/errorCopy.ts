@@ -210,6 +210,12 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: true,
     tone: "danger",
   },
+  "journal-write-failed": {
+    sentence: "The app stopped before making any change because it couldn't first note what it was about to do.",
+    nextStep: "Nothing was moved. Try again. If it keeps happening, restart the app - your audiobooks are untouched.",
+    retryable: true,
+    tone: "danger",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-

@@ -233,6 +233,14 @@ pub enum AppError {
     /// surfaced by the executor's later phases with their own codes.
     #[error("apply job could not be recorded: {detail}")]
     ApplyFailed { detail: String },
+
+    /// The journal's `intent` row could not be flushed before the filesystem call
+    /// (v0.5.0 Phase 2, journal-before-act, R-5). This is a HARD STOP: the executor
+    /// does not proceed to the filesystem call if the intent flush fails (AC-13),
+    /// so nothing is ever moved without a durable intent record to reconcile from.
+    /// `detail` is the developer-facing SQLite cause.
+    #[error("could not record what was about to happen before making a change: {detail}")]
+    JournalWriteFailed { detail: String },
 }
 
 impl AppError {
@@ -273,6 +281,7 @@ impl AppError {
             // Apply family
             AppError::ApplyNotSupported => "apply-not-supported",
             AppError::ApplyFailed { .. } => "apply-failed",
+            AppError::JournalWriteFailed { .. } => "journal-write-failed",
         }
     }
 
@@ -406,6 +415,12 @@ impl AppError {
                  the disk may be full or the app data folder may be on a synced location \
                  (OneDrive); free space or move the app data out of the synced folder."
             }
+            AppError::JournalWriteFailed { .. } => {
+                "The app stopped before making any change because it could not first record what \
+                 it was about to do. Nothing was moved. Try again. If this keeps happening, the \
+                 disk may be full or the app data folder may be on a synced location (OneDrive); \
+                 free space or move the app data out of the synced folder."
+            }
         }
     }
 }
@@ -488,6 +503,9 @@ mod tests {
             AppError::PlanNotFound { plan_id: 42 },
             AppError::ApplyNotSupported,
             AppError::ApplyFailed {
+                detail: "database is locked".into(),
+            },
+            AppError::JournalWriteFailed {
                 detail: "database is locked".into(),
             },
         ]
