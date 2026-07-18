@@ -78,6 +78,34 @@ pub enum VfsError {
 /// [`copy_file`](Vfs::copy_file), the `remove_*` and `create_dir_all`) are the
 /// only ways the executor changes anything; there is deliberately no
 /// open-for-write or truncate primitive, so "overwrite" is not expressible.
+///
+/// # Uniform error contract (dry-run == Real)
+///
+/// The whole point of the seam is that a dry run and a Real apply behave
+/// identically, so the STRUCTURED [`VfsError`] variants are GUARANTEED to match
+/// across [`MemFs`] and [`RealFs`] for these cases (a later phase maps them onto
+/// the FD-19 error taxonomy, e.g. [`VfsError::NotFound`] -> `source-vanished`):
+///
+/// - a missing `from`/`path` yields [`VfsError::NotFound`]
+///   ([`rename`](Vfs::rename), [`copy_file`](Vfs::copy_file),
+///   [`metadata`](Vfs::metadata), [`remove_file`](Vfs::remove_file),
+///   [`remove_dir`](Vfs::remove_dir));
+/// - an existing `to` yields [`VfsError::AlreadyExists`]
+///   ([`rename`](Vfs::rename), [`copy_file`](Vfs::copy_file)), never-overwrite;
+/// - a wrong-kind target yields [`VfsError::NotAFile`] (a directory where a file
+///   was expected: [`copy_file`](Vfs::copy_file), [`remove_file`](Vfs::remove_file))
+///   or [`VfsError::NotADirectory`] (a file where a directory was expected:
+///   [`remove_dir`](Vfs::remove_dir));
+/// - a non-empty directory yields [`VfsError::DirectoryNotEmpty`]
+///   ([`remove_dir`](Vfs::remove_dir)).
+///
+/// [`VfsError::Io`] is [`RealFs`]-only and reserved for a genuine platform failure
+/// with no structured counterpart (an access-denied, a full disk); [`MemFs`] never
+/// produces it. The both-backends contract test locks the guaranteed cases above.
+/// One thing the seam does NOT equalize: a target whose PARENT directory is
+/// missing (a `RealFs` rename/copy would fail, `MemFs` would not model it) - the
+/// executor always creates parents (mkdir-first) before a move, so that case does
+/// not arise in a real walk and is not part of the uniform contract.
 pub trait Vfs {
     /// Whether `path` exists.
     fn exists(&self, path: &Path) -> bool;
@@ -133,6 +161,18 @@ impl RealFs {
     }
 }
 
+/// Translate a standard-library filesystem error into the seam's structured
+/// contract: a not-found becomes [`VfsError::NotFound`] (so it matches [`MemFs`]
+/// and a later phase can map it to `source-vanished`), and every other kind is a
+/// genuine platform failure carried as [`VfsError::Io`]. `path` is the operand the
+/// error concerns, used only to fill the `NotFound` payload.
+fn map_io(path: &Path, err: std::io::Error) -> VfsError {
+    match err.kind() {
+        std::io::ErrorKind::NotFound => VfsError::NotFound(path.to_path_buf()),
+        _ => VfsError::Io(err),
+    }
+}
+
 impl Vfs for RealFs {
     fn exists(&self, path: &Path) -> bool {
         std::fs::metadata(to_extended_length_prefixed(path)).is_ok()
@@ -145,7 +185,8 @@ impl Vfs for RealFs {
     }
 
     fn metadata(&self, path: &Path) -> Result<VfsMetadata, VfsError> {
-        let m = std::fs::metadata(to_extended_length_prefixed(path))?;
+        let m =
+            std::fs::metadata(to_extended_length_prefixed(path)).map_err(|e| map_io(path, e))?;
         Ok(VfsMetadata {
             size: m.len(),
             is_dir: m.is_dir(),
@@ -153,45 +194,81 @@ impl Vfs for RealFs {
     }
 
     fn rename(&self, from: &Path, to: &Path) -> Result<(), VfsError> {
-        // Never-overwrite (R-3): std::fs::rename replaces an existing file on
-        // Unix, so the seam refuses a present target itself rather than trust the
-        // platform. On Windows rename to an existing target already errors; this
-        // makes the behavior uniform and explicit.
+        // Uniform contract (matching MemFs): missing source -> NotFound, present
+        // target -> AlreadyExists (never-overwrite, R-3: std::fs::rename replaces
+        // an existing file on Unix, so the seam refuses a present target itself).
+        if !self.exists(from) {
+            return Err(VfsError::NotFound(from.to_path_buf()));
+        }
         if self.exists(to) {
             return Err(VfsError::AlreadyExists(to.to_path_buf()));
         }
+        // A residual NotFound here (a source that vanished after the check) still
+        // maps to NotFound, keeping the contract uniform even under a race.
         std::fs::rename(
             to_extended_length_prefixed(from),
             to_extended_length_prefixed(to),
-        )?;
+        )
+        .map_err(|e| map_io(from, e))?;
         Ok(())
     }
 
     fn copy_file(&self, from: &Path, to: &Path) -> Result<u64, VfsError> {
-        // Never-overwrite (R-3): std::fs::copy truncates an existing destination,
-        // so the seam refuses a present target before copying a single byte.
+        // Uniform contract (matching MemFs): missing source -> NotFound, a source
+        // that is a directory -> NotAFile, present target -> AlreadyExists
+        // (never-overwrite, R-3: std::fs::copy truncates an existing destination).
+        match std::fs::metadata(to_extended_length_prefixed(from)) {
+            Ok(m) if m.is_dir() => return Err(VfsError::NotAFile(from.to_path_buf())),
+            Ok(_) => {}
+            Err(e) => return Err(map_io(from, e)),
+        }
         if self.exists(to) {
             return Err(VfsError::AlreadyExists(to.to_path_buf()));
         }
         let copied = std::fs::copy(
             to_extended_length_prefixed(from),
             to_extended_length_prefixed(to),
-        )?;
+        )
+        .map_err(|e| map_io(from, e))?;
         Ok(copied)
     }
 
     fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
-        std::fs::remove_file(to_extended_length_prefixed(path))?;
+        // Uniform contract (matching MemFs): missing -> NotFound, a directory ->
+        // NotAFile.
+        match std::fs::metadata(to_extended_length_prefixed(path)) {
+            Ok(m) if m.is_dir() => return Err(VfsError::NotAFile(path.to_path_buf())),
+            Ok(_) => {}
+            Err(e) => return Err(map_io(path, e)),
+        }
+        std::fs::remove_file(to_extended_length_prefixed(path)).map_err(|e| map_io(path, e))?;
         Ok(())
     }
 
     fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
-        std::fs::remove_dir(to_extended_length_prefixed(path))?;
+        // Uniform contract (matching MemFs): missing -> NotFound, a file ->
+        // NotADirectory, a non-empty directory -> DirectoryNotEmpty. The last is
+        // pre-checked by reading the directory because the matching io ErrorKind is
+        // not stable, keeping the variant deterministic across platforms.
+        let prefixed = to_extended_length_prefixed(path);
+        match std::fs::metadata(&prefixed) {
+            Ok(m) if !m.is_dir() => return Err(VfsError::NotADirectory(path.to_path_buf())),
+            Ok(_) => {}
+            Err(e) => return Err(map_io(path, e)),
+        }
+        if std::fs::read_dir(&prefixed)
+            .map_err(|e| map_io(path, e))?
+            .next()
+            .is_some()
+        {
+            return Err(VfsError::DirectoryNotEmpty(path.to_path_buf()));
+        }
+        std::fs::remove_dir(&prefixed).map_err(|e| map_io(path, e))?;
         Ok(())
     }
 
     fn create_dir_all(&self, path: &Path) -> Result<(), VfsError> {
-        std::fs::create_dir_all(to_extended_length_prefixed(path))?;
+        std::fs::create_dir_all(to_extended_length_prefixed(path)).map_err(|e| map_io(path, e))?;
         Ok(())
     }
 }
@@ -639,11 +716,145 @@ mod tests {
     }
 
     #[test]
-    fn realfs_metadata_on_a_missing_path_is_an_io_error() {
+    fn realfs_metadata_on_a_missing_path_is_not_found() {
+        // Uniform contract: a missing path is NotFound (not a raw Io error), so it
+        // matches MemFs and a later phase can map it to `source-vanished`.
         let tmp = tempfile::TempDir::new().unwrap();
         let fs = RealFs::new();
         let missing = tmp.path().join("nope.txt");
         assert!(!fs.exists(&missing));
-        assert!(matches!(fs.metadata(&missing), Err(VfsError::Io(_))));
+        assert!(matches!(fs.metadata(&missing), Err(VfsError::NotFound(_))));
+    }
+
+    /// The short name of a [`VfsError`] variant, for cross-backend comparison.
+    fn variant_name(err: &VfsError) -> &'static str {
+        match err {
+            VfsError::NotFound(_) => "NotFound",
+            VfsError::AlreadyExists(_) => "AlreadyExists",
+            VfsError::NotADirectory(_) => "NotADirectory",
+            VfsError::NotAFile(_) => "NotAFile",
+            VfsError::DirectoryNotEmpty(_) => "DirectoryNotEmpty",
+            VfsError::Io(_) => "Io",
+        }
+    }
+
+    /// The seam's whole purpose is dry-run == Real, so both backends MUST return
+    /// the same structured [`VfsError`] variant for every guaranteed case (see the
+    /// `Vfs` trait's uniform-error-contract doc). Table-driven: one real temp-dir
+    /// layout and a `MemFs` seeded to match it, exercised with identical operands.
+    #[test]
+    fn both_backends_share_the_same_error_contract() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let base = tmp.path();
+        let dir = base.join("d"); // a directory
+        let file = base.join("f.txt"); // a file
+        let existing = base.join("g.txt"); // a file used as a present target
+        let full_dir = base.join("full"); // a non-empty directory
+        let child = full_dir.join("c.txt");
+        let missing = base.join("missing"); // absent in both backends
+        let fresh = base.join("fresh"); // an absent target (parent `base` exists)
+
+        // RealFs: build the real layout.
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(&file, b"x").unwrap();
+        std::fs::write(&existing, b"yy").unwrap();
+        std::fs::create_dir(&full_dir).unwrap();
+        std::fs::write(&child, b"z").unwrap();
+        let real = RealFs::new();
+
+        // MemFs: seed the identical layout.
+        let mem = MemFs::from_seed(&[
+            SeedEntry {
+                path: dir.to_string_lossy().into_owned(),
+                size: 0,
+                is_dir: true,
+            },
+            SeedEntry {
+                path: file.to_string_lossy().into_owned(),
+                size: 1,
+                is_dir: false,
+            },
+            SeedEntry {
+                path: existing.to_string_lossy().into_owned(),
+                size: 2,
+                is_dir: false,
+            },
+            SeedEntry {
+                path: full_dir.to_string_lossy().into_owned(),
+                size: 0,
+                is_dir: true,
+            },
+            SeedEntry {
+                path: child.to_string_lossy().into_owned(),
+                size: 1,
+                is_dir: false,
+            },
+        ]);
+
+        // Each case: (label, expected variant, op). The op errors without mutating
+        // (it fails a pre-check), so the order of cases never disturbs the layout.
+        type Case<'a> = (&'a str, &'a str, Box<dyn Fn(&dyn Vfs) -> VfsError + 'a>);
+        let cases: Vec<Case> = vec![
+            (
+                "rename missing source",
+                "NotFound",
+                Box::new(|fs: &dyn Vfs| fs.rename(&missing, &fresh).unwrap_err()),
+            ),
+            (
+                "copy_file missing source",
+                "NotFound",
+                Box::new(|fs: &dyn Vfs| fs.copy_file(&missing, &fresh).unwrap_err()),
+            ),
+            (
+                "copy_file on a directory source",
+                "NotAFile",
+                Box::new(|fs: &dyn Vfs| fs.copy_file(&dir, &fresh).unwrap_err()),
+            ),
+            (
+                "metadata on missing path",
+                "NotFound",
+                Box::new(|fs: &dyn Vfs| fs.metadata(&missing).unwrap_err()),
+            ),
+            (
+                "rename onto existing target",
+                "AlreadyExists",
+                Box::new(|fs: &dyn Vfs| fs.rename(&file, &existing).unwrap_err()),
+            ),
+            (
+                "copy_file onto existing target",
+                "AlreadyExists",
+                Box::new(|fs: &dyn Vfs| fs.copy_file(&file, &existing).unwrap_err()),
+            ),
+            (
+                "remove_file on missing path",
+                "NotFound",
+                Box::new(|fs: &dyn Vfs| fs.remove_file(&missing).unwrap_err()),
+            ),
+            (
+                "remove_file on a directory",
+                "NotAFile",
+                Box::new(|fs: &dyn Vfs| fs.remove_file(&dir).unwrap_err()),
+            ),
+            (
+                "remove_dir on a file",
+                "NotADirectory",
+                Box::new(|fs: &dyn Vfs| fs.remove_dir(&file).unwrap_err()),
+            ),
+            (
+                "remove_dir on a non-empty directory",
+                "DirectoryNotEmpty",
+                Box::new(|fs: &dyn Vfs| fs.remove_dir(&full_dir).unwrap_err()),
+            ),
+        ];
+
+        for (label, expected, op) in &cases {
+            let mem_variant = variant_name(&op(&mem));
+            let real_variant = variant_name(&op(&real));
+            assert_eq!(mem_variant, *expected, "{label}: MemFs variant");
+            assert_eq!(
+                real_variant, *expected,
+                "{label}: RealFs variant (must match MemFs)"
+            );
+        }
     }
 }
