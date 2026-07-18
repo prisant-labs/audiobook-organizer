@@ -55,6 +55,15 @@ export const STRINGS = {
     retentionHelp: "The app remembers this many recent scans, then lets the oldest go.",
   },
 
+  // Set-aside retention (F-904 history/undo surface and the dry-run report).
+  // FD-34 + FD-10 + AC-23: the product NEVER auto-deletes anything in the
+  // set-aside area; the user empties it themselves. Plain-language register:
+  // "set aside", never "quarantine" (FD-31).
+  setAside: {
+    retentionNote:
+      "Set-aside items stay where they are until you empty the Set Aside folder yourself. The app never deletes anything there.",
+  },
+
   // The ruleset editor (F-906, v0.4.0 Phase 6, AC-32/AC-33): "how your
   // shelves get organized", hosted inside Settings. Deliberately never says
   // "ruleset" - plain-language register per design-system Section 6.1 and the

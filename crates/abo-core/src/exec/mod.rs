@@ -57,6 +57,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
+use crate::plan::builder::QUARANTINE_JOB_PLACEHOLDER;
 
 pub use journal::{Journal, MemJournal, SqliteJournal};
 pub use manifest::{
@@ -215,6 +216,69 @@ pub struct ExecOutcome {
     pub halt: Option<ExecHalt>,
 }
 
+/// The apply-time scope (FD-34): the library root and the resolved set-aside
+/// root, the ONLY two areas a walk may write into. Carried on the executor when
+/// built with [`Executor::with_scope`] (the production apply path); it drives two
+/// things: the [`QUARANTINE_JOB_PLACEHOLDER`] -> real-`job-id` substitution in
+/// set-aside targets, and the structural scope guard that refuses any op whose
+/// target lands outside both roots before a single filesystem call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyScope {
+    /// The library root the plan was built over (every ordinary target sits
+    /// inside it).
+    pub library_root: String,
+    /// The resolved set-aside root (a sibling of the library, OUTSIDE it), the
+    /// ONE place a target may land outside the library (FD-34).
+    pub set_aside_root: String,
+}
+
+impl ApplyScope {
+    /// Whether `target` is at or under one of the two permitted roots.
+    fn permits(&self, target: &str) -> bool {
+        path_at_or_under(target, &self.library_root)
+            || path_at_or_under(target, &self.set_aside_root)
+    }
+
+    /// FD-34 structural scope guard: an op that CREATES a target (`mkdir`, `move`,
+    /// `rename`, `quarantine`) must land inside the library root or under the
+    /// set-aside root. Anything else is refused BEFORE any filesystem call, as a
+    /// journaled halt (the walk writes the failed row and stops). The builder
+    /// never emits an out-of-scope target, so this fires only on a corrupted or
+    /// tampered plan - the last structural backstop before the disk.
+    fn check(&self, op: &PlanOpRow) -> Result<(), OpHalt> {
+        let creates = matches!(op.kind.as_str(), "mkdir" | "move" | "rename" | "quarantine");
+        if creates && !op.target_path.is_empty() && !self.permits(&op.target_path) {
+            return Err(OpHalt {
+                code: "out-of-scope-target",
+                detail: format!(
+                    "refused: the target lands outside the library and the set-aside area: {}",
+                    op.target_path
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Whether `target` equals `root` or sits under it, compared case- and
+/// separator-insensitively (NTFS reality), matching the plan/validate scope
+/// check so the two agree on what "in scope" means.
+fn path_at_or_under(target: &str, root: &str) -> bool {
+    let t = norm_scope_path(target);
+    let r = norm_scope_path(root);
+    t == r || t.starts_with(&format!("{r}/"))
+}
+
+/// Normalize a path for scope comparison: backslashes to forward slashes,
+/// lowercased, no trailing separator.
+fn norm_scope_path(p: &str) -> String {
+    let mut s = p.replace('\\', "/").to_lowercase();
+    while s.len() > 1 && s.ends_with('/') {
+        s.pop();
+    }
+    s
+}
+
 /// The executor: consumes an approved plan and a [`Vfs`], and walks the plan's
 /// operations against that filesystem. Generic over `V` so the identical code
 /// serves a dry run ([`MemFs`]) and a Real apply ([`RealFs`]) - the seam that
@@ -223,13 +287,58 @@ pub struct Executor<V: Vfs> {
     vfs: V,
     job_id: i64,
     ops: Vec<PlanOpRow>,
+    /// The FD-34 apply scope (set-aside root + library root). `None` for a
+    /// scope-agnostic unit test built via [`Executor::new`]; `Some` on the
+    /// production apply path ([`Executor::with_scope`]), which also substitutes
+    /// the real job id into set-aside targets.
+    scope: Option<ApplyScope>,
 }
 
 impl<V: Vfs> Executor<V> {
     /// Build an executor over `vfs` for apply `job_id`, holding the plan's `ops`
-    /// (all of them; the walk selects the approved ones).
+    /// (all of them; the walk selects the approved ones). No apply scope: the
+    /// FD-34 substitution and scope guard are inert (used by scope-agnostic unit
+    /// tests). The production apply path uses [`Executor::with_scope`].
     pub fn new(vfs: V, job_id: i64, ops: Vec<PlanOpRow>) -> Self {
-        Self { vfs, job_id, ops }
+        Self {
+            vfs,
+            job_id,
+            ops,
+            scope: None,
+        }
+    }
+
+    /// Build an executor WITH its FD-34 apply scope (the production path). Two
+    /// things happen here, both keyed off the real `job_id`:
+    ///
+    /// 1. **Job-id substitution.** Every set-aside target the builder stamped with
+    ///    [`QUARANTINE_JOB_PLACEHOLDER`] gets the real `jobs.id` spliced into that
+    ///    path segment, so this run's set-aside items land in their own collision-
+    ///    free `<set-aside-root>\<job-id>\` folder (FD-34). This is done on the
+    ///    executor's OWN in-memory copy of the ops; the frozen `plan_ops` row is
+    ///    never rewritten (plan immutability). Because the job-id segment lives in
+    ///    the TARGET path and a journal row carries no target, a dry run and a Real
+    ///    apply still produce byte-identical journal sequences (AC-3) even though
+    ///    each substitutes its own job id.
+    /// 2. **Scope guard.** `scope` is retained so [`Self::dispatch`] refuses any op
+    ///    whose target escapes both roots before touching the disk.
+    pub fn with_scope(vfs: V, job_id: i64, ops: Vec<PlanOpRow>, scope: ApplyScope) -> Self {
+        let job_seg = job_id.to_string();
+        let ops = ops
+            .into_iter()
+            .map(|mut op| {
+                if op.target_path.contains(QUARANTINE_JOB_PLACEHOLDER) {
+                    op.target_path = op.target_path.replace(QUARANTINE_JOB_PLACEHOLDER, &job_seg);
+                }
+                op
+            })
+            .collect();
+        Self {
+            vfs,
+            job_id,
+            ops,
+            scope: Some(scope),
+        }
     }
 
     /// Borrow the underlying filesystem (so a caller that seeded a [`MemFs`] can
@@ -270,9 +379,14 @@ impl<V: Vfs> Executor<V> {
                 op_id: op.id,
                 phase: JournalPhase::Intent,
                 at: now.to_string(),
-                // The F-507 provenance captured at plan time rides the intent row
-                // (FD-01, AC-12): pack_path / pack_name / optional award_marker.
-                detail_json: op.provenance_json.clone(),
+                // The intent row's detail is: for a set-aside (`quarantine`) op, the
+                // AC-22 set-aside record (reason + original path + relative path); for
+                // a flatten-packs member move, the F-507 pack/award provenance captured
+                // at plan time (FD-01, AC-12). Both are plan-derived and mode-
+                // independent, so a dry run and a Real apply produce identical detail
+                // (AC-3), and neither carries a job id (that lives on the row's
+                // `job_id` field, not the detail).
+                detail_json: self.intent_detail_json(op),
             };
             // Flush the intent BEFORE acting. A failed flush is a hard stop: `?`
             // returns here, so `dispatch` is never reached (AC-13). The sequencing
@@ -330,6 +444,22 @@ impl<V: Vfs> Executor<V> {
         })
     }
 
+    /// The intent row's `detail_json` for `op`. A `quarantine` (set-aside) op with
+    /// a configured scope carries the AC-22 set-aside record (reason + original
+    /// path + original relative path); every other op carries the plan-time
+    /// provenance the builder stamped (`op.provenance_json`, the F-507 pack/award
+    /// data on flatten-packs member moves). The set-aside record is derived purely
+    /// from the frozen op fields and the library root, so it is identical across a
+    /// dry run and a Real apply (AC-3) and carries no job id.
+    fn intent_detail_json(&self, op: &PlanOpRow) -> Option<String> {
+        if op.kind == "quarantine" {
+            if let Some(scope) = &self.scope {
+                return Some(set_aside_record_json(op, &scope.library_root));
+            }
+        }
+        op.provenance_json.clone()
+    }
+
     /// Per-operation dispatch (AC-1: reaches the filesystem ONLY through
     /// `self.vfs`, never a direct standard-library call - a unit test greps this
     /// module's logic to keep that true). Routes each op by kind:
@@ -347,6 +477,12 @@ impl<V: Vfs> Executor<V> {
     /// open-for-write or truncate primitive, so "overwrite" is not expressible
     /// from here.
     fn dispatch(&self, op: &PlanOpRow) -> Result<(), OpHalt> {
+        // FD-34 structural scope guard: refuse an out-of-scope target BEFORE any
+        // filesystem call (the caller journals the halt). Inert when no scope was
+        // configured (scope-agnostic unit tests via `Executor::new`).
+        if let Some(scope) = &self.scope {
+            scope.check(op)?;
+        }
         match op.kind.as_str() {
             "no-op" => Ok(()),
             "mkdir" => self.op_mkdir(op),
@@ -521,6 +657,35 @@ impl OpHalt {
 /// == Real equality is undisturbed (the row shape and key set are unchanged).
 fn failure_detail_json(code: &str, detail: &str) -> String {
     serde_json::json!({ "code": code, "detail": detail }).to_string()
+}
+
+/// The AC-22 set-aside record for a `quarantine` op's intent row: the reason it
+/// was set aside (the op's plain-language rationale, which already encodes
+/// duplicate-of / non-preferred-format / clutter), the original absolute path,
+/// and the original path RELATIVE to the library root - so the reason and the
+/// original relative path are both recoverable from the quarantine record alone
+/// (the job id itself is the intent row's `job_id` field). Deterministic key
+/// order (serde_json's sorted map), and no job id inside, so it is byte-identical
+/// across a dry run and a Real apply (AC-3).
+fn set_aside_record_json(op: &PlanOpRow, library_root: &str) -> String {
+    let rel = relative_to(&op.source_path, library_root);
+    serde_json::json!({
+        "set_aside_reason": op.rationale,
+        "original_path": op.source_path,
+        "original_relative_path": rel,
+    })
+    .to_string()
+}
+
+/// `path` relative to `root` (the root prefix and one leading separator removed);
+/// unchanged if it does not sit under the root. Exact-prefix match: a set-aside
+/// op's source and the library root come from the same stored snapshot, so they
+/// share a spelling.
+fn relative_to(path: &str, root: &str) -> String {
+    match path.strip_prefix(root) {
+        Some(rest) => rest.trim_start_matches(['/', '\\']).to_string(),
+        None => path.to_string(),
+    }
 }
 
 /// The user-facing campaign group (slug) an op belongs to (FD-26), for surfacing
@@ -1523,6 +1688,288 @@ mod tests {
                 "rename",
                 "rmdir-empty"
             ]
+        );
+    }
+
+    // ---- Phase 4: FD-34 set-aside (quarantine) placement and safety ----
+
+    /// An approved `quarantine` (set-aside) op from `source` to `target`.
+    fn quarantine_op(id: i64, seq: i64, source: &str, target: &str) -> PlanOpRow {
+        let mut op = approved_op(id, seq, source, target);
+        op.kind = "quarantine".to_string();
+        op.op_group = "dedupe-quarantine".to_string();
+        op.rule_id = "parallel-format-quarantine".to_string();
+        op.rationale =
+            "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted)."
+                .to_string();
+        op
+    }
+
+    fn scope(library_root: &str, set_aside_root: &str) -> ApplyScope {
+        ApplyScope {
+            library_root: library_root.to_string(),
+            set_aside_root: set_aside_root.to_string(),
+        }
+    }
+
+    /// FD-34 scope guard (the brief-mandated structural check): an op whose target
+    /// lands outside BOTH the library root and the set-aside root is refused BEFORE
+    /// any filesystem call, as a journaled halt. Proven with a `PanicFs` that would
+    /// panic the instant the seam is touched: the walk returns a clean halt without
+    /// panicking, so no fs call was made.
+    #[tokio::test]
+    async fn scope_guard_refuses_an_out_of_scope_target_before_any_fs_call() {
+        // Target escapes both roots (not under E:/lib, not under E:/Set Aside).
+        let op = approved_op(1, 0, "E:/lib/Book.m4b", "E:/Elsewhere/Book.m4b");
+        let executor = Executor::with_scope(PanicFs, 7, vec![op], scope("E:/lib", "E:/Set Aside"));
+        let journal = MemJournal::new();
+        // If the guard did NOT short-circuit before the fs, PanicFs would panic.
+        let outcome = executor
+            .run(&journal, "2026-07-18T00:00:00Z")
+            .await
+            .expect("the scope guard halts cleanly, it does not reach the fs");
+        let halt = outcome.halt.expect("an out-of-scope target halts");
+        assert_eq!(halt.code, "out-of-scope-target");
+        assert_eq!(outcome.ops_walked, 0);
+        // Journal-consistent: the one intent has a terminal (failed) row.
+        assert_journal_consistent(&journal.entries());
+        assert_eq!(
+            journal.entries().last().unwrap().phase,
+            JournalPhase::Failed
+        );
+    }
+
+    /// A set-aside target UNDER the set-aside root (outside the library) is
+    /// PERMITTED by the guard (the FD-34 carve-out), and its `{job-id}` placeholder
+    /// is substituted with the real job id at apply time.
+    #[tokio::test]
+    async fn set_aside_target_is_permitted_and_job_id_is_substituted() {
+        let src = "E:/lib/Some Book/track01.mp3";
+        // The builder stamps the {job-id} placeholder; the executor substitutes it.
+        let op = quarantine_op(1, 0, src, "E:/Set Aside/{job-id}/Some Book/track01.mp3");
+        let memfs = MemFs::from_seed(&[dir("E:/lib"), dir("E:/lib/Some Book"), file(src, 40_000)]);
+        let executor = Executor::with_scope(memfs, 41, vec![op], scope("E:/lib", "E:/Set Aside"));
+
+        // The executor's own op copy has the real job id spliced in (this is what
+        // the undo manifest is built from), while plan_ops stays frozen upstream.
+        assert_eq!(
+            executor.ops()[0].target_path,
+            "E:/Set Aside/41/Some Book/track01.mp3",
+            "the {{job-id}} placeholder is replaced by the real job id"
+        );
+
+        let journal = MemJournal::new();
+        let outcome = executor
+            .run(&journal, "2026-07-18T00:00:00Z")
+            .await
+            .expect("the set-aside move is in scope");
+        assert!(
+            outcome.halt.is_none(),
+            "a set-aside under the set-aside root is permitted"
+        );
+        assert_eq!(outcome.ops_walked, 1);
+
+        let fs = executor.vfs();
+        assert!(
+            !fs.exists(Path::new(src)),
+            "the item left its original location"
+        );
+        assert!(
+            fs.exists(Path::new("E:/Set Aside/41/Some Book/track01.mp3")),
+            "the item was set aside under the per-job folder (never deleted)"
+        );
+    }
+
+    /// AC-3 under substitution: two apply jobs of the SAME plan substitute their
+    /// own job ids into the set-aside target, yet their journal sequences are
+    /// byte-identical (the job-id segment lives in the target, and a journal row
+    /// carries no target).
+    #[tokio::test]
+    async fn different_jobs_substitute_own_job_id_but_journals_stay_identical() {
+        let src = "E:/lib/B/x.mp3";
+        let make = || MemFs::from_seed(&[dir("E:/lib"), dir("E:/lib/B"), file(src, 10)]);
+        let target = "E:/Set Aside/{job-id}/B/x.mp3";
+
+        let e41 = Executor::with_scope(
+            make(),
+            41,
+            vec![quarantine_op(1, 0, src, target)],
+            scope("E:/lib", "E:/Set Aside"),
+        );
+        let j41 = MemJournal::new();
+        e41.run(&j41, "2026-07-18T00:00:00Z").await.unwrap();
+
+        let e99 = Executor::with_scope(
+            make(),
+            99,
+            vec![quarantine_op(1, 0, src, target)],
+            scope("E:/lib", "E:/Set Aside"),
+        );
+        let j99 = MemJournal::new();
+        e99.run(&j99, "2026-07-18T00:00:00Z").await.unwrap();
+
+        // Different real destinations...
+        assert!(e41.vfs().exists(Path::new("E:/Set Aside/41/B/x.mp3")));
+        assert!(e99.vfs().exists(Path::new("E:/Set Aside/99/B/x.mp3")));
+        // ...but the job's own id is the ONLY difference the rows carry (job_id
+        // field); blank it and the sequences are identical (AC-3).
+        let blank_job = |rows: Vec<JournalEntry>| -> Vec<JournalEntry> {
+            rows.into_iter()
+                .map(|mut r| {
+                    r.job_id = 0;
+                    r
+                })
+                .collect()
+        };
+        assert_eq!(blank_job(j41.entries()), blank_job(j99.entries()));
+    }
+
+    /// AC-22: a set-aside op's intent row records the reason and the original
+    /// relative path, both recoverable from the quarantine record (the journal
+    /// detail) alone. No job id lives in the detail (it is the row's job_id field),
+    /// so the detail is identical across a dry run and a Real apply.
+    #[tokio::test]
+    async fn ac22_quarantine_intent_records_reason_and_original_relative_path() {
+        let src = "E:/lib/Some Book/track01.mp3";
+        let op = quarantine_op(1, 0, src, "E:/Set Aside/{job-id}/Some Book/track01.mp3");
+        let memfs = MemFs::from_seed(&[dir("E:/lib"), dir("E:/lib/Some Book"), file(src, 40_000)]);
+        let executor = Executor::with_scope(memfs, 7, vec![op], scope("E:/lib", "E:/Set Aside"));
+        let journal = MemJournal::new();
+        executor
+            .run(&journal, "2026-07-18T00:00:00Z")
+            .await
+            .expect("walk");
+
+        let intent = &journal.entries()[0];
+        assert_eq!(intent.phase, JournalPhase::Intent);
+        let detail = intent
+            .detail_json
+            .as_deref()
+            .expect("a set-aside intent carries the AC-22 record");
+        let record: serde_json::Value = serde_json::from_str(detail).expect("valid json");
+        // The reason (encodes non-preferred format) and the original relative path
+        // are both recoverable from the record alone.
+        assert!(
+            record["set_aside_reason"]
+                .as_str()
+                .unwrap()
+                .contains("set aside"),
+            "the reason is recorded: {record}"
+        );
+        assert_eq!(
+            record["original_relative_path"].as_str().unwrap(),
+            "Some Book/track01.mp3",
+            "the original relative path is recoverable"
+        );
+        assert_eq!(record["original_path"].as_str().unwrap(), src);
+        // No job id inside the detail (AC-3): it lives on the row's job_id field.
+        assert!(!detail.contains("\"job_id\""));
+        assert_eq!(intent.job_id, 7);
+    }
+
+    /// AC-23 (behavioral): across an apply that MOVES an audiobook, SETS ASIDE
+    /// another, and removes an empty folder, NOT ONE audio file is deleted - every
+    /// audio file that existed still exists (relocated), the set-aside item lives at
+    /// its new location, and the only removal is the empty directory.
+    #[tokio::test]
+    async fn ac23_apply_deletes_no_audio_only_moves_and_empty_dir_removal() {
+        let loose = "E:/lib/Loose Book.m4b";
+        let loser = "E:/lib/Some Book/track01.mp3";
+        let memfs = MemFs::from_seed(&[
+            dir("E:/lib"),
+            file(loose, 100),
+            dir("E:/lib/Some Book"),
+            file(loser, 40),
+            dir("E:/lib/Empty"),
+        ]);
+        // A move (audio into its folder), a set-aside (audio, placeholder target),
+        // and an empty-folder removal. The audio total must be preserved.
+        let mut move_op = approved_op(1, 0, loose, "E:/lib/Loose Author/Loose Book.m4b");
+        move_op.kind = "move".to_string();
+        let set_aside = quarantine_op(2, 1, loser, "E:/Set Aside/{job-id}/Some Book/track01.mp3");
+        let mut rmdir = approved_op(3, 2, "E:/lib/Empty", "E:/lib/Empty");
+        rmdir.kind = "rmdir-empty".to_string();
+
+        let executor = Executor::with_scope(
+            memfs,
+            5,
+            vec![move_op, set_aside, rmdir],
+            scope("E:/lib", "E:/Set Aside"),
+        );
+        let outcome = executor
+            .run(&MemJournal::new(), "2026-07-18T00:00:00Z")
+            .await
+            .expect("walk");
+        assert!(outcome.halt.is_none());
+        assert_eq!(outcome.ops_walked, 3);
+
+        let fs = executor.vfs();
+        // The moved audiobook exists at its destination (not deleted).
+        assert!(fs.exists(Path::new("E:/lib/Loose Author/Loose Book.m4b")));
+        // The set-aside audio exists at the set-aside location (set aside, never
+        // deleted) - this is the whole point of quarantine-only removal (D-09).
+        assert!(fs.exists(Path::new("E:/Set Aside/5/Some Book/track01.mp3")));
+        // Neither audio file is gone from the filesystem: both survive, relocated.
+        assert!(
+            !fs.exists(Path::new(loose)),
+            "the loose book moved (not deleted)"
+        );
+        assert!(
+            !fs.exists(Path::new(loser)),
+            "the loser moved to set-aside (not deleted)"
+        );
+        // The only removal is the empty directory.
+        assert!(
+            !fs.exists(Path::new("E:/lib/Empty")),
+            "the empty folder was swept out"
+        );
+    }
+
+    /// AC-23 (source scan, in the spirit of the no-std::fs test): the executor's
+    /// operation logic contains NO `remove_file` call reachable for a move/rename/
+    /// set-aside - the ONLY `remove_file`s are inside `cross_volume_move` (the AC-5
+    /// verified delete-source and the own-unverified-copy rollback). A same-volume
+    /// set-aside is a metadata rename that never deletes, so no audio can be removed
+    /// outside the one verified cross-volume path.
+    #[test]
+    fn ac23_remove_file_is_confined_to_the_cross_volume_delete_path() {
+        const SRC: &str = include_str!("mod.rs");
+        let logic = SRC.split("#[cfg(test)]").next().unwrap_or(SRC);
+        // The seam CALL form, so a prose mention of remove_file in a doc comment
+        // (e.g. the `retrying` doc) is not counted - only actual delete calls are.
+        let needle = concat!("self.vfs.remove", "_file");
+
+        // Extract a 4-space-indented method body by name (from `fn NAME` to the
+        // next `\n    fn ` boundary, or end of logic).
+        let fn_body = |name: &str| -> &str {
+            let start = logic
+                .find(&format!("fn {name}"))
+                .unwrap_or_else(|| panic!("method {name} not found"));
+            let rest = &logic[start..];
+            let end = rest[1..]
+                .find("\n    fn ")
+                .map(|i| start + 1 + i)
+                .unwrap_or(logic.len());
+            &logic[start..end]
+        };
+
+        // The same-volume/quarantine dispatch path (op_move) never deletes a file:
+        // it renames, or delegates to cross_volume_move.
+        assert!(
+            !fn_body("op_move").contains(needle),
+            "op_move (the move/rename/set-aside path) must never call remove_file (AC-23)"
+        );
+
+        // Every remove_file in the operation logic lives in cross_volume_move.
+        let total = logic.matches(needle).count();
+        let in_cross_volume = fn_body("cross_volume_move").matches(needle).count();
+        assert!(
+            in_cross_volume >= 1,
+            "the cross-volume path deletes the source after verify"
+        );
+        assert_eq!(
+            total, in_cross_volume,
+            "every remove_file is confined to cross_volume_move (the verified delete-source path, AC-23)"
         );
     }
 }

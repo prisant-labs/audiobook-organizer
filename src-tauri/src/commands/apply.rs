@@ -25,8 +25,11 @@ use std::sync::Arc;
 use abo_core::db::plans::{get_plan, get_plan_ops};
 use abo_core::exec::lock::acquire_apply_job;
 use abo_core::exec::manifest::export_after_apply;
-use abo_core::exec::{ApplyMode, ExecHalt, Executor, MemFs, RealFs, SeedEntry, SqliteJournal, Vfs};
+use abo_core::exec::{
+    ApplyMode, ApplyScope, ExecHalt, Executor, MemFs, RealFs, SeedEntry, SqliteJournal, Vfs,
+};
 use abo_core::ipc::{AppError, ApplyReport, EntryRow};
+use abo_core::plan::builder::default_set_aside_root;
 use abo_core::scan::walk::now_iso8601_utc;
 use sqlx::SqlitePool;
 
@@ -88,6 +91,11 @@ pub async fn apply_start(
             detail: e.to_string(),
         })?;
 
+    // Resolve the FD-34 apply scope (library root + set-aside root): the ONLY two
+    // areas the walk may write into, and the roots the executor uses to substitute
+    // the real job id into set-aside targets and to refuse any out-of-scope target.
+    let scope = resolve_apply_scope(pool, plan.scan_id).await?;
+
     // Durable single-writer lock (AC-8): refuse if an apply is already `running`,
     // else insert the `running` apply job (the lock) carrying `mode`. Released by
     // marking the job terminal below (and by the startup reclaim after a crash).
@@ -112,7 +120,7 @@ pub async fn apply_start(
                     detail: e.to_string(),
                 })?;
             let memfs = MemFs::from_seed(&seed_from_entries(&entries));
-            let executor = Executor::new(memfs, job_id, ops);
+            let executor = Executor::with_scope(memfs, job_id, ops, scope);
             walk_and_finalize(
                 pool,
                 executor,
@@ -129,7 +137,7 @@ pub async fn apply_start(
             // Real apply against the actual filesystem. The human-only gate to run a
             // Real apply against a real library is procedural (EXECUTION.md); this is
             // the RealFs executor that gate authorizes.
-            let executor = Executor::new(RealFs::new(), job_id, ops);
+            let executor = Executor::with_scope(RealFs::new(), job_id, ops, scope);
             walk_and_finalize(
                 pool,
                 executor,
@@ -198,6 +206,35 @@ async fn walk_and_finalize<V: Vfs>(
         job_id,
         dry_run: mode == ApplyMode::DryRun,
         ops_walked: outcome.ops_walked as i64,
+    })
+}
+
+/// Resolve the FD-34 apply scope for the plan's `scan_id`: the library root the
+/// plan was built over (the scan's `root_path`) plus the resolved set-aside root
+/// (the F-803 `set_aside_root` setting when configured, else the FD-34 default
+/// sibling `<library-parent>\Set Aside\`). These MUST match what the builder used
+/// when it stamped the set-aside targets; in the normal flow (generate then apply
+/// without changing settings) they do, and the executor's scope guard is a safe
+/// backstop if they ever diverge.
+async fn resolve_apply_scope(pool: &SqlitePool, scan_id: i64) -> Result<ApplyScope, AppError> {
+    let root_path: Option<String> = sqlx::query_scalar("SELECT root_path FROM scans WHERE id = ?")
+        .bind(scan_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::ApplyFailed {
+            detail: e.to_string(),
+        })?;
+    let library_root = root_path.ok_or_else(|| AppError::ApplyFailed {
+        detail: "the plan's scan has no recorded library root".to_string(),
+    })?;
+    let settings = abo_core::db::settings::get_settings(pool).await?;
+    let set_aside_root = settings
+        .set_aside_root
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_set_aside_root(&library_root));
+    Ok(ApplyScope {
+        library_root,
+        set_aside_root,
     })
 }
 

@@ -71,6 +71,15 @@ pub struct ManifestOp {
     /// records where an extracted book came from. `None` for non-pack ops.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_json: Option<String>,
+    /// For a `quarantine` (set-aside) op, WHY the item was set aside (the op's
+    /// plain-language rationale, which encodes duplicate-of / non-preferred-format
+    /// / clutter). Together with `source_path` (the original location) and
+    /// `target_path` (the `<set-aside-root>\<job-id>\...` destination), this makes
+    /// the reason and the original path recoverable from the undo file alone
+    /// (AC-22). `None` for every non-set-aside op. Additive and optional, so an
+    /// older reader ignores it and an undo file without it still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_aside_reason: Option<String>,
 }
 
 /// The whole undo file: a schema version, the job/plan identity, whether every op
@@ -172,6 +181,9 @@ pub fn build_manifest(mode: ApplyMode, job_id: i64, plan_id: i64, ops: &[PlanOpR
             source_path: o.source_path.clone(),
             target_path: o.target_path.clone(),
             provenance_json: o.provenance_json.clone(),
+            // AC-22: the set-aside reason rides the undo file for a set-aside op
+            // (the reason is the op's plain-language rationale); `None` otherwise.
+            set_aside_reason: (o.kind == "quarantine").then(|| o.rationale.clone()),
         })
         .collect();
     let reversible = ops.iter().all(|o| is_reversible_kind(&o.kind));
@@ -464,6 +476,60 @@ mod tests {
             "only the approved op is in the undo file"
         );
         assert_eq!(manifest.ops[0].op_id, 1);
+    }
+
+    /// AC-22: a set-aside (`quarantine`) op in the undo file carries the reason it
+    /// was set aside AND its original path (source_path), so the reason and the
+    /// original relative path are recoverable from the undo file alone. A rollback
+    /// of a real apply then restores it to `source_path` (its original location).
+    #[test]
+    fn set_aside_op_records_reason_and_original_path_in_the_undo_file() {
+        let mut set_aside = op(
+            5,
+            0,
+            "quarantine",
+            "E:\\Books - Audio\\Some Book\\track01.mp3",
+            "E:\\Set Aside\\42\\Some Book\\track01.mp3",
+            None,
+        );
+        set_aside.rationale =
+            "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted).".to_string();
+        // A non-set-aside op alongside carries no set-aside reason.
+        let move_op = op(
+            6,
+            1,
+            "move",
+            "E:\\Books - Audio\\A.m4b",
+            "E:\\Books - Audio\\Author\\A.m4b",
+            None,
+        );
+
+        let manifest = build_manifest(ApplyMode::Real, 42, 1, &[set_aside, move_op]);
+        // Round-trip through the JSON alone (the undo file is self-contained).
+        let reread = Manifest::from_json(&manifest.to_json()).expect("round-trip");
+        let sa = reread
+            .ops
+            .iter()
+            .find(|o| o.kind == "quarantine")
+            .expect("the set-aside op is in the undo file");
+        assert_eq!(
+            sa.set_aside_reason.as_deref(),
+            Some(
+                "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted)."
+            ),
+            "the reason is recoverable from the undo file"
+        );
+        assert_eq!(
+            sa.source_path, "E:\\Books - Audio\\Some Book\\track01.mp3",
+            "the original path is recoverable (relative path = source minus library root)"
+        );
+        assert!(
+            sa.target_path.starts_with("E:\\Set Aside\\42\\"),
+            "the set-aside location carries the job id (FD-34)"
+        );
+        // A non-set-aside op carries no set-aside reason.
+        let mv = reread.ops.iter().find(|o| o.kind == "move").unwrap();
+        assert_eq!(mv.set_aside_reason, None);
     }
 
     /// A dry-run manifest records a rehearsal (no file moved), so `reverse_ops`
