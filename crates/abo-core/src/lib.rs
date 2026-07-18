@@ -67,11 +67,22 @@
 //! render HTML), which writes every artifact through `reports` into the Reports
 //! folder. The report's `reports::write_html_report` sibling lands the HTML
 //! beside the F-505/F-507 exports.
+//!
+//! v0.5.0 Phase 1 adds `exec`: the F-607 virtual-filesystem seam. `exec::vfs`
+//! defines the `Vfs` trait with `RealFs` (the one place that touches the real
+//! filesystem, routing paths through the `paths` extended-length seam) and
+//! `MemFs` (a disk-inert in-memory tree seeded from a snapshot); `exec` holds the
+//! `Executor<V: Vfs>`, generic over the filesystem so a dry run and a Real apply
+//! share one code path, plus the journal row shape (`JournalEntry`/`JournalPhase`)
+//! the next phase persists. Operation dispatch is a deliberate skeleton this
+//! phase (no mutation); a unit test greps the executor to prove it makes no direct
+//! standard-library filesystem call (AC-1). No `cfg`-gating leaks past `RealFs`.
 
 pub mod classify;
 pub mod db;
 pub mod dupes;
 pub mod error;
+pub mod exec;
 pub mod ipc;
 pub mod job;
 pub mod parse;

@@ -96,6 +96,38 @@ pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
     }
 }
 
+/// Apply the Windows extended-length (`\\?\`) verbatim prefix to `path` WITHOUT
+/// requiring it to exist - the executor's counterpart to [`to_extended_length`].
+///
+/// [`to_extended_length`] resolves the path with [`std::fs::canonicalize`], which
+/// only works on a path that already exists: right for the scanner's walk root,
+/// wrong for an executor operation's TARGET, which does not exist until the op
+/// creates it (a move's destination, a `create_dir_all` target). This prefixes
+/// the absolute form directly instead, so those paths still open past the legacy
+/// 260-char `MAX_PATH` limit (FD-19). It folds no `.`/`..` components, which is
+/// safe here: plan paths are already normalized absolute paths. This is the one
+/// path-dialect helper the v0.5.0 executor's [`RealFs`](crate::exec::RealFs)
+/// applies at every real filesystem call, keeping `\\?\` handling in this seam
+/// rather than scattered through the operation logic.
+///
+/// Non-Windows (the CI test leg): returns the path unchanged; there is no `\\?\`
+/// concept off Windows.
+#[cfg(windows)]
+pub fn to_extended_length_prefixed(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        return path.to_path_buf();
+    }
+    manual_extended_length(path)
+}
+
+/// Non-Windows counterpart to [`to_extended_length_prefixed`]: no `\\?\` concept,
+/// so the path is returned unchanged. Keeps every `RealFs` call site `cfg`-free.
+#[cfg(not(windows))]
+pub fn to_extended_length_prefixed(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 // ---- Free-space seam (F-404 cross-volume sizing) ----
 //
 // F-404 validation sizes cross-volume `copy+verify+delete` moves against the
