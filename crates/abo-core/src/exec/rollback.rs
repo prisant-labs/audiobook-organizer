@@ -283,6 +283,22 @@ fn op_meta_by_id(ops: &[PlanOpRow]) -> HashMap<i64, (String, i64)> {
 /// previewable through the SAME review surface a forward plan uses. Refuses a
 /// rehearsal (dry-run) undo file with the plain-language
 /// [`AppError::RollbackNotReversible`] (P2 safety semantic).
+///
+/// # Undo of an undo (redo), by design
+///
+/// A rollback is itself an ordinary apply: applying the inverse plan exports its
+/// own real, reversible undo file (a `real` manifest), so `rollback_prepare` can be
+/// run again on THAT manifest to undo the undo - a redo. The chain is unbounded and
+/// carries no special "is-a-redo" state; each link is just another plan.
+///
+/// Set-aside interaction to be aware of: an inverse plan carries LITERAL,
+/// already-substituted paths (it inverts the undo file's real paths, which have no
+/// `{job-id}` placeholder). So when a redo re-sets-aside an item, it moves it back
+/// to the ORIGINAL apply's per-job set-aside folder (that literal
+/// `<set-aside>\<original-job-id>\...` path, recreated by mkdir-first), NOT to a
+/// fresh folder named for the redo apply's own (new) job id. The redo runs under a
+/// new `jobs.id`, but the set-aside DESTINATION path is the original job's, because
+/// the placeholder was resolved once, at the first apply, and never re-minted.
 pub async fn rollback_prepare(
     pool: &SqlitePool,
     manifest_id: i64,
@@ -334,10 +350,17 @@ pub async fn rollback_prepare(
     ordered.sort_by_key(|o| std::cmp::Reverse(o.seq));
     let mut inverses = Vec::new();
     for op in &ordered {
-        let (op_group, byte_size) = meta
-            .get(&op.op_id)
-            .cloned()
-            .unwrap_or_else(|| (String::new(), 0));
+        // A manifest op with no matching frozen `plan_ops` row is corrupt state, not
+        // a default: refuse loudly rather than inventing an empty group / zero size.
+        let (op_group, byte_size) =
+            meta.get(&op.op_id)
+                .cloned()
+                .ok_or_else(|| AppError::RollbackPrepareFailed {
+                    detail: format!(
+                        "a change to undo (op {}) has no recorded plan row",
+                        op.op_id
+                    ),
+                })?;
         if let Some(inv) = invert(
             &op.kind,
             &op.source_path,
@@ -464,14 +487,18 @@ pub async fn rollback_prepare_partial<V: Vfs>(
             .ok_or_else(|| AppError::RollbackPrepareFailed {
                 detail: "a change to undo is no longer recorded".to_string(),
             })?;
-        // The REAL executed source/target. Every path but a set-aside target is
-        // literal in the frozen row; a set-aside target carries the {job-id}
-        // placeholder, reconstructed by the SAME substitution the executor did.
-        let real_target = if op.kind == "quarantine" {
+        // The REAL executed target. It is substituted EXACTLY as the executor's
+        // `with_scope` does: whenever the frozen target contains the {job-id}
+        // placeholder, regardless of kind. This covers BOTH a set-aside (quarantine)
+        // move AND the FD-34 per-job ensure-mkdir (`mkdir` targeting
+        // `<set_aside_root>\{job-id}\`); gating on `kind == "quarantine"` would build
+        // the ensure-mkdir's inverse against a literal `{job-id}` path. P4 obligation:
+        // when substitution happened, verify the reconstructed path (the forward op's
+        // real target, which the inverse acts on) exists via the Vfs before building
+        // the inverse op - a missing reconstructed path is a validation failure, not a
+        // guess.
+        let real_target = if op.target_path.contains(QUARANTINE_JOB_PLACEHOLDER) {
             let reconstructed = op.target_path.replace(QUARANTINE_JOB_PLACEHOLDER, &job_seg);
-            // P4 obligation: verify the reconstructed set-aside source exists before
-            // building the inverse op - a missing reconstructed path is a validation
-            // failure, not a guess.
             if !vfs.exists(Path::new(&reconstructed)) {
                 return Err(AppError::RollbackPrepareFailed {
                     detail: format!(
@@ -690,14 +717,19 @@ mod tests {
             &library_root.join("Messy Name [128k]").join("track.m4b"),
             b"messy track bytes",
         );
-        write_file(
-            &library_root.join("Duplicates").join("extra.m4b"),
-            b"extra copy bytes",
-        );
+        // A ROOT-LEVEL duplicate (relative path is just its name), so the set-aside
+        // target sits DIRECTLY under the per-job folder with no intermediate subdir.
+        // That keeps the per-job set-aside folder empty after the item is restored,
+        // so the FD-34 ensure-mkdir's inverse `rmdir-empty` succeeds and the round
+        // trip leaves no set-aside residue.
+        write_file(&library_root.join("dup.m4b"), b"duplicate copy bytes");
         std::fs::create_dir_all(library_root.join("EmptyShell")).expect("empty shell");
 
         let lib = library_root.to_string_lossy().to_string();
         let aside = set_aside_root.to_string_lossy().to_string();
+        // The set-aside group is emitted LAST (its ensure-mkdir at seq 4 and the
+        // set-aside move at seq 5), so a contiguous tail can undo exactly that group
+        // and exercise ensure-mkdir inversion on the journal-tail path.
         vec![
             Spec {
                 op_group: "loose-root-books",
@@ -721,18 +753,29 @@ mod tests {
                 byte_size: 0,
             },
             Spec {
-                op_group: "dedupe-quarantine",
-                kind: "quarantine",
-                source: format!("{lib}/Duplicates/extra.m4b"),
-                target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}/Duplicates/extra.m4b"),
-                byte_size: 16,
-            },
-            Spec {
                 op_group: "empty-cleanup",
                 kind: "rmdir-empty",
                 source: format!("{lib}/EmptyShell"),
                 target: String::new(),
                 byte_size: 0,
+            },
+            // FD-34 ensure-mkdir: the per-job set-aside folder `<aside>\{job-id}\`.
+            // Kind is `mkdir` (NOT `quarantine`), but its target carries the
+            // placeholder, so the executor substitutes the job id into it - and so
+            // must a journal-tail undo.
+            Spec {
+                op_group: "dedupe-quarantine",
+                kind: "mkdir",
+                source: String::new(),
+                target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}"),
+                byte_size: 0,
+            },
+            Spec {
+                op_group: "dedupe-quarantine",
+                kind: "quarantine",
+                source: format!("{lib}/dup.m4b"),
+                target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}/dup.m4b"),
+                byte_size: 20,
             },
         ]
     }
@@ -751,6 +794,34 @@ mod tests {
                 .expect("approve inverse");
         }
         let (_job, _applied) = apply_for_real(pool, plan_id, scope).await;
+    }
+
+    /// Approve every op of a plan, apply it for REAL, and export its undo file,
+    /// returning the new manifest id. Used to build the undo/redo chain (each apply,
+    /// including a rollback, exports its own real reversible undo file).
+    async fn approve_apply_export(
+        pool: &SqlitePool,
+        plan_id: i64,
+        scope: &ApplyScope,
+        reports_dir: &Path,
+    ) -> i64 {
+        for row in get_plan_ops(pool, plan_id).await.expect("ops") {
+            set_approval(pool, row.id, "approved", NOW)
+                .await
+                .expect("approve");
+        }
+        let (job_id, applied) = apply_for_real(pool, plan_id, scope).await;
+        export_after_apply(
+            pool,
+            reports_dir,
+            ApplyMode::Real,
+            job_id,
+            plan_id,
+            &applied,
+        )
+        .await
+        .expect("export undo file")
+        .manifest_id
     }
 
     /// AC-15 (the release signature gate): apply the full fixture plan for real in
@@ -814,16 +885,101 @@ mod tests {
             .await
             .expect("rollback_prepare");
         assert_eq!(
-            prepared.op_count, 5,
-            "five reversible ops invert to five undo ops"
+            prepared.op_count, 6,
+            "six reversible ops (including the FD-34 ensure-mkdir) invert to six undo ops"
         );
         apply_inverse_plan(&pool, prepared.plan_id, &scope).await;
 
         // Signature AFTER the round trip: byte-identical to the original.
         let after_rollback = tree_signature(&library_root);
+        // The per-job set-aside folder is gone too (the ensure-mkdir inverse
+        // `rmdir-empty` removed it once the item was restored): no residue.
+        assert!(
+            !set_aside_root.join(job_id.to_string()).exists(),
+            "the per-job set-aside folder is removed by the ensure-mkdir inverse"
+        );
         assert_eq!(
             original, after_rollback,
             "the library tree must be byte-identical after the round trip"
+        );
+    }
+
+    /// Undo of an undo (redo), by design: applying an inverse plan exports its own
+    /// real reversible undo file, so `rollback_prepare` on THAT manifest re-applies
+    /// the original change. Also pins the set-aside interaction documented on
+    /// `rollback_prepare`: the redo re-sets-aside the item under the ORIGINAL apply's
+    /// per-job folder (a literal path carried through the inverse plans), not a fresh
+    /// folder for the redo's own job id.
+    #[tokio::test]
+    async fn undo_of_an_undo_redoes_the_change() {
+        let db = TempDir::new().expect("db dir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let work = TempDir::new().expect("work dir");
+        let library_root = work.path().join("library");
+        let set_aside_root = work.path().join("Set Aside");
+        std::fs::create_dir_all(&library_root).expect("library");
+        let specs = build_fixture(&library_root, &set_aside_root);
+        let scope = ApplyScope {
+            library_root: library_root.to_string_lossy().to_string(),
+            set_aside_root: set_aside_root.to_string_lossy().to_string(),
+        };
+        let (scan_id, ruleset_id) = seed_scan_and_ruleset(&pool, &scope.library_root).await;
+        let plan_id = persist_forward_plan(&pool, scan_id, ruleset_id, &specs).await;
+
+        let original = tree_signature(&library_root);
+
+        // Forward apply (job 1) + its undo file.
+        let reports1 = TempDir::new().expect("reports1");
+        let (job1, applied1) = apply_for_real(&pool, plan_id, &scope).await;
+        let m1 = export_after_apply(
+            &pool,
+            reports1.path(),
+            ApplyMode::Real,
+            job1,
+            plan_id,
+            &applied1,
+        )
+        .await
+        .expect("export forward undo file")
+        .manifest_id;
+        let after_forward = tree_signature(&library_root);
+
+        // Undo (job 2) + its own undo file. Restores the original.
+        let undo = rollback_prepare(&pool, m1, NOW).await.expect("undo");
+        let reports2 = TempDir::new().expect("reports2");
+        let m2 = approve_apply_export(&pool, undo.plan_id, &scope, reports2.path()).await;
+        assert_eq!(
+            original,
+            tree_signature(&library_root),
+            "the undo restores the original tree"
+        );
+
+        // Redo = undo of the undo. It re-sets-aside dup under the ORIGINAL job's
+        // per-job folder (literal path carried through), not a fresh one.
+        let redo = rollback_prepare(&pool, m2, NOW).await.expect("redo");
+        let redo_ops = get_plan_ops(&pool, redo.plan_id).await.expect("redo ops");
+        let requarantine = redo_ops
+            .iter()
+            .find(|o| o.kind == "move" && o.target_path.replace('\\', "/").ends_with("/dup.m4b"))
+            .expect("the redo re-sets-aside dup");
+        let original_job_dir = set_aside_root
+            .join(job1.to_string())
+            .to_string_lossy()
+            .replace('\\', "/");
+        assert!(
+            requarantine
+                .target_path
+                .replace('\\', "/")
+                .starts_with(&original_job_dir),
+            "redo re-sets-aside under the ORIGINAL job's folder ({original_job_dir}), got {}",
+            requarantine.target_path
+        );
+
+        apply_inverse_plan(&pool, redo.plan_id, &scope).await;
+        assert_eq!(
+            after_forward,
+            tree_signature(&library_root),
+            "the redo re-applies the forward change"
         );
     }
 
@@ -950,11 +1106,15 @@ mod tests {
         assert_eq!(err.code(), "rollback-not-reversible");
     }
 
-    /// AC-16: a partial undo of a contiguous journal tail restores exactly the tail
-    /// (here the set-aside and the empty-folder removal), reconstructs the set-aside
-    /// location from the job id + placeholder, and leaves the earlier ops applied.
+    /// AC-16 + the P4 substitution fix: a partial undo of the contiguous set-aside
+    /// tail (the FD-34 ensure-mkdir at seq 4 and the set-aside move at seq 5)
+    /// restores the item AND removes the per-job set-aside folder, leaving earlier
+    /// ops applied. The ensure-mkdir carries the `{job-id}` placeholder in a `mkdir`
+    /// target: the journal-tail reconstruction must substitute it exactly like the
+    /// executor does (target-based, not kind-gated), or its inverse `rmdir-empty`
+    /// would point at a literal `{job-id}` path and silently no-op.
     #[tokio::test]
-    async fn partial_undo_of_a_contiguous_tail_restores_only_the_tail() {
+    async fn partial_undo_of_the_set_aside_tail_reconstructs_the_ensure_mkdir() {
         let db = TempDir::new().expect("db dir");
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
@@ -969,42 +1129,67 @@ mod tests {
         let (scan_id, ruleset_id) = seed_scan_and_ruleset(&pool, &scope.library_root).await;
         let plan_id = persist_forward_plan(&pool, scan_id, ruleset_id, &specs).await;
 
-        // Signature of the tail's inputs BEFORE apply (the two things the tail undo
-        // must restore: the Duplicates copy and the empty shell).
-        let dup_before = std::fs::read(library_root.join("Duplicates").join("extra.m4b")).unwrap();
+        let dup_before = std::fs::read(library_root.join("dup.m4b")).unwrap();
 
         let (job_id, applied) = apply_for_real(&pool, plan_id, &scope).await;
+        let per_job_dir = set_aside_root.join(job_id.to_string());
+        assert!(
+            per_job_dir.exists(),
+            "the per-job set-aside folder was created by the forward apply"
+        );
 
-        // The last two forward ops (seq 3 quarantine, seq 4 rmdir-empty) are the
-        // contiguous tail. Their op ids:
+        // The set-aside group is the contiguous tail (seq 4 ensure-mkdir + seq 5
+        // set-aside move).
         let tail_op_ids: Vec<i64> = applied
             .iter()
-            .filter(|o| o.seq >= 3)
+            .filter(|o| o.seq >= 4)
             .map(|o| o.id)
             .collect();
         assert_eq!(tail_op_ids.len(), 2);
 
         let prepared = rollback_prepare_partial(&pool, &RealFs::new(), job_id, &tail_op_ids, NOW)
             .await
-            .expect("partial undo of the tail");
+            .expect("partial undo of the set-aside tail");
         assert_eq!(prepared.op_count, 2, "only the two tail ops invert");
+
+        // The inverse `rmdir-empty` (from the ensure-mkdir) must point at the REAL
+        // substituted per-job folder, never the literal `{job-id}` placeholder.
+        let inverse_ops = get_plan_ops(&pool, prepared.plan_id).await.expect("ops");
+        let rmdir = inverse_ops
+            .iter()
+            .find(|o| o.kind == "rmdir-empty")
+            .expect("the ensure-mkdir inverts to an rmdir-empty");
+        assert!(
+            !rmdir.source_path.contains(QUARANTINE_JOB_PLACEHOLDER),
+            "the inverse target must not carry the literal placeholder: {}",
+            rmdir.source_path
+        );
+        assert_eq!(
+            rmdir.source_path.replace('\\', "/"),
+            per_job_dir.to_string_lossy().replace('\\', "/"),
+            "the inverse rmdir targets the real substituted per-job folder"
+        );
+
         apply_inverse_plan(&pool, prepared.plan_id, &scope).await;
 
-        // The tail was undone: the set-aside copy is back, and the empty folder is
-        // recreated.
-        assert!(
-            library_root.join("EmptyShell").exists(),
-            "the empty folder is restored"
-        );
-        let dup_after = std::fs::read(library_root.join("Duplicates").join("extra.m4b"))
+        // The tail was undone: the set-aside copy is back at its original location,
+        // and the per-job set-aside folder is removed (the ensure-mkdir inverse).
+        let dup_after = std::fs::read(library_root.join("dup.m4b"))
             .expect("the set-aside copy is restored to its original location");
         assert_eq!(dup_before, dup_after, "restored byte-for-byte");
+        assert!(
+            !per_job_dir.exists(),
+            "the per-job set-aside folder is removed by the ensure-mkdir inverse"
+        );
 
-        // The EARLIER ops stay applied: the loose book stays in its author folder,
-        // and the messy folder stays renamed.
+        // The EARLIER ops stay applied.
         assert!(
             library_root.join("Author").join("loose-book.m4b").exists(),
             "an earlier op is left applied"
+        );
+        assert!(
+            !library_root.join("EmptyShell").exists(),
+            "the earlier empty-folder removal stays applied"
         );
         assert!(
             library_root.join("Messy Name").exists()
@@ -1032,10 +1217,10 @@ mod tests {
         let plan_id = persist_forward_plan(&pool, scan_id, ruleset_id, &specs).await;
         let (job_id, applied) = apply_for_real(&pool, plan_id, &scope).await;
 
-        // Select seq 0 and seq 4 - a gap in the middle, not a suffix.
+        // Select seq 0 and seq 5 - a gap in the middle, not a suffix.
         let non_contiguous: Vec<i64> = applied
             .iter()
-            .filter(|o| o.seq == 0 || o.seq == 4)
+            .filter(|o| o.seq == 0 || o.seq == 5)
             .map(|o| o.id)
             .collect();
         assert_eq!(non_contiguous.len(), 2);
@@ -1045,10 +1230,10 @@ mod tests {
             .expect_err("a non-contiguous selection is refused");
         assert_eq!(err.code(), "rollback-selection-not-contiguous");
 
-        // A tail that is not the LATEST run (seq 0..3, missing seq 4) is also refused.
+        // A tail that is not the LATEST run (seq 0..4, missing seq 5) is also refused.
         let not_latest: Vec<i64> = applied
             .iter()
-            .filter(|o| o.seq <= 3)
+            .filter(|o| o.seq <= 4)
             .map(|o| o.id)
             .collect();
         let err2 = rollback_prepare_partial(&pool, &RealFs::new(), job_id, &not_latest, NOW)
@@ -1125,6 +1310,19 @@ mod tests {
         let library_root = PathBuf::from(std::env::var("ABO_RT_LIB").expect("ABO_RT_LIB"));
         let set_aside_root = PathBuf::from(std::env::var("ABO_RT_ASIDE").expect("ABO_RT_ASIDE"));
         assert!(library_root.is_dir(), "ABO_RT_LIB must be a copied folder");
+        // Loud refusal BEFORE any write: this harness applies REAL changes, so it
+        // must never point at the real library. Guard against the literal real
+        // library path (case- and separator-insensitive); the harness is manual, so
+        // a hard-coded guard is sufficient.
+        let lib_norm = library_root
+            .to_string_lossy()
+            .to_lowercase()
+            .replace('\\', "/");
+        assert!(
+            !lib_norm.contains("books - audio"),
+            "refusing to run: ABO_RT_LIB must be a COPY outside the real library \
+             (E:\\Books - Audio), never the library itself"
+        );
 
         let db = TempDir::new().expect("db dir");
         let (pool, _) = open_db(db.path()).await.expect("open_db");
