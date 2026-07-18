@@ -325,6 +325,23 @@ pub enum AppError {
     /// refused this way, because undo is the remedy for such a difference.
     #[error("further tidy-ups are paused until the after-the-fact check is acknowledged")]
     TidyingBlocked,
+
+    // ---- Apply control family (v0.5.0 Phase 7: F-608 pause/resume) ----
+    //
+    // The plain refusals for the pause/resume controls (AC-24). Pausing needs a
+    // tidy-up actually in progress; resuming needs one that is currently paused.
+    // A Stop of a not-running tidy-up is a harmless no-op (the `job_stop` command
+    // returns a boolean, like the scan Stop), so it has no error variant here.
+    /// `job_pause` was asked to pause, but no tidy-up is in progress to pause
+    /// (it already finished, was never started, or the id is unknown).
+    #[error("there is no tidy-up in progress to pause")]
+    NothingToPause,
+
+    /// `job_resume` was asked to resume, but the tidy-up is not paused (it is
+    /// running normally, already finished, or the id is unknown), so there is
+    /// nothing to resume.
+    #[error("there is no paused tidy-up to resume")]
+    NothingToResume,
 }
 
 impl AppError {
@@ -378,6 +395,9 @@ impl AppError {
             AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
             // Post-apply check family
             AppError::TidyingBlocked => "tidying-blocked",
+            // Apply control family
+            AppError::NothingToPause => "nothing-to-pause",
+            AppError::NothingToResume => "nothing-to-resume",
         }
     }
 
@@ -562,6 +582,15 @@ impl AppError {
                  before more changes are made. Review the after-the-fact check and acknowledge it; \
                  undoing the last tidy-up is still available. Once acknowledged, tidy-ups resume."
             }
+            // Apply control family
+            AppError::NothingToPause => {
+                "There is no tidy-up in progress to pause. Start a tidy-up first; you can pause it \
+                 between books while it runs."
+            }
+            AppError::NothingToResume => {
+                "This tidy-up is not paused, so there is nothing to resume. If a tidy-up is \
+                 paused, use Resume to continue it between books."
+            }
         }
     }
 }
@@ -668,6 +697,8 @@ mod tests {
                 detail: "undo file could not be read".into(),
             },
             AppError::TidyingBlocked,
+            AppError::NothingToPause,
+            AppError::NothingToResume,
         ]
     }
 

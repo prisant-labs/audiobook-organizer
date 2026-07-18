@@ -62,6 +62,8 @@ use crate::error::AppError;
 use crate::plan::builder::QUARANTINE_JOB_PLACEHOLDER;
 
 pub use journal::{Journal, MemJournal, SqliteJournal};
+// `ExecControl`/`NoControl` are defined in this module (below); no re-export
+// needed here, but keep them reachable under `abo_core::exec::*` for the shell.
 pub use manifest::{
     build_manifest, get_manifest_row, Manifest, ManifestError, ManifestOp, ManifestRow, ReverseOp,
     MANIFEST_JSON_BASENAME, MANIFEST_SCHEMA_VERSION,
@@ -208,8 +210,9 @@ pub struct ExecHalt {
 
 /// The result of an executor walk: how many approved operations completed, the
 /// journal rows produced (an in-memory echo of what was flushed through the
-/// [`Journal`] seam), and an optional [`ExecHalt`] if an operation failed and
-/// stopped the walk. On a clean walk `halt` is `None` and there is an
+/// [`Journal`] seam), an optional [`ExecHalt`] if an operation failed and
+/// stopped the walk, and whether a cooperative Stop ended the walk early. On a
+/// clean walk `halt` is `None`, `stopped` is `false`, and there is an
 /// [`JournalPhase::Intent`] + [`JournalPhase::Done`] row per op; on a halt the
 /// last op contributes an `intent` + `failed` pair, so EVERY intent still has a
 /// terminal row (the journal-consistency invariant AC-6/AC-7 assert). The only
@@ -217,13 +220,22 @@ pub struct ExecHalt {
 /// an operation failure is a normal, journaled outcome reported via `halt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecOutcome {
-    /// The number of approved operations that completed (before any halt).
+    /// The number of approved operations that completed (before any halt or Stop).
     pub ops_walked: usize,
     /// The journal rows produced this walk (intent + done per completed op, and an
     /// intent + failed pair for a halting op).
     pub journal: Vec<JournalEntry>,
     /// `Some` when an operation failed and halted the walk; `None` on a clean walk.
     pub halt: Option<ExecHalt>,
+    /// `true` when a cooperative Stop ([`ExecControl::stop_requested`], F-104/FD-02)
+    /// ended the walk at an operation boundary BEFORE all approved ops ran. A stop
+    /// is NOT a failure: `halt` stays `None`, the executed prefix is fully journaled
+    /// (every intent has a terminal), and the walk simply did not start the
+    /// remaining ops. Distinct from a completed walk (`stopped == false`, all
+    /// approved ops ran) so the caller can mark the job `stopped` rather than
+    /// `completed` and skip the undo-file export (AC-26; the journal is the record
+    /// of the partial forward job).
+    pub stopped: bool,
 }
 
 /// The apply-time scope (FD-34): the library root and the resolved set-aside
@@ -287,6 +299,61 @@ fn norm_scope_path(p: &str) -> String {
         s.pop();
     }
     s
+}
+
+/// Cooperative pause/Stop the executor consults at operation BOUNDARIES only
+/// (F-608 pause, F-104 Stop, FD-02). This is a seam exactly like [`Journal`] and
+/// [`Vfs`]: the executor calls it, and the caller supplies the implementation.
+///
+/// # Why a caller-supplied seam (core purity)
+///
+/// `abo-core` carries NO async runtime of its own (tokio is a TEST-only
+/// dependency; the library's async fns run on whatever runtime the shell
+/// provides). Pausing means the walk must PARK - suspend at a boundary until
+/// resumed or stopped - and parking needs a runtime primitive (a notify/waker).
+/// So the wait itself lives in the caller's implementation ([`pause_barrier`]),
+/// and the executor merely `await`s it at each boundary. The production shell
+/// backs it with a `tokio::sync::Notify`; the inert [`NoControl`] never parks.
+///
+/// [`pause_barrier`]: ExecControl::pause_barrier
+///
+/// # Boundary-only, journal-invisible (AC-24, AC-25)
+///
+/// Both hooks are consulted ONLY between operations, before the next op's intent
+/// row is written - never mid-operation - so an in-progress filesystem change is
+/// never interrupted (AC-24). Neither a pause nor a Stop writes a journal row of
+/// its own: a paused-then-resumed walk performs the exact same intent/act/terminal
+/// sequence it would uninterrupted (AC-25), and a Stop simply does not start the
+/// remaining ops (AC-26).
+///
+/// The `async_fn_in_trait` lint is allowed here for the same reason as [`Journal`]:
+/// the trait is crate-internal, and the one place its future crosses a thread
+/// boundary (the spawned apply task) monomorphizes it with a concrete, `Send`
+/// implementor.
+#[allow(async_fn_in_trait)]
+pub trait ExecControl {
+    /// Whether a cooperative Stop has been requested. Checked at each operation
+    /// boundary; once `true`, the walk ends after the last completed op with
+    /// [`ExecOutcome::stopped`] set (F-104 semantics).
+    fn stop_requested(&self) -> bool;
+
+    /// Park while paused, returning as soon as the walk is resumed or a Stop is
+    /// requested. Returns IMMEDIATELY when not paused (the common case), so an
+    /// un-paused walk pays nothing. The caller's runtime provides the actual
+    /// waiting; the core never sleeps or polls a clock.
+    async fn pause_barrier(&self);
+}
+
+/// The inert [`ExecControl`]: never stops, never pauses. Used by
+/// [`Executor::run`] and every call site that does not offer pause/Stop, so their
+/// behavior is byte-for-byte unchanged.
+pub struct NoControl;
+
+impl ExecControl for NoControl {
+    fn stop_requested(&self) -> bool {
+        false
+    }
+    async fn pause_barrier(&self) {}
 }
 
 /// The executor: consumes an approved plan and a [`Vfs`], and walks the plan's
@@ -378,11 +445,58 @@ impl<V: Vfs> Executor<V> {
     /// the walk writes a [`JournalPhase::Failed`] terminal row (so the intent still
     /// has a terminal) and STOPS, reporting the halt in [`ExecOutcome::halt`]
     /// (halting a group halts the run, since one approved plan is one job).
+    ///
+    /// Runs with no cooperative pause/Stop ([`NoControl`]); the pause/Stop-aware
+    /// entry point is [`run_with_control`](Self::run_with_control).
     pub async fn run<J: Journal>(&self, journal: &J, now: &str) -> Result<ExecOutcome, AppError> {
+        self.run_with_control(journal, now, &NoControl).await
+    }
+
+    /// The pause/Stop-aware walk (F-608, F-104, FD-02). Identical to [`run`] except
+    /// it consults `control` at each operation BOUNDARY - before the next op's
+    /// intent row is written:
+    ///
+    /// 1. If a Stop was requested ([`ExecControl::stop_requested`]), the walk ends
+    ///    HERE with [`ExecOutcome::stopped`] set: the executed prefix is fully
+    ///    journaled (every intent already has a terminal), no journal row is written
+    ///    for the un-started op, and `halt` stays `None` (a Stop is not a failure).
+    /// 2. Otherwise it parks while paused ([`ExecControl::pause_barrier`]) and, on
+    ///    waking, re-checks the Stop flag (a Stop requested DURING a pause ends the
+    ///    walk cleanly at this same boundary).
+    ///
+    /// The checks are strictly BETWEEN operations, so an in-progress
+    /// intent/act/terminal sequence is never interrupted (AC-24), and neither a
+    /// pause nor a Stop writes any journal row of its own - a paused-then-resumed
+    /// walk produces the exact same journal sequence as an uninterrupted run over
+    /// the same inputs (AC-25).
+    ///
+    /// [`run`]: Self::run
+    pub async fn run_with_control<J: Journal, C: ExecControl>(
+        &self,
+        journal: &J,
+        now: &str,
+        control: &C,
+    ) -> Result<ExecOutcome, AppError> {
         let mut produced = Vec::new();
         let mut ops_walked = 0usize;
         let mut halt: Option<ExecHalt> = None;
+        let mut stopped = false;
         for op in self.ops.iter().filter(|o| o.approval == APPROVED) {
+            // Operation boundary (F-608/F-104): consult pause/Stop BEFORE writing
+            // the next intent, so nothing mid-op is ever interrupted and no journal
+            // row is written for an op a Stop prevents from starting.
+            if control.stop_requested() {
+                stopped = true;
+                break;
+            }
+            // Park while paused; returns immediately when not paused. A Stop
+            // requested during the pause wakes the barrier and is caught by the
+            // re-check below, ending the walk at this boundary.
+            control.pause_barrier().await;
+            if control.stop_requested() {
+                stopped = true;
+                break;
+            }
             let intent = JournalEntry {
                 job_id: self.job_id,
                 seq: op.seq,
@@ -451,6 +565,7 @@ impl<V: Vfs> Executor<V> {
             ops_walked,
             journal: produced,
             halt,
+            stopped,
         })
     }
 
@@ -1980,6 +2095,336 @@ mod tests {
         assert_eq!(
             total, in_cross_volume,
             "every remove_file is confined to cross_volume_move (the verified delete-source path, AC-23)"
+        );
+    }
+
+    // ---- Phase 7: cooperative pause/resume + Stop (AC-24, AC-25, AC-26) ----
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    const P7_NOW: &str = "2026-07-18T00:00:00Z";
+
+    /// A test [`ExecControl`] mirroring the shell's production control: a paused
+    /// flag, a stop flag, and a `Notify` the executor parks on. tokio is a test
+    /// dependency of this crate, so a runtime-backed control is fine HERE - the
+    /// LIBRARY never carries one (that is exactly why [`ExecControl`] is a
+    /// caller-supplied seam).
+    struct TestControl {
+        paused: AtomicBool,
+        stop: AtomicBool,
+        notify: Notify,
+    }
+
+    impl TestControl {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                paused: AtomicBool::new(false),
+                stop: AtomicBool::new(false),
+                notify: Notify::new(),
+            })
+        }
+        fn pause(&self) {
+            self.paused.store(true, Ordering::SeqCst);
+        }
+        fn resume(&self) {
+            self.paused.store(false, Ordering::SeqCst);
+            // notify_one buffers a permit if the executor has not parked yet, so a
+            // resume that races ahead of the park is never lost (single waiter).
+            self.notify.notify_one();
+        }
+        fn request_stop(&self) {
+            self.stop.store(true, Ordering::SeqCst);
+            self.notify.notify_one();
+        }
+    }
+
+    impl ExecControl for TestControl {
+        fn stop_requested(&self) -> bool {
+            self.stop.load(Ordering::SeqCst)
+        }
+        async fn pause_barrier(&self) {
+            while self.paused.load(Ordering::SeqCst) && !self.stop.load(Ordering::SeqCst) {
+                self.notify.notified().await;
+            }
+        }
+    }
+
+    /// What a [`HookJournal`] does when its done-count reaches the trigger.
+    #[derive(Clone, Copy)]
+    enum HookAction {
+        Pause,
+        Stop,
+    }
+
+    /// A [`Journal`] wrapping a real [`MemJournal`] that, on the Nth `done` write,
+    /// pokes a [`TestControl`] (pause or stop). This drives pause/stop at a precise
+    /// operation boundary WITHOUT any wall-clock timing: the trigger fires from
+    /// inside the walk's own journal write, so "pause after K ops" is deterministic.
+    struct HookJournal {
+        inner: MemJournal,
+        control: Arc<TestControl>,
+        trigger_after: usize,
+        action: HookAction,
+        done_count: StdMutex<usize>,
+    }
+
+    impl HookJournal {
+        fn new(control: Arc<TestControl>, trigger_after: usize, action: HookAction) -> Self {
+            Self {
+                inner: MemJournal::new(),
+                control,
+                trigger_after,
+                action,
+                done_count: StdMutex::new(0),
+            }
+        }
+        fn entries(&self) -> Vec<JournalEntry> {
+            self.inner.entries()
+        }
+    }
+
+    impl Journal for HookJournal {
+        async fn write_intent(&self, entry: &JournalEntry) -> Result<(), AppError> {
+            self.inner.write_intent(entry).await
+        }
+        async fn write_done(&self, entry: &JournalEntry) -> Result<(), AppError> {
+            self.inner.write_done(entry).await?;
+            let mut c = self.done_count.lock().expect("hook counter");
+            *c += 1;
+            if *c == self.trigger_after {
+                match self.action {
+                    HookAction::Pause => self.control.pause(),
+                    HookAction::Stop => self.control.request_stop(),
+                }
+            }
+            Ok(())
+        }
+        async fn write_failed(&self, entry: &JournalEntry) -> Result<(), AppError> {
+            self.inner.write_failed(entry).await
+        }
+    }
+
+    /// Three approved same-volume moves under `E:/lib`, with a MemFs seed that
+    /// makes every one succeed. Returns (seed, ops, [target paths], [source paths]).
+    fn three_move_ops() -> (Vec<SeedEntry>, Vec<PlanOpRow>) {
+        let seed = vec![
+            dir("E:/lib"),
+            file("E:/lib/A.m4b", 11),
+            file("E:/lib/B.m4b", 22),
+            file("E:/lib/C.m4b", 33),
+        ];
+        let ops = vec![
+            approved_op(1, 0, "E:/lib/A.m4b", "E:/lib/Auth/A.m4b"),
+            approved_op(2, 1, "E:/lib/B.m4b", "E:/lib/Auth/B.m4b"),
+            approved_op(3, 2, "E:/lib/C.m4b", "E:/lib/Auth/C.m4b"),
+        ];
+        (seed, ops)
+    }
+
+    /// A journal sequence with the `at` phase-timing field blanked - the SAME
+    /// exclusion the AC-3 dry-run==Real equality test documents (`at` and the mode
+    /// marker are the only permitted differences; the mode marker is not a row
+    /// field). Used to compare a paused/resumed run against an uninterrupted one
+    /// byte-for-byte on every OTHER field.
+    fn blank_at(journal: &[JournalEntry]) -> Vec<JournalEntry> {
+        journal
+            .iter()
+            .cloned()
+            .map(|mut e| {
+                e.at = String::new();
+                e
+            })
+            .collect()
+    }
+
+    /// AC-25 (the journal-equality gate): pausing mid-run and resuming leaves the
+    /// journal byte-identical to an uninterrupted run over the same inputs. Pause is
+    /// metadata-only, NEVER a journal event (FD-02): a perturbation here is an
+    /// invariant failure. The pause genuinely PARKS the walk (proven: while paused
+    /// the walk cannot complete, and exactly the pre-pause prefix is journaled),
+    /// then resume drives it to the identical end state.
+    #[tokio::test]
+    async fn pausing_and_resuming_matches_an_uninterrupted_run_journal_for_journal() {
+        let (seed, ops) = three_move_ops();
+
+        // Baseline: an uninterrupted run.
+        let base_exec = Executor::new(MemFs::from_seed(&seed), 7, ops.clone());
+        let base_journal = MemJournal::new();
+        let base = base_exec
+            .run(&base_journal, P7_NOW)
+            .await
+            .expect("uninterrupted walk");
+        assert_eq!(base.ops_walked, 3);
+        assert!(!base.stopped && base.halt.is_none());
+
+        // Interrupted: pause AFTER the 2nd op's done row, then resume.
+        let control = TestControl::new();
+        let exec = Executor::new(MemFs::from_seed(&seed), 7, ops.clone());
+        let journal = Arc::new(HookJournal::new(control.clone(), 2, HookAction::Pause));
+
+        let jt = journal.clone();
+        let ct = control.clone();
+        let mut handle =
+            tokio::spawn(async move { exec.run_with_control(&*jt, P7_NOW, &*ct).await });
+
+        // While paused, the walk MUST NOT complete (it is parked at the 3rd
+        // boundary). The timeout is an upper bound on the wait; a parked walk never
+        // resolves it.
+        let parked = tokio::time::timeout(Duration::from_millis(200), &mut handle).await;
+        assert!(parked.is_err(), "a paused walk must not complete");
+        // Exactly the two pre-pause ops are journaled (2 intent + 2 done); the 3rd
+        // op's intent is NOT written (the boundary check precedes the intent flush).
+        assert_eq!(
+            journal.entries().len(),
+            4,
+            "pausing wrote NO journal row of its own"
+        );
+
+        control.resume();
+        let outcome = handle.await.expect("join").expect("resumed walk completes");
+
+        assert!(
+            !outcome.stopped,
+            "a resumed walk completes, it is not stopped"
+        );
+        assert_eq!(outcome.ops_walked, base.ops_walked);
+        // The gate: identical journal sequence (excluding only `at`, per AC-3).
+        assert_eq!(
+            blank_at(&outcome.journal),
+            blank_at(&base.journal),
+            "a paused/resumed journal must equal an uninterrupted one (AC-25)"
+        );
+        // The whole plan ran; the durable journal holds all six rows.
+        assert_eq!(journal.entries().len(), 6);
+    }
+
+    /// AC-24: a pause takes effect BEFORE the next operation - a walk paused before
+    /// the first op does not start any op, then resume runs the whole plan. Proves
+    /// "stop before the next operation and enter a paused state" at the first
+    /// boundary.
+    #[tokio::test]
+    async fn a_pause_before_the_first_op_holds_then_resume_runs_everything() {
+        let (seed, ops) = three_move_ops();
+        let control = TestControl::new();
+        control.pause(); // paused from the very start
+
+        let exec = Executor::new(MemFs::from_seed(&seed), 7, ops);
+        let journal = Arc::new(MemJournal::new());
+        let jt = journal.clone();
+        let ct = control.clone();
+        let mut handle =
+            tokio::spawn(async move { exec.run_with_control(&*jt, P7_NOW, &*ct).await });
+
+        let parked = tokio::time::timeout(Duration::from_millis(200), &mut handle).await;
+        assert!(parked.is_err(), "a walk paused before op 0 does not start");
+        assert_eq!(
+            journal.entries().len(),
+            0,
+            "no operation ran while paused before the first"
+        );
+
+        control.resume();
+        let outcome = handle.await.expect("join").expect("resumed walk");
+        assert!(!outcome.stopped);
+        assert_eq!(outcome.ops_walked, 3, "resume runs the whole plan");
+    }
+
+    /// AC-26: a cooperative Stop at a safe boundary leaves a consistent journal and
+    /// a coherent partial state. Only the pre-Stop prefix ran; every intent has a
+    /// terminal row; there is NO `failed` row (a Stop is not a failure); the outcome
+    /// is flagged `stopped` (distinct from a completed walk) and carries no `halt`.
+    #[tokio::test]
+    async fn a_stop_at_a_boundary_leaves_a_consistent_journaled_prefix() {
+        let (seed, ops) = three_move_ops();
+        let control = TestControl::new();
+        let exec = Executor::new(MemFs::from_seed(&seed), 7, ops);
+        // Stop is requested from inside the 2nd op's done write, so the 3rd op's
+        // boundary check sees it and ends the walk - no wall-clock timing involved.
+        let journal = HookJournal::new(control.clone(), 2, HookAction::Stop);
+
+        let outcome = exec
+            .run_with_control(&journal, P7_NOW, &*control)
+            .await
+            .expect("a stopped walk is not an error");
+
+        assert!(
+            outcome.stopped,
+            "a cooperative Stop flags the outcome stopped"
+        );
+        assert!(outcome.halt.is_none(), "a Stop is not a failure (no halt)");
+        assert_eq!(outcome.ops_walked, 2, "only the pre-Stop prefix ran");
+        assert_eq!(outcome.journal.len(), 4, "2 intent + 2 done, nothing more");
+        assert_journal_consistent(&outcome.journal);
+        assert!(
+            outcome
+                .journal
+                .iter()
+                .all(|e| e.phase != JournalPhase::Failed),
+            "a Stop writes no failed row"
+        );
+
+        // Coherent partial state: the first two moves happened; the third did not,
+        // and its source is untouched.
+        let fs = exec.vfs();
+        assert!(fs.exists(Path::new("E:/lib/Auth/A.m4b")));
+        assert!(fs.exists(Path::new("E:/lib/Auth/B.m4b")));
+        assert!(
+            !fs.exists(Path::new("E:/lib/Auth/C.m4b")),
+            "the op after the Stop never ran"
+        );
+        assert!(
+            fs.exists(Path::new("E:/lib/C.m4b")),
+            "the un-run op's source is left exactly where it was"
+        );
+    }
+
+    /// AC-24 edge (brief step 4): a pause requested DURING the last operation
+    /// resolves cleanly - the last op finishes, the loop ends (there is no next
+    /// boundary to park at), and the walk completes with every op run. The pause is
+    /// a harmless no-op, never a walk that hangs "paused" with nothing left to do.
+    #[tokio::test]
+    async fn a_pause_during_the_last_op_resolves_cleanly() {
+        let (seed, ops) = three_move_ops();
+        let control = TestControl::new();
+        let exec = Executor::new(MemFs::from_seed(&seed), 7, ops);
+        // Pause fires on the 3rd (last) op's done write; there is no 4th boundary.
+        let journal = HookJournal::new(control.clone(), 3, HookAction::Pause);
+
+        let outcome = exec
+            .run_with_control(&journal, P7_NOW, &*control)
+            .await
+            .expect("walk");
+
+        assert!(!outcome.stopped, "a last-op pause is a no-op, not a Stop");
+        assert_eq!(outcome.ops_walked, 3, "every op ran");
+        assert_eq!(outcome.journal.len(), 6);
+        assert_journal_consistent(&outcome.journal);
+    }
+
+    /// A Stop requested before the first op walks nothing and is still coherent:
+    /// stopped, no halt, empty (consistent) journal, no op executed.
+    #[tokio::test]
+    async fn a_stop_before_the_first_op_walks_nothing() {
+        let (seed, ops) = three_move_ops();
+        let control = TestControl::new();
+        control.request_stop();
+        let exec = Executor::new(MemFs::from_seed(&seed), 7, ops);
+        let journal = MemJournal::new();
+
+        let outcome = exec
+            .run_with_control(&journal, P7_NOW, &*control)
+            .await
+            .expect("walk");
+        assert!(outcome.stopped);
+        assert!(outcome.halt.is_none());
+        assert_eq!(outcome.ops_walked, 0);
+        assert!(outcome.journal.is_empty());
+        assert!(
+            exec.vfs().exists(Path::new("E:/lib/A.m4b")),
+            "nothing moved"
         );
     }
 }
