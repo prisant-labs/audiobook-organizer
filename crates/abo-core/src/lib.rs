@@ -77,6 +77,16 @@
 //! the next phase persists. Operation dispatch is a deliberate skeleton this
 //! phase (no mutation); a unit test greps the executor to prove it makes no direct
 //! standard-library filesystem call (AC-1). No `cfg`-gating leaks past `RealFs`.
+//!
+//! v0.5.0 Phase 2 adds the executor's safety spine, plus migration
+//! `0005_journal_and_manifests.sql` (the `journal` and `manifests` tables, which
+//! did not previously exist). `exec::journal` is the append-only journal seam
+//! (`Journal` trait, `SqliteJournal`, `MemJournal`): the walk flushes an `intent`
+//! row BEFORE the filesystem call and a `done`/`failed` row after (journal-before-
+//! act, R-5), and a failed intent flush is a hard stop (`journal-write-failed`).
+//! `exec::manifest` builds and exports the self-contained, reverse-executable undo
+//! file (the user-facing "undo file") and re-emits the F-507 provenance report
+//! reflecting final locations. Neither adds `cfg`-gating or a `tauri` dependency.
 
 pub mod classify;
 pub mod db;

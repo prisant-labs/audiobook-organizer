@@ -160,6 +160,27 @@ pub fn write_html_report(dir: &Path, html: &str) -> io::Result<PathBuf> {
     write_file(dir, crate::plan::report::PLAN_HTML_BASENAME, html)
 }
 
+/// Re-emit ONLY the F-507 provenance report (JSON + Markdown) into `dir`, creating
+/// it if missing, and return the two written paths. Used by the v0.5.0 apply path
+/// to re-emit provenance reflecting the applied (final) locations (AC-12), reusing
+/// the same basenames and one write path as the full plan-report set.
+pub fn write_provenance_report(
+    dir: &Path,
+    provenance: &ProvenanceReport,
+) -> io::Result<(PathBuf, PathBuf)> {
+    let json = write_file(
+        dir,
+        provenance::PROVENANCE_JSON_BASENAME,
+        &provenance.to_json(),
+    )?;
+    let markdown = write_file(
+        dir,
+        provenance::PROVENANCE_MARKDOWN_BASENAME,
+        &provenance.to_markdown(),
+    )?;
+    Ok((json, markdown))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

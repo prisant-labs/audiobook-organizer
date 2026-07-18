@@ -16,7 +16,8 @@
 //! a real job to hang the journal and lock off.
 
 use abo_core::db::plans::{get_plan, get_plan_ops};
-use abo_core::exec::{ApplyMode, Executor, MemFs, SeedEntry};
+use abo_core::exec::manifest::export_after_apply;
+use abo_core::exec::{ApplyMode, Executor, MemFs, SeedEntry, SqliteJournal};
 use abo_core::ipc::{AppError, ApplyReport, EntryRow};
 use abo_core::scan::walk::now_iso8601_utc;
 use sqlx::SqlitePool;
@@ -79,9 +80,31 @@ pub async fn apply_start(
     let started_at = now_iso8601_utc();
     let job_id = insert_apply_job(pool, &started_at).await?;
 
-    // Walk the approved plan through the executor against MemFs (dry run).
+    // Walk the approved plan through the executor against MemFs (dry run),
+    // journal-before-act: each op's intent row is flushed through the SqliteJournal
+    // and committed BEFORE the (skeleton) filesystem call, then a done row after
+    // (F-602, AC-10). A failed intent flush is a hard stop (journal-write-failed,
+    // AC-13); on any walk error the job is marked failed and the error surfaced.
+    let journal = SqliteJournal::new(pool.clone());
     let executor = Executor::new(memfs, job_id, ops);
-    let outcome = executor.run(&started_at);
+    let outcome = match executor.run(&journal, &started_at).await {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            mark_apply_job_failed(pool, job_id, e.code()).await;
+            return Err(e);
+        }
+    };
+
+    // On completion export the self-contained undo file (manifest) to the Reports
+    // folder and re-emit the F-507 provenance report reflecting final locations
+    // (AC-11, AC-12). The Reports subfolder is the same deterministic per-plan one
+    // the plan exports use, so a family sees the undo file beside the plan.
+    let app_data_dir = abo_core::paths::app_data_dir();
+    let reports_dir = abo_core::reports::plan_export_dir(&app_data_dir, plan_id, &plan.created_at);
+    if let Err(e) = export_after_apply(pool, &reports_dir, job_id, plan_id, executor.ops()).await {
+        mark_apply_job_failed(pool, job_id, e.code()).await;
+        return Err(e);
+    }
 
     mark_apply_job_completed(pool, job_id).await;
 
@@ -132,6 +155,24 @@ async fn mark_apply_job_completed(pool: &SqlitePool, job_id: i64) {
         .await;
     if let Err(e) = result {
         log::warn!("failed to mark apply job {job_id} completed: {e}");
+    }
+}
+
+/// Best-effort: mark the apply `jobs` row `failed`, recording the stable error
+/// `code`. Runs on the walk-or-export error path; the real error is already being
+/// returned to the caller, so a secondary DB error here is only logged.
+async fn mark_apply_job_failed(pool: &SqlitePool, job_id: i64, error_code: &str) {
+    let finished_at = now_iso8601_utc();
+    let result = sqlx::query(
+        "UPDATE jobs SET state = 'failed', finished_at = ?, error_code = ? WHERE id = ?",
+    )
+    .bind(&finished_at)
+    .bind(error_code)
+    .bind(job_id)
+    .execute(pool)
+    .await;
+    if let Err(e) = result {
+        log::warn!("failed to mark apply job {job_id} failed: {e}");
     }
 }
 
