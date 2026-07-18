@@ -157,6 +157,19 @@ pub fn run() {
     export_bindings("../src/lib/bindings.ts").expect("failed to export typescript bindings");
 
     tauri::Builder::default()
+        // Single-instance (F-601, AC-8): registered FIRST per the plugin's contract.
+        // A SECOND launch runs this callback in the FIRST (existing) instance and
+        // then exits, so only ONE process ever holds the apply single-writer lock -
+        // this is what makes that lock process-wide and makes the startup reclaim of
+        // a stranded apply row sound (a fresh launch implies no other live instance).
+        // Focus and un-minimize the existing window so a relaunch brings the app
+        // forward. No event is emitted, so no new JS/IPC surface is added.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(build_log_plugin())
         // Folder selection ONLY (F-909, FD-29): the OS folder picker so the user
         // can choose the library root. This is the one capability the security

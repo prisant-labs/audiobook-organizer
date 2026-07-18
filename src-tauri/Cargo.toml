@@ -67,6 +67,15 @@ log = "0.4"
 # capability added is `dialog:allow-open` (capabilities/default.json).
 tauri-plugin-dialog = { workspace = true }
 
+# tauri-plugin-single-instance (v0.5.0 P3, AC-8): single desktop instance, so a
+# second launch focuses the existing window and exits instead of a second process
+# opening the same database. This is what makes the apply single-writer lock
+# process-wide (the startup reclaim of a stranded apply row is sound only because a
+# fresh launch implies no other live instance). Backend-only Rust wiring in `run()`;
+# `default-features = false` keeps the optional deep-link/semver features OFF, so
+# there is NO JS guest package and NO added capability (baseline stays at 7).
+tauri-plugin-single-instance = { workspace = true }
+
 # Test-only. `tests/job_terminal.rs` exercises `run_job_to_terminal` (the spawned
 # scan job's terminal-state wrapper) directly: it opens a migrated pool via
 # abo-core, inserts a running `jobs` row, drives the wrapper with a deliberately

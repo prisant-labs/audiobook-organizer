@@ -19,6 +19,25 @@
 //! process restart. Both exist by design: the atomic is the common in-session case,
 //! the `running` row is the cross-restart backstop.
 //!
+//! # Process-wideness
+//!
+//! Single-writer is process-WIDE only in combination with three cooperating
+//! mechanisms, all of which must hold:
+//! 1. the durable `running` apply row acquired under `BEGIN IMMEDIATE` (this file),
+//!    which serializes two acquirers and survives a restart;
+//! 2. single-instance enforcement in the shell (`tauri-plugin-single-instance`), so
+//!    a second app launch focuses the existing window and exits rather than starting
+//!    a second process that could hold its own lock;
+//! 3. this startup reclaim, which is sound ONLY because (2) guarantees a fresh
+//!    launch implies no other live app instance - so a `running` apply row at
+//!    startup can only be a crash remnant, never a lock a sibling process still
+//!    holds.
+//!
+//! Residual, out of the threat model: a NON-app process (or a hand-run SQLite tool)
+//! opening the same database directly bypasses all three; nothing in a desktop app
+//! can defend against another program editing its files, and the D-10 human-only
+//! gates cover the "run a real apply" decision itself.
+//!
 //! This EXTENDS the existing apply `jobs` lifecycle (kind `apply`, states
 //! `running`/`completed`/`failed`) rather than adding a parallel lock table: the
 //! same row that records an apply run is its lock. (Scan jobs use the same `jobs`
