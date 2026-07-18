@@ -241,6 +241,50 @@ pub enum AppError {
     /// `detail` is the developer-facing SQLite cause.
     #[error("could not record what was about to happen before making a change: {detail}")]
     JournalWriteFailed { detail: String },
+
+    // ---- Apply execution family (v0.5.0 Phase 3: F-601 executor core) ----
+    //
+    // These are the apply-TIME hazards the executor surfaces while it is moving
+    // files: the single-writer lock, the TOCTOU re-checks, the never-overwrite
+    // guard, the cross-volume verify, and the access-denied retry. Distinct from
+    // the plan-family codes (which are plan-BUILD-time verdicts): `snapshot-stale`
+    // is a source missing at validation time, `collision-on-disk` a target present
+    // at validation time, whereas `source-vanished` / `target-appeared` are the
+    // SAME hazards re-checked immediately before each real operation (AC-6).
+    /// A second apply was started while one is already running. The single-writer
+    /// lock (a running apply `jobs` row plus an in-process guard, AC-8) refuses the
+    /// second start immediately so two apply runs never touch the library at once.
+    #[error("a tidy-up is already running")]
+    JobAlreadyRunning,
+
+    /// A cross-volume move copied the file, then the copy's size did not match the
+    /// original, so the change was stopped and the original left untouched (AC-5).
+    /// The copy+verify+delete order means the source is always still there when
+    /// this fires; the (unverified) copy is removed so nothing partial is left.
+    #[error("a copied file did not match the original, so the change was stopped: {path}")]
+    CopyVerifyMismatch { path: String },
+
+    /// A source recorded in the plan was gone when the executor re-checked it just
+    /// before acting (AC-6): the library changed under the plan. The group is
+    /// halted with the journal left consistent (every started op has a terminal
+    /// row). Distinct from [`SnapshotStale`](AppError::SnapshotStale), the
+    /// plan-build-time counterpart.
+    #[error("something to change is no longer where it was: {path}")]
+    SourceVanished { path: String },
+
+    /// Something already existed where a change would land when the executor
+    /// re-checked just before acting (AC-6), or appeared mid-apply from another
+    /// program (AC-7). Never-overwrite: the item is left untouched and the group is
+    /// halted. Distinct from [`CollisionOnDisk`](AppError::CollisionOnDisk), the
+    /// plan-build-time counterpart.
+    #[error("something already exists where a change would go, so it was left alone: {path}")]
+    TargetAppeared { path: String },
+
+    /// Windows denied access to an item during an apply. The executor retried once,
+    /// then stopped the current group rather than looping (AC-9). Nothing was
+    /// forced; the run can be tried again once access is granted.
+    #[error("Windows denied access to an item while making changes: {path}")]
+    AccessDenied { path: String },
 }
 
 impl AppError {
@@ -282,6 +326,12 @@ impl AppError {
             AppError::ApplyNotSupported => "apply-not-supported",
             AppError::ApplyFailed { .. } => "apply-failed",
             AppError::JournalWriteFailed { .. } => "journal-write-failed",
+            // Apply execution family
+            AppError::JobAlreadyRunning => "job-already-running",
+            AppError::CopyVerifyMismatch { .. } => "copy-verify-mismatch",
+            AppError::SourceVanished { .. } => "source-vanished",
+            AppError::TargetAppeared { .. } => "target-appeared",
+            AppError::AccessDenied { .. } => "access-denied",
         }
     }
 
@@ -421,6 +471,31 @@ impl AppError {
                  disk may be full or the app data folder may be on a synced location (OneDrive); \
                  free space or move the app data out of the synced folder."
             }
+            // Apply execution family
+            AppError::JobAlreadyRunning => {
+                "A tidy-up is already in progress. Wait for it to finish, then start the next one. \
+                 Only one tidy-up runs at a time so your library is never changed twice at once."
+            }
+            AppError::CopyVerifyMismatch { .. } => {
+                "A file had to be copied to another drive, but the copy did not match the \
+                 original, so the change was stopped and your original file was left exactly where \
+                 it was. Check the target drive for errors, then try the tidy-up again."
+            }
+            AppError::SourceVanished { .. } => {
+                "A file or folder this tidy-up was going to change is no longer where it was, so \
+                 the tidy-up stopped safely. Scan your library again to refresh it, then review \
+                 and run the tidy-up once more."
+            }
+            AppError::TargetAppeared { .. } => {
+                "Something already exists where a change was going to land, so it was left alone \
+                 and the tidy-up stopped without overwriting anything. Scan your library again to \
+                 refresh it, then review and run the tidy-up once more."
+            }
+            AppError::AccessDenied { .. } => {
+                "Windows would not let the app change an item, even after a second try, so the \
+                 tidy-up stopped there. Close any program that may be using that file or folder, \
+                 or grant the app permission to it, then try the tidy-up again."
+            }
         }
     }
 }
@@ -507,6 +582,19 @@ mod tests {
             },
             AppError::JournalWriteFailed {
                 detail: "database is locked".into(),
+            },
+            AppError::JobAlreadyRunning,
+            AppError::CopyVerifyMismatch {
+                path: r"F:\Books\Author\Title\book.m4b".into(),
+            },
+            AppError::SourceVanished {
+                path: r"E:\Books\Gone.m4b".into(),
+            },
+            AppError::TargetAppeared {
+                path: r"E:\Books\Author\Title".into(),
+            },
+            AppError::AccessDenied {
+                path: r"E:\Books\locked\book.m4b".into(),
             },
         ]
     }
