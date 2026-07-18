@@ -12,7 +12,12 @@ import reactRefresh from "eslint-plugin-react-refresh";
 // the frontend is the only lint surface.
 export default tseslint.config(
   {
-    ignores: ["dist", "src-tauri", "node_modules"],
+    // Build outputs and non-frontend trees are not lint surfaces. `target` is the
+    // workspace Rust/Tauri build directory at the repo root; a release build lands
+    // generated `tauri-codegen-assets/*.js` there that are not source, so it is
+    // ignored alongside `dist` and `src-tauri` (matching this config's intent that
+    // build outputs are ignored).
+    ignores: ["dist", "src-tauri", "node_modules", "target"],
   },
   {
     files: ["**/*.{ts,tsx}"],
