@@ -275,6 +275,178 @@ fn op_meta_by_id(ops: &[PlanOpRow]) -> HashMap<i64, (String, i64)> {
         .collect()
 }
 
+/// One forward operation to invert, carrying its REAL executed paths (the
+/// `{job-id}` placeholder already substituted). Both entry points build these in
+/// REVERSE seq order (latest forward change first) and hand them to
+/// [`assemble_inverse_ops`].
+struct ForwardOp {
+    kind: String,
+    source: String,
+    target: String,
+    op_group: String,
+    byte_size: i64,
+}
+
+/// Normalize a path for set-aside boundary comparison: backslashes to forward
+/// slashes, lowercased (NTFS), no trailing separator. Mirrors the executor's
+/// scope normalization so "under the set-aside root" means the same thing here.
+fn norm_path(p: &str) -> String {
+    let mut s = p.replace('\\', "/").to_lowercase();
+    while s.len() > 1 && s.ends_with('/') {
+        s.pop();
+    }
+    s
+}
+
+/// Whether `child` is a STRICT descendant of `root` (under it, not equal to it).
+fn is_strict_descendant(child: &str, root: &str) -> bool {
+    let c = norm_path(child);
+    let r = norm_path(root);
+    c != r && c.starts_with(&format!("{r}/"))
+}
+
+/// Whether `child` is AT or under `root`.
+fn is_at_or_under(child: &str, root: &str) -> bool {
+    let c = norm_path(child);
+    let r = norm_path(root);
+    c == r || c.starts_with(&format!("{r}/"))
+}
+
+/// The effective set-aside root for teardown detection. The FD-34 ensure-mkdir is
+/// the ONE op that creates a directory OUTSIDE the library (the per-job folder
+/// `<set_aside_root>\<job-id>\`), so its target's PARENT is the real set-aside root
+/// as it was baked into the substituted paths - which stays correct even if the
+/// `set_aside_root` SETTING changed between apply and undo (the P4 settings race).
+/// Falls back to the resolved `set_aside_root` when no set-aside mkdir is present
+/// (e.g. a plan whose set-aside items were all top-level so no per-job folder op
+/// was needed); a mismatch there degrades safely to no teardown, never a wrong
+/// removal, and the library is restored regardless.
+fn effective_set_aside_root(
+    ordered: &[ForwardOp],
+    library_root: &str,
+    resolved_set_aside_root: &str,
+) -> String {
+    ordered
+        .iter()
+        .filter(|o| {
+            o.kind == "mkdir" && !o.target.is_empty() && !is_at_or_under(&o.target, library_root)
+        })
+        .find_map(|o| {
+            Path::new(&o.target)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+        })
+        .unwrap_or_else(|| resolved_set_aside_root.to_string())
+}
+
+/// Collect `leaf_dir` and every ancestor directory that is a strict descendant of
+/// `set_aside_root` into `out` (stopping at the set-aside root itself, which
+/// pre-exists and is never torn down). Used to derive the per-job folder and the
+/// executor's mkdir-first intermediate directories (which have no forward plan op)
+/// so the inverse plan can drain them.
+fn collect_set_aside_dirs(leaf_dir: &str, set_aside_root: &str, out: &mut HashSet<String>) {
+    for anc in Path::new(leaf_dir).ancestors() {
+        if anc.as_os_str().is_empty() {
+            break;
+        }
+        let s = anc.to_string_lossy().to_string();
+        if is_strict_descendant(&s, set_aside_root) {
+            out.insert(s);
+        } else {
+            break;
+        }
+    }
+}
+
+/// Assemble the full inverse operation list from the forward ops being undone
+/// (already in reverse-seq order), plus the set of set-aside directories the
+/// inverse plan must additionally drain.
+///
+/// # Ordering (the safety-critical part)
+///
+/// 1. **All library restorations first**, in reverse-seq order: moves-back
+///    (including set-aside items moving back INTO the library), library folder
+///    recreations, and library folder removals. These fully restore the library
+///    tree before anything in the set-aside area is touched.
+/// 2. **Set-aside directory teardown last**: `rmdir-empty` of the per-job folder
+///    AND the executor's mkdir-first intermediate directories (derived from the
+///    set-aside ops' real targets, since they have no forward plan op), ordered
+///    DEEPEST-FIRST so a child is removed before its parent, with the per-job
+///    folder naturally last (shallowest).
+///
+/// Why teardown is last: every removal is empty-only (it never deletes content and
+/// halts safely if a foreign file appeared under the set-aside root). Placing the
+/// whole teardown AFTER every library restoration means a teardown halt can never
+/// strand a library restoration - the library is already whole. A set-aside op's
+/// own inverse (the item moving back into the library) is a library restoration and
+/// so runs before the teardown, which is exactly what leaves the set-aside dirs
+/// empty and removable. The FD-34 ensure-mkdir is NOT inverted directly; its per-job
+/// folder is covered by the synthesized teardown so it is deduped with the
+/// intermediates.
+///
+/// The set-aside boundary is derived via [`effective_set_aside_root`] (from the
+/// per-job folder's own mkdir when present), so teardown stays correct even if the
+/// `set_aside_root` setting changed after the apply.
+fn assemble_inverse_ops(
+    ordered: &[ForwardOp],
+    library_root: &str,
+    resolved_set_aside_root: &str,
+) -> Result<(Vec<InverseOp>, HashSet<String>), AppError> {
+    let set_aside_root = effective_set_aside_root(ordered, library_root, resolved_set_aside_root);
+    let mut restorations: Vec<InverseOp> = Vec::new();
+    let mut teardown_dirs: HashSet<String> = HashSet::new();
+    // The campaign group the synthesized teardown ops render under (the set-aside
+    // group), so an undo plan's cards stay coherent. Falls back if no set-aside op.
+    let mut set_aside_group = String::from("dedupe-quarantine");
+
+    for op in ordered {
+        let target_is_set_aside =
+            !op.target.is_empty() && is_strict_descendant(&op.target, &set_aside_root);
+        if op.kind == "mkdir" && target_is_set_aside {
+            // A set-aside directory mkdir (the FD-34 ensure-mkdir): its removal is
+            // the synthesized teardown, so do not invert it directly.
+            set_aside_group = op.op_group.clone();
+            collect_set_aside_dirs(&op.target, &set_aside_root, &mut teardown_dirs);
+            continue;
+        }
+        if op.kind == "quarantine" && target_is_set_aside {
+            set_aside_group = op.op_group.clone();
+            // The item moves back (a library restoration, below); its parent
+            // directory chain under the set-aside root must be drained.
+            if let Some(parent) = Path::new(&op.target).parent() {
+                collect_set_aside_dirs(
+                    &parent.to_string_lossy(),
+                    &set_aside_root,
+                    &mut teardown_dirs,
+                );
+            }
+        }
+        if let Some(inv) = invert(&op.kind, &op.source, &op.target, &op.op_group, op.byte_size)? {
+            restorations.push(inv);
+        }
+    }
+
+    // Teardown ops, deepest-first (child before parent; per-job folder last).
+    let mut dirs: Vec<String> = teardown_dirs.iter().cloned().collect();
+    dirs.sort_by(|a, b| {
+        let da = norm_path(a).matches('/').count();
+        let db = norm_path(b).matches('/').count();
+        db.cmp(&da).then_with(|| norm_path(b).cmp(&norm_path(a)))
+    });
+    let mut all = restorations;
+    for dir in &dirs {
+        all.push(InverseOp {
+            op_group: set_aside_group.clone(),
+            kind: "rmdir-empty",
+            source_path: dir.clone(),
+            target_path: String::new(),
+            byte_size: 0,
+            rationale: "Undo the last tidy-up: remove the now-empty set-aside folder.".to_string(),
+        });
+    }
+    Ok((all, teardown_dirs))
+}
+
 /// Prepare an undo for a COMPLETED apply from its undo file (AC-14).
 ///
 /// Reads the exported undo file (self-contained, real substituted paths), decides
@@ -332,10 +504,15 @@ pub async fn rollback_prepare(
     })?;
     let meta = op_meta_by_id(&plan_ops);
 
-    // 4. The set of paths present on disk after the forward apply: every forward op
+    // 4. Scope: the library root the plan was built over and the resolved set-aside
+    //    root (needed to recognize set-aside targets and derive their teardown).
+    let (scan_id, ruleset_id, library_root) = plan_scope_identity(pool, manifest.plan_id).await?;
+    let set_aside_root = resolve_set_aside_root(pool, &library_root).await;
+
+    // 5. The set of paths present on disk after the forward apply: every forward op
     //    that CREATED a target left that target present (files, set-aside items, and
     //    created directories). This is the validator's existing-paths view.
-    let present: HashSet<String> = manifest
+    let mut present: HashSet<String> = manifest
         .ops
         .iter()
         .filter(|o| {
@@ -345,10 +522,12 @@ pub async fn rollback_prepare(
         .map(|o| o.target_path.clone())
         .collect();
 
-    // 5. Invert in REVERSE seq order (undo the latest forward change first).
+    // 6. Build the forward ops to invert in REVERSE seq order (undo the latest
+    //    change first), then assemble the inverse plan (library restorations first,
+    //    set-aside directory teardown last).
     let mut ordered = manifest.ops.clone();
     ordered.sort_by_key(|o| std::cmp::Reverse(o.seq));
-    let mut inverses = Vec::new();
+    let mut forward: Vec<ForwardOp> = Vec::new();
     for op in &ordered {
         // A manifest op with no matching frozen `plan_ops` row is corrupt state, not
         // a default: refuse loudly rather than inventing an empty group / zero size.
@@ -361,20 +540,20 @@ pub async fn rollback_prepare(
                         op.op_id
                     ),
                 })?;
-        if let Some(inv) = invert(
-            &op.kind,
-            &op.source_path,
-            &op.target_path,
-            &op_group,
+        forward.push(ForwardOp {
+            kind: op.kind.clone(),
+            source: op.source_path.clone(),
+            target: op.target_path.clone(),
+            op_group,
             byte_size,
-        )? {
-            inverses.push(inv);
-        }
+        });
     }
+    let (inverses, teardown_dirs) = assemble_inverse_ops(&forward, &library_root, &set_aside_root)?;
+    // The synthesized teardown dirs are present on disk too (the executor created
+    // them), so the validator sees the rmdir sources as present, not stale.
+    present.extend(teardown_dirs);
 
-    // 6. Scope + persist through F-404 (AC-14).
-    let (scan_id, ruleset_id, library_root) = plan_scope_identity(pool, manifest.plan_id).await?;
-    let set_aside_root = resolve_set_aside_root(pool, &library_root).await;
+    // 7. Persist through F-404 (AC-14).
     persist_inverse_plan(
         pool,
         scan_id,
@@ -472,14 +651,18 @@ pub async fn rollback_prepare_partial<V: Vfs>(
             })?;
     let by_id: HashMap<i64, PlanOpRow> = plan_ops.into_iter().map(|o| (o.id, o)).collect();
 
-    // 4. Reconstruct each selected op's REAL executed paths, invert them, and build
-    //    the present-on-disk set from the real forward targets. Reverse seq order
-    //    (undo the latest first).
+    // 4. Scope (needed to recognize set-aside targets and derive their teardown).
+    let (scan_id, ruleset_id, library_root) = plan_scope_identity(pool, plan_id).await?;
+    let set_aside_root = resolve_set_aside_root(pool, &library_root).await;
+
+    // 5. Reconstruct each selected op's REAL executed paths (reverse seq order, undo
+    //    the latest first) into forward ops to invert, and build the present-on-disk
+    //    set from the real forward targets.
     let mut ordered: Vec<(i64, i64)> = tail_slice.to_vec();
     ordered.sort_by_key(|(_, seq)| std::cmp::Reverse(*seq));
 
     let job_seg = job_id.to_string();
-    let mut inverses = Vec::new();
+    let mut forward: Vec<ForwardOp> = Vec::new();
     let mut present: HashSet<String> = HashSet::new();
     for (op_id, _seq) in &ordered {
         let op = by_id
@@ -516,19 +699,23 @@ pub async fn rollback_prepare_partial<V: Vfs>(
         {
             present.insert(real_target.clone());
         }
-        if let Some(inv) = invert(
-            &op.kind,
-            &op.source_path,
-            &real_target,
-            &op.op_group,
-            op.byte_size,
-        )? {
-            inverses.push(inv);
-        }
+        forward.push(ForwardOp {
+            kind: op.kind.clone(),
+            source: op.source_path.clone(),
+            target: real_target,
+            op_group: op.op_group.clone(),
+            byte_size: op.byte_size,
+        });
     }
 
-    let (scan_id, ruleset_id, library_root) = plan_scope_identity(pool, plan_id).await?;
-    let set_aside_root = resolve_set_aside_root(pool, &library_root).await;
+    // 6. Assemble (library restorations first, set-aside teardown last) and persist.
+    //    The synthesized teardown ops exist ONLY in this inverse plan, not in the
+    //    forward job's journal; a partial tail's teardown covers exactly the set-aside
+    //    dirs of the SELECTED set-aside ops. A set-aside dir still holding a
+    //    non-selected item's file is not empty, so its `rmdir-empty` halts SAFELY
+    //    after the library restorations complete (never deleting the other item).
+    let (inverses, teardown_dirs) = assemble_inverse_ops(&forward, &library_root, &set_aside_root)?;
+    present.extend(teardown_dirs);
     persist_inverse_plan(
         pool,
         scan_id,
@@ -706,10 +893,14 @@ mod tests {
         (job_id, applied)
     }
 
-    /// The five-op fixture that exercises every reversible kind: mkdir, move,
-    /// rename (a folder), quarantine (set-aside, with the {job-id} placeholder),
-    /// and rmdir-empty. Builds the on-disk tree under `library_root` and returns
-    /// the forward specs.
+    /// The six-op fixture that exercises every reversible kind AND the hard case:
+    /// mkdir, an EARLY move (seq 1, before the ensure-mkdir), a folder rename,
+    /// rmdir-empty, the FD-34 ensure-mkdir (seq 4), and a set-aside of a NESTED item
+    /// (seq 5) whose relative path has three intermediate directories. The executor
+    /// creates those intermediates via mkdir-first with no forward plan op, so the
+    /// inverse plan must synthesize their teardown; and because the early move is
+    /// undone AFTER the set-aside move in reverse-seq order, a teardown that halted
+    /// mid-sequence would strand it - the ordering guarantees it cannot.
     fn build_fixture(library_root: &Path, set_aside_root: &Path) -> Vec<Spec> {
         // Original tree.
         write_file(&library_root.join("loose-book.m4b"), b"loose book bytes");
@@ -717,19 +908,23 @@ mod tests {
             &library_root.join("Messy Name [128k]").join("track.m4b"),
             b"messy track bytes",
         );
-        // A ROOT-LEVEL duplicate (relative path is just its name), so the set-aside
-        // target sits DIRECTLY under the per-job folder with no intermediate subdir.
-        // That keeps the per-job set-aside folder empty after the item is restored,
-        // so the FD-34 ensure-mkdir's inverse `rmdir-empty` succeeds and the round
-        // trip leaves no set-aside residue.
-        write_file(&library_root.join("dup.m4b"), b"duplicate copy bytes");
+        // A NESTED duplicate: its library-relative path is `Genre/Series/Book/dup.m4b`,
+        // so the set-aside target has three intermediate directories under the per-job
+        // folder that only the executor's mkdir-first creates (no forward op).
+        write_file(
+            &library_root
+                .join("Genre")
+                .join("Series")
+                .join("Book")
+                .join("dup.m4b"),
+            b"duplicate copy bytes",
+        );
         std::fs::create_dir_all(library_root.join("EmptyShell")).expect("empty shell");
 
         let lib = library_root.to_string_lossy().to_string();
         let aside = set_aside_root.to_string_lossy().to_string();
         // The set-aside group is emitted LAST (its ensure-mkdir at seq 4 and the
-        // set-aside move at seq 5), so a contiguous tail can undo exactly that group
-        // and exercise ensure-mkdir inversion on the journal-tail path.
+        // set-aside move at seq 5), so a contiguous tail can undo exactly that group.
         vec![
             Spec {
                 op_group: "loose-root-books",
@@ -738,6 +933,8 @@ mod tests {
                 target: format!("{lib}/Author"),
                 byte_size: 0,
             },
+            // An EARLY move (seq 1, lower than the ensure-mkdir at seq 4): its inverse
+            // runs late in the undo, so it is the op a stranding teardown halt would skip.
             Spec {
                 op_group: "loose-root-books",
                 kind: "move",
@@ -773,8 +970,8 @@ mod tests {
             Spec {
                 op_group: "dedupe-quarantine",
                 kind: "quarantine",
-                source: format!("{lib}/dup.m4b"),
-                target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}/dup.m4b"),
+                source: format!("{lib}/Genre/Series/Book/dup.m4b"),
+                target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}/Genre/Series/Book/dup.m4b"),
                 byte_size: 20,
             },
         ]
@@ -884,19 +1081,23 @@ mod tests {
         let prepared = rollback_prepare(&pool, export.manifest_id, NOW)
             .await
             .expect("rollback_prepare");
+        // Five library restorations (move-back of the nested set-aside item, the
+        // empty-folder recreate, the rename-back, the early move-back, the author-dir
+        // removal) plus four set-aside teardown rmdir-empty ops (Book, Series, Genre,
+        // per-job folder), deepest-first.
         assert_eq!(
-            prepared.op_count, 6,
-            "six reversible ops (including the FD-34 ensure-mkdir) invert to six undo ops"
+            prepared.op_count, 9,
+            "5 library restorations + 4 set-aside teardown ops"
         );
         apply_inverse_plan(&pool, prepared.plan_id, &scope).await;
 
         // Signature AFTER the round trip: byte-identical to the original.
         let after_rollback = tree_signature(&library_root);
-        // The per-job set-aside folder is gone too (the ensure-mkdir inverse
-        // `rmdir-empty` removed it once the item was restored): no residue.
+        // The whole per-job set-aside tree is gone (deepest-first teardown drained the
+        // executor's mkdir-first intermediates too): no residue.
         assert!(
             !set_aside_root.join(job_id.to_string()).exists(),
-            "the per-job set-aside folder is removed by the ensure-mkdir inverse"
+            "the per-job set-aside folder (and its intermediates) are fully removed"
         );
         assert_eq!(
             original, after_rollback,
@@ -1129,7 +1330,12 @@ mod tests {
         let (scan_id, ruleset_id) = seed_scan_and_ruleset(&pool, &scope.library_root).await;
         let plan_id = persist_forward_plan(&pool, scan_id, ruleset_id, &specs).await;
 
-        let dup_before = std::fs::read(library_root.join("dup.m4b")).unwrap();
+        let dup_path = library_root
+            .join("Genre")
+            .join("Series")
+            .join("Book")
+            .join("dup.m4b");
+        let dup_before = std::fs::read(&dup_path).unwrap();
 
         let (job_id, applied) = apply_for_real(&pool, plan_id, &scope).await;
         let per_job_dir = set_aside_root.join(job_id.to_string());
@@ -1150,36 +1356,54 @@ mod tests {
         let prepared = rollback_prepare_partial(&pool, &RealFs::new(), job_id, &tail_op_ids, NOW)
             .await
             .expect("partial undo of the set-aside tail");
-        assert_eq!(prepared.op_count, 2, "only the two tail ops invert");
-
-        // The inverse `rmdir-empty` (from the ensure-mkdir) must point at the REAL
-        // substituted per-job folder, never the literal `{job-id}` placeholder.
-        let inverse_ops = get_plan_ops(&pool, prepared.plan_id).await.expect("ops");
-        let rmdir = inverse_ops
-            .iter()
-            .find(|o| o.kind == "rmdir-empty")
-            .expect("the ensure-mkdir inverts to an rmdir-empty");
-        assert!(
-            !rmdir.source_path.contains(QUARANTINE_JOB_PLACEHOLDER),
-            "the inverse target must not carry the literal placeholder: {}",
-            rmdir.source_path
-        );
+        // One move-back plus four teardown rmdir-empty ops (Book, Series, Genre,
+        // per-job folder) synthesized from the nested set-aside target.
         assert_eq!(
-            rmdir.source_path.replace('\\', "/"),
+            prepared.op_count, 5,
+            "1 move-back + 4 set-aside teardown ops"
+        );
+
+        // Every set-aside teardown op targets a REAL substituted path, never the
+        // literal `{job-id}` placeholder, and they are ordered deepest-first with the
+        // per-job folder last among them.
+        let inverse_ops = get_plan_ops(&pool, prepared.plan_id).await.expect("ops");
+        let rmdirs: Vec<&PlanOpRow> = inverse_ops
+            .iter()
+            .filter(|o| o.kind == "rmdir-empty")
+            .collect();
+        assert_eq!(rmdirs.len(), 4, "four set-aside dirs are torn down");
+        for r in &rmdirs {
+            assert!(
+                !r.source_path.contains(QUARANTINE_JOB_PLACEHOLDER),
+                "no teardown op may carry the literal placeholder: {}",
+                r.source_path
+            );
+        }
+        assert_eq!(
+            rmdirs.last().unwrap().source_path.replace('\\', "/"),
             per_job_dir.to_string_lossy().replace('\\', "/"),
-            "the inverse rmdir targets the real substituted per-job folder"
+            "the per-job folder is torn down last (shallowest)"
+        );
+        // Deepest-first: each rmdir is at least as deep as the next.
+        let depths: Vec<usize> = rmdirs
+            .iter()
+            .map(|r| r.source_path.replace('\\', "/").matches('/').count())
+            .collect();
+        assert!(
+            depths.windows(2).all(|w| w[0] >= w[1]),
+            "teardown ops are ordered deepest-first: {depths:?}"
         );
 
         apply_inverse_plan(&pool, prepared.plan_id, &scope).await;
 
-        // The tail was undone: the set-aside copy is back at its original location,
-        // and the per-job set-aside folder is removed (the ensure-mkdir inverse).
-        let dup_after = std::fs::read(library_root.join("dup.m4b"))
+        // The tail was undone: the set-aside copy is back at its original nested
+        // location, and the WHOLE per-job set-aside tree is removed (no residue).
+        let dup_after = std::fs::read(&dup_path)
             .expect("the set-aside copy is restored to its original location");
         assert_eq!(dup_before, dup_after, "restored byte-for-byte");
         assert!(
             !per_job_dir.exists(),
-            "the per-job set-aside folder is removed by the ensure-mkdir inverse"
+            "the per-job set-aside folder and its intermediates are fully removed"
         );
 
         // The EARLIER ops stay applied.
@@ -1240,6 +1464,88 @@ mod tests {
             .await
             .expect_err("a run that is not the latest is refused");
         assert_eq!(err2.code(), "rollback-selection-not-contiguous");
+    }
+
+    /// Safety of the teardown-last ordering: if a FOREIGN file appears under the
+    /// set-aside root, the set-aside teardown `rmdir-empty` halts (never deleting
+    /// the foreign file) - but because teardown runs AFTER every library
+    /// restoration, the library is ALREADY fully restored (byte-identical), so the
+    /// halt strands nothing. This is exactly the failure mode the reposition fixes:
+    /// a teardown halt can no longer skip the early-seq library move-backs.
+    #[tokio::test]
+    async fn a_foreign_file_halts_teardown_without_stranding_restorations() {
+        let db = TempDir::new().expect("db dir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let work = TempDir::new().expect("work dir");
+        let library_root = work.path().join("library");
+        let set_aside_root = work.path().join("Set Aside");
+        std::fs::create_dir_all(&library_root).expect("library");
+        let specs = build_fixture(&library_root, &set_aside_root);
+        let scope = ApplyScope {
+            library_root: library_root.to_string_lossy().to_string(),
+            set_aside_root: set_aside_root.to_string_lossy().to_string(),
+        };
+
+        let original = tree_signature(&library_root);
+        let (scan_id, ruleset_id) = seed_scan_and_ruleset(&pool, &scope.library_root).await;
+        let plan_id = persist_forward_plan(&pool, scan_id, ruleset_id, &specs).await;
+        let (job_id, applied) = apply_for_real(&pool, plan_id, &scope).await;
+
+        // A foreign file appears in the deepest set-aside folder (beside the set-aside
+        // item), so the deepest teardown `rmdir-empty` cannot complete.
+        let deepest = set_aside_root
+            .join(job_id.to_string())
+            .join("Genre")
+            .join("Series")
+            .join("Book");
+        write_file(&deepest.join("foreign.txt"), b"not ours");
+
+        let reports = TempDir::new().expect("reports");
+        let export = export_after_apply(
+            &pool,
+            reports.path(),
+            ApplyMode::Real,
+            job_id,
+            plan_id,
+            &applied,
+        )
+        .await
+        .expect("export");
+        let prepared = rollback_prepare(&pool, export.manifest_id, NOW)
+            .await
+            .expect("rollback_prepare");
+
+        // Apply the inverse plan directly so we can observe the halt (the shared
+        // helper asserts no halt).
+        for row in get_plan_ops(&pool, prepared.plan_id).await.unwrap() {
+            set_approval(&pool, row.id, "approved", NOW).await.unwrap();
+        }
+        let inv_ops = get_plan_ops(&pool, prepared.plan_id).await.unwrap();
+        let undo_job = acquire_apply_job(&pool, ApplyMode::Real, NOW)
+            .await
+            .expect("undo job");
+        let executor = Executor::with_scope(RealFs::new(), undo_job, inv_ops, scope.clone());
+        let journal = SqliteJournal::new(pool.clone());
+        let outcome = executor.run(&journal, NOW).await.expect("walk");
+
+        // The teardown halted on the non-empty (foreign-file-holding) folder, and it
+        // never deleted the foreign file.
+        let halt = outcome
+            .halt
+            .expect("the teardown halts on the foreign file");
+        assert_eq!(halt.code, "target-appeared");
+        assert!(
+            deepest.join("foreign.txt").exists(),
+            "the foreign file is untouched"
+        );
+
+        // Decisively: the LIBRARY is fully restored (byte-identical), because every
+        // library restoration ran before the teardown - the halt stranded nothing.
+        assert_eq!(
+            original,
+            tree_signature(&library_root),
+            "the library is fully restored despite the teardown halt"
+        );
     }
 
     /// A memory-safe tree signature for AC-17's large real files: every entry's
@@ -1353,28 +1659,35 @@ mod tests {
             target: shelf.clone(),
             byte_size: 0,
         }];
-        // Move every book but the last onto the shelf; set aside the last book.
-        for (i, book) in books.iter().enumerate() {
+        // Move every book but the last onto the shelf.
+        for book in &books[..books.len() - 1] {
             let name = book.file_name().unwrap().to_string_lossy().to_string();
-            let src = book.to_string_lossy().to_string();
-            if i + 1 < books.len() {
-                specs.push(Spec {
-                    op_group: "loose-root-books",
-                    kind: "move",
-                    source: src,
-                    target: format!("{shelf}/{name}"),
-                    byte_size: 0,
-                });
-            } else {
-                specs.push(Spec {
-                    op_group: "dedupe-quarantine",
-                    kind: "quarantine",
-                    source: src,
-                    target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}/{name}"),
-                    byte_size: 0,
-                });
-            }
+            specs.push(Spec {
+                op_group: "loose-root-books",
+                kind: "move",
+                source: book.to_string_lossy().to_string(),
+                target: format!("{shelf}/{name}"),
+                byte_size: 0,
+            });
         }
+        // The FD-34 per-job set-aside folder (ensure-mkdir), then set the last book
+        // aside under it - so the undo exercises the real set-aside teardown.
+        specs.push(Spec {
+            op_group: "dedupe-quarantine",
+            kind: "mkdir",
+            source: String::new(),
+            target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}"),
+            byte_size: 0,
+        });
+        let last = books.last().unwrap();
+        let last_name = last.file_name().unwrap().to_string_lossy().to_string();
+        specs.push(Spec {
+            op_group: "dedupe-quarantine",
+            kind: "quarantine",
+            source: last.to_string_lossy().to_string(),
+            target: format!("{aside}/{QUARANTINE_JOB_PLACEHOLDER}/{last_name}"),
+            byte_size: 0,
+        });
 
         let original = tree_stream_signature(&library_root);
 
@@ -1406,16 +1719,23 @@ mod tests {
 
         let after_rollback = tree_stream_signature(&library_root);
         let identical = original == after_rollback;
+        // The per-job set-aside folder is fully drained by the teardown (no residue).
+        let per_job_drained = !set_aside_root.join(job_id.to_string()).exists();
         println!(
-            "AC-17 ROUND-TRIP lib={lib} books={} forward_ops={} undo_ops={} BYTE_IDENTICAL={}",
+            "AC-17 ROUND-TRIP lib={lib} books={} forward_ops={} undo_ops={} BYTE_IDENTICAL={} SET_ASIDE_DRAINED={}",
             books.len(),
             applied.len(),
             prepared.op_count,
-            if identical { "yes" } else { "no" }
+            if identical { "yes" } else { "no" },
+            if per_job_drained { "yes" } else { "no" }
         );
         assert!(
             identical,
             "the copied tree must be byte-identical after the round trip"
+        );
+        assert!(
+            per_job_drained,
+            "the per-job set-aside folder must be torn down (no residue)"
         );
     }
 }
