@@ -216,6 +216,41 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: true,
     tone: "danger",
   },
+
+  // -- Making changes for real (v0.5.0 executor: safety-first, never overwrite) --
+  "job-already-running": {
+    sentence: "A tidy-up is already in progress.",
+    nextStep: "Wait for it to finish, then start the next one. Only one tidy-up runs at a time.",
+    retryable: false,
+    tone: "warn",
+  },
+  "source-vanished": {
+    sentence: "Something this tidy-up was going to change is no longer where it was.",
+    nextStep: "Scan your library again to refresh it, then review and run the tidy-up once more.",
+    retryable: true,
+    tone: "warn",
+  },
+  "target-appeared": {
+    sentence: "Something already exists where a change would go, so it was left alone.",
+    nextStep:
+      "Nothing was overwritten. Scan your library again, then review and run the tidy-up once more.",
+    retryable: true,
+    tone: "warn",
+  },
+  "copy-verify-mismatch": {
+    sentence: "A file copied to another drive didn't match the original, so the change was stopped.",
+    nextStep:
+      "Your original file is safe and untouched. Check the other drive for errors, then try the tidy-up again.",
+    retryable: true,
+    tone: "danger",
+  },
+  "access-denied": {
+    sentence: "Windows wouldn't let the app change an item, even after a second try.",
+    nextStep:
+      "Close any program using that file or folder, or give the app permission to it, then try again.",
+    retryable: true,
+    tone: "danger",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-
