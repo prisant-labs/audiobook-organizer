@@ -623,6 +623,16 @@ pub struct ApplyReport {
     pub dry_run: bool,
     /// How many approved operations the executor walked.
     pub ops_walked: i64,
+    /// How many of the walked operations the after-the-fact check (F-604, AC-18)
+    /// confirmed: target exists, size matches the snapshot, source gone.
+    pub verified_ops: i64,
+    /// How many walked operations the after-the-fact check found a difference on
+    /// (a move journaled as done that reality contradicts). Zero on a clean apply.
+    pub discrepancy_count: i64,
+    /// Whether this apply raised an unacknowledged discrepancy block (AC-20). When
+    /// true, further FORWARD tidy-ups are paused until it is acknowledged; undo is
+    /// never blocked.
+    pub blocked: bool,
 }
 
 /// The result of preparing an undo (v0.5.0 Phase 5, F-604), returned by the
@@ -638,6 +648,32 @@ pub struct RollbackPrepared {
     pub plan_id: i64,
     /// How many undo operations the inverse plan holds.
     pub op_count: i64,
+}
+
+/// The status of one apply `jobs` row plus its after-the-fact check (F-604),
+/// returned by `job_status` and `acknowledge_check`. This is what the F-904
+/// activity surface (P8) reads to render the done state and the
+/// blocked-further-groups state after a verification discrepancy (AC-20, AC-29).
+///
+/// The block state is DURABLE (it survives a restart, living in
+/// `verification_blocks`): a job that raised an unacknowledged discrepancy still
+/// reports `blocks_further_tidying = true` after relaunch, so a blocked library
+/// is never silently forgotten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct JobStatus {
+    /// The `jobs.id` this status is about.
+    pub job_id: i64,
+    /// The job's lifecycle state (`running` | `completed` | `failed` | ...).
+    pub state: String,
+    /// The stable machine error code when the job `failed`, else `None`.
+    pub error_code: Option<String>,
+    /// Whether this job raised an UNACKNOWLEDGED discrepancy block, so further
+    /// FORWARD tidy-ups are paused until it is acknowledged (AC-20). Undo is never
+    /// blocked. Cleared by `acknowledge_check`.
+    pub blocks_further_tidying: bool,
+    /// How many operations the after-the-fact check found a difference on (from
+    /// the block detail). Zero when there is no outstanding block.
+    pub discrepancy_count: i64,
 }
 
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
@@ -778,6 +814,8 @@ mod contract {
         assert_ipc_ready::<ApplyReport>();
         // F-604 rollback as an inverse plan (v0.5.0 Phase 5).
         assert_ipc_ready::<RollbackPrepared>();
+        // F-604 after-the-fact check status (v0.5.0 Phase 6).
+        assert_ipc_ready::<JobStatus>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();

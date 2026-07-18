@@ -274,6 +274,15 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: true,
     tone: "danger",
   },
+
+  // -- After-the-fact check (v0.5.0: paused until a difference is acknowledged) --
+  "tidying-blocked": {
+    sentence: "The last tidy-up's after-the-fact check found a difference that needs a look.",
+    nextStep:
+      "Review the after-the-fact check and acknowledge it to continue. Undoing the last tidy-up is still available.",
+    retryable: false,
+    tone: "warn",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-

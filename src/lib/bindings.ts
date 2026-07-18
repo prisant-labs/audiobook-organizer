@@ -282,6 +282,19 @@ export const commands = {
 	 *  against the real filesystem.
 	 */
 	rollbackPreparePartial: (jobId: number, tailOpIds: number[]) => typedError<RollbackPrepared, AppError>(__TAURI_INVOKE("rollback_prepare_partial", { jobId, tailOpIds })),
+	/**
+	 *  The status of one apply job and its after-the-fact check (F-604): lifecycle
+	 *  state, whether it raised an unacknowledged discrepancy blocking further
+	 *  FORWARD tidy-ups (AC-20), and how many differences the check found.
+	 */
+	jobStatus: (jobId: number) => typedError<JobStatus, AppError>(__TAURI_INVOKE("job_status", { jobId })),
+	/**
+	 *  Acknowledge a job's after-the-fact check discrepancy (F-604, AC-20): append an
+	 *  acknowledgement (append-only; the raised record is preserved), clearing the
+	 *  block so forward tidy-ups resume, and return the refreshed status. Undo was
+	 *  never blocked, so this only ever re-opens forward tidying.
+	 */
+	acknowledgeCheck: (jobId: number) => typedError<JobStatus, AppError>(__TAURI_INVOKE("acknowledge_check", { jobId })),
 };
 
 /** Events */
@@ -608,7 +621,15 @@ export type AppError =
  */
 ({ "rollback-prepare-failed": {
 	detail: string,
-} }) & { "access-denied"?: never; "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "copy-verify-mismatch"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "journal-write-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never; "source-vanished"?: never; "target-appeared"?: never };
+} }) & { "access-denied"?: never; "apply-failed"?: never; "collision-in-plan"?: never; "collision-on-disk"?: never; "copy-verify-mismatch"?: never; "cross-volume-space-insufficient"?: never; "csv-parse"?: never; "cycle-detected"?: never; "db-corrupt-recovered"?: never; "db-migration-failed"?: never; "illegal-component"?: never; "journal-write-failed"?: never; "junction-skipped"?: never; "path-too-long"?: never; "permission-denied"?: never; "plan-generation-failed"?: never; "plan-not-found"?: never; "reserved-name"?: never; "root-not-directory"?: never; "root-not-found"?: never; "ruleset-in-use"?: never; "ruleset-invalid"?: never; "ruleset-not-found"?: never; "ruleset-operation-failed"?: never; "scan-failed"?: never; "settings-failed"?: never; "snapshot-stale"?: never; "source-vanished"?: never; "target-appeared"?: never } | 
+/**
+ *  A previous tidy-up's after-the-fact check found a difference between what
+ *  was planned and what is on disk, and that difference has not been
+ *  acknowledged yet. Forward tidying is paused until a human acknowledges it
+ *  (AC-20). This gate is FORWARD-only: preparing or running an UNDO is never
+ *  refused this way, because undo is the remedy for such a difference.
+ */
+"tidying-blocked";
 
 /**
  *  The singleton application settings (F-803), the wire form of the one
@@ -687,6 +708,22 @@ export type ApplyReport = {
 	dry_run: boolean,
 	/**  How many approved operations the executor walked. */
 	ops_walked: number,
+	/**
+	 *  How many of the walked operations the after-the-fact check (F-604, AC-18)
+	 *  confirmed: target exists, size matches the snapshot, source gone.
+	 */
+	verified_ops: number,
+	/**
+	 *  How many walked operations the after-the-fact check found a difference on
+	 *  (a move journaled as done that reality contradicts). Zero on a clean apply.
+	 */
+	discrepancy_count: number,
+	/**
+	 *  Whether this apply raised an unacknowledged discrepancy block (AC-20). When
+	 *  true, further FORWARD tidy-ups are paused until it is acknowledged; undo is
+	 *  never blocked.
+	 */
+	blocked: boolean,
 };
 
 /**
@@ -1033,6 +1070,37 @@ export type JobStarted = {
 	 *  `job:completed` / `job:failed` event back to this call.
 	 */
 	job_id: number,
+};
+
+/**
+ *  The status of one apply `jobs` row plus its after-the-fact check (F-604),
+ *  returned by `job_status` and `acknowledge_check`. This is what the F-904
+ *  activity surface (P8) reads to render the done state and the
+ *  blocked-further-groups state after a verification discrepancy (AC-20, AC-29).
+ * 
+ *  The block state is DURABLE (it survives a restart, living in
+ *  `verification_blocks`): a job that raised an unacknowledged discrepancy still
+ *  reports `blocks_further_tidying = true` after relaunch, so a blocked library
+ *  is never silently forgotten.
+ */
+export type JobStatus = {
+	/**  The `jobs.id` this status is about. */
+	job_id: number,
+	/**  The job's lifecycle state (`running` | `completed` | `failed` | ...). */
+	state: string,
+	/**  The stable machine error code when the job `failed`, else `None`. */
+	error_code: string | null,
+	/**
+	 *  Whether this job raised an UNACKNOWLEDGED discrepancy block, so further
+	 *  FORWARD tidy-ups are paused until it is acknowledged (AC-20). Undo is never
+	 *  blocked. Cleared by `acknowledge_check`.
+	 */
+	blocks_further_tidying: boolean,
+	/**
+	 *  How many operations the after-the-fact check found a difference on (from
+	 *  the block detail). Zero when there is no outstanding block.
+	 */
+	discrepancy_count: number,
 };
 
 /**
