@@ -65,8 +65,14 @@ pub async fn apply_start(
 
     // Seed a MemFs from the plan's snapshot so the dry run walks a memory tree
     // identical to what the plan was built over, and nothing resolves to a real
-    // path (AC-2). MemFs is disk-inert by construction.
-    let entries = abo_core::scan::get_scan_entries(pool, plan.scan_id).await?;
+    // path (AC-2). MemFs is disk-inert by construction. A snapshot-read failure is
+    // mapped to ApplyFailed (not the scan family) so every apply failure carries
+    // consistent apply-family provenance, matching get_plan/get_plan_ops above.
+    let entries = abo_core::scan::get_scan_entries(pool, plan.scan_id)
+        .await
+        .map_err(|e| AppError::ApplyFailed {
+            detail: e.to_string(),
+        })?;
     let memfs = MemFs::from_seed(&seed_from_entries(&entries));
 
     // Record the apply job (kind `apply`), mirroring the scan job lifecycle.
@@ -126,5 +132,66 @@ async fn mark_apply_job_completed(pool: &SqlitePool, job_id: i64) {
         .await;
     if let Err(e) = result {
         log::warn!("failed to mark apply job {job_id} completed: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // The `Vfs` trait must be in scope to call its methods (exists/is_dir/metadata)
+    // on the seeded `MemFs`.
+    use abo_core::exec::Vfs;
+    use std::path::Path;
+
+    /// One `entries`-row shape, the wire form the snapshot read returns.
+    fn entry(path: &str, kind: &str, size: i64) -> EntryRow {
+        EntryRow {
+            id: 0,
+            scan_id: 1,
+            parent_id: None,
+            path: path.to_string(),
+            name: path.rsplit(['/', '\\']).next().unwrap_or(path).to_string(),
+            kind: kind.to_string(),
+            file_class: if kind == "dir" {
+                None
+            } else {
+                Some("audio".to_string())
+            },
+            size,
+            mtime: None,
+            depth: 0,
+        }
+    }
+
+    /// The exact `EntryRow` -> `SeedEntry` -> `MemFs` path `apply_start` uses:
+    /// `kind == "dir"` maps to `is_dir`, and a negative (unstatable) size clamps to
+    /// 0. The seeded `MemFs` then answers from memory with those mapped kinds/sizes.
+    #[test]
+    fn seed_from_entries_maps_kind_and_clamps_size() {
+        let rows = vec![
+            entry(r"E:\lib", "dir", 0),
+            entry(r"E:\lib\Book.m4b", "file", 4096),
+            // An unstatable entry can carry a negative size; it must clamp to 0.
+            entry(r"E:\lib\Bad.m4b", "file", -1),
+        ];
+
+        let seed = seed_from_entries(&rows);
+        assert_eq!(seed.len(), 3);
+        assert!(seed[0].is_dir, "a dir entry maps to is_dir");
+        assert_eq!(seed[0].size, 0);
+        assert!(!seed[1].is_dir, "a file entry maps to !is_dir");
+        assert_eq!(seed[1].size, 4096, "a file's size is preserved");
+        assert_eq!(seed[2].size, 0, "a negative size clamps to 0");
+        assert!(!seed[2].is_dir);
+
+        // The MemFs the seed builds answers from memory with the mapped kinds.
+        let memfs = MemFs::from_seed(&seed);
+        assert!(memfs.is_dir(Path::new(r"E:\lib")));
+        assert!(!memfs.is_dir(Path::new(r"E:\lib\Book.m4b")));
+        assert!(memfs.exists(Path::new(r"E:\lib\Book.m4b")));
+        assert_eq!(
+            memfs.metadata(Path::new(r"E:\lib\Book.m4b")).unwrap().size,
+            4096
+        );
     }
 }
