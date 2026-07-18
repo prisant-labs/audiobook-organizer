@@ -963,12 +963,12 @@ fn push_complete_table(h: &mut String, input: &ReportInput) {
                 base_name(&op.source_path, sep)
             };
             let from = if op.source_path.is_empty() {
-                "&mdash;".to_string()
+                "-".to_string()
             } else {
                 esc(&op.source_path)
             };
             let to = if op.target_path.is_empty() {
-                "&mdash;".to_string()
+                "-".to_string()
             } else {
                 esc(&op.target_path)
             };
