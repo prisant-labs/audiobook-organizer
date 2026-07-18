@@ -163,21 +163,17 @@ pub fn write_html_report(dir: &Path, html: &str) -> io::Result<PathBuf> {
 /// Re-emit ONLY the F-507 provenance report (JSON + Markdown) into `dir`, creating
 /// it if missing, and return the two written paths. Used by the v0.5.0 apply path
 /// to re-emit provenance reflecting the applied (final) locations (AC-12), reusing
-/// the same basenames and one write path as the full plan-report set.
+/// the one write path as the full plan-report set. The basenames are CALLER-CHOSEN
+/// so the post-apply re-emit uses its own `...-after-apply` names and sits beside
+/// the plan-time report rather than overwriting it.
 pub fn write_provenance_report(
     dir: &Path,
     provenance: &ProvenanceReport,
+    json_basename: &str,
+    markdown_basename: &str,
 ) -> io::Result<(PathBuf, PathBuf)> {
-    let json = write_file(
-        dir,
-        provenance::PROVENANCE_JSON_BASENAME,
-        &provenance.to_json(),
-    )?;
-    let markdown = write_file(
-        dir,
-        provenance::PROVENANCE_MARKDOWN_BASENAME,
-        &provenance.to_markdown(),
-    )?;
+    let json = write_file(dir, json_basename, &provenance.to_json())?;
+    let markdown = write_file(dir, markdown_basename, &provenance.to_markdown())?;
     Ok((json, markdown))
 }
 

@@ -73,6 +73,13 @@ CREATE INDEX idx_journal_job_seq ON journal (job_id, seq);
 --   - reversible - 1 when every operation in the manifest can be reversed, else 0
 --                  (FD-10 guarantees reversibility in the current op set; the flag
 --                  is stored so a future non-reversible op is recorded honestly).
+--   - mode       - 'dry-run' or 'real' (the ApplyMode this manifest records). A
+--                  dry-run manifest describes a REHEARSAL: no file actually moved,
+--                  so a future undo/reconciliation flow must never offer to reverse
+--                  it. The same marker rides the undo-file JSON (self-contained
+--                  recovery) and the `jobs.mode` column (DB-side recovery when a
+--                  walk journaled but failed before exporting a manifest), so all
+--                  three agree.
 --
 -- Append-only, same caveat as `journal`: manifest rows are only ever INSERTed.
 CREATE TABLE manifests (
@@ -80,7 +87,22 @@ CREATE TABLE manifests (
     job_id     INTEGER NOT NULL REFERENCES jobs(id),
     plan_id    INTEGER NOT NULL REFERENCES plans(id),
     json_path  TEXT NOT NULL,
-    reversible INTEGER NOT NULL
+    reversible INTEGER NOT NULL,
+    mode       TEXT NOT NULL CHECK (mode IN ('dry-run', 'real'))
 );
 
 CREATE INDEX idx_manifests_job ON manifests (job_id);
+
+-- ## jobs.mode (dry-run vs Real apply marker)
+--
+-- The `jobs` row is the apply lifecycle record and ALWAYS exists, even when the
+-- walk journaled some ops but failed before exporting a manifest. Reconciliation
+-- (v0.6.0 F-606) scanning the journal by job_id therefore needs to know each apply
+-- job's mode from the DB even with no manifest row, so a dry-run rehearsal is never
+-- mistaken for a real apply. This is the DB-side single source of truth for a
+-- job's mode; the manifests row and the undo file carry the same value derived
+-- from it. NULL for non-apply jobs (scan/rollback), which have no dry-run/Real
+-- distinction. AC-3 note: this marker (the "RealFs/MemFs marker") lives on the job,
+-- NOT on the journal rows, so a dry-run and a Real apply produce byte-identical
+-- journal sequences (modulo the `at` phase-timing), exactly as AC-3 requires.
+ALTER TABLE jobs ADD COLUMN mode TEXT;

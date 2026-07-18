@@ -76,9 +76,12 @@ pub async fn apply_start(
         })?;
     let memfs = MemFs::from_seed(&seed_from_entries(&entries));
 
-    // Record the apply job (kind `apply`), mirroring the scan job lifecycle.
+    // Record the apply job (kind `apply`), mirroring the scan job lifecycle. The
+    // job row carries the dry-run/Real `mode` so a DB-side reconciliation reader
+    // can tell a rehearsal from a real apply even with no manifest (this phase mode
+    // is always DryRun, since Real is refused above).
     let started_at = now_iso8601_utc();
-    let job_id = insert_apply_job(pool, &started_at).await?;
+    let job_id = insert_apply_job(pool, mode, &started_at).await?;
 
     // Walk the approved plan through the executor against MemFs (dry run),
     // journal-before-act: each op's intent row is flushed through the SqliteJournal
@@ -101,7 +104,9 @@ pub async fn apply_start(
     // the plan exports use, so a family sees the undo file beside the plan.
     let app_data_dir = abo_core::paths::app_data_dir();
     let reports_dir = abo_core::reports::plan_export_dir(&app_data_dir, plan_id, &plan.created_at);
-    if let Err(e) = export_after_apply(pool, &reports_dir, job_id, plan_id, executor.ops()).await {
+    if let Err(e) =
+        export_after_apply(pool, &reports_dir, mode, job_id, plan_id, executor.ops()).await
+    {
         mark_apply_job_failed(pool, job_id, e.code()).await;
         return Err(e);
     }
@@ -129,17 +134,24 @@ fn seed_from_entries(entries: &[EntryRow]) -> Vec<SeedEntry> {
         .collect()
 }
 
-/// Insert the initial `running` apply `jobs` row and return its assigned id. A
-/// failure here maps to [`AppError::ApplyFailed`]: the apply never started.
-async fn insert_apply_job(pool: &SqlitePool, started_at: &str) -> Result<i64, AppError> {
-    let result =
-        sqlx::query("INSERT INTO jobs (kind, state, started_at) VALUES ('apply', 'running', ?)")
-            .bind(started_at)
-            .execute(pool)
-            .await
-            .map_err(|e| AppError::ApplyFailed {
-                detail: format!("could not record apply job: {e}"),
-            })?;
+/// Insert the initial `running` apply `jobs` row, recording its dry-run/Real
+/// `mode`, and return its assigned id. A failure here maps to
+/// [`AppError::ApplyFailed`]: the apply never started.
+async fn insert_apply_job(
+    pool: &SqlitePool,
+    mode: ApplyMode,
+    started_at: &str,
+) -> Result<i64, AppError> {
+    let result = sqlx::query(
+        "INSERT INTO jobs (kind, state, started_at, mode) VALUES ('apply', 'running', ?, ?)",
+    )
+    .bind(started_at)
+    .bind(mode.as_str())
+    .execute(pool)
+    .await
+    .map_err(|e| AppError::ApplyFailed {
+        detail: format!("could not record apply job: {e}"),
+    })?;
     Ok(result.last_insert_rowid())
 }
 

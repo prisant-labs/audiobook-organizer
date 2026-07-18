@@ -42,6 +42,14 @@ pub const PROVENANCE_JSON_BASENAME: &str = "provenance-report.json";
 /// Stable base name for the Markdown provenance export.
 pub const PROVENANCE_MARKDOWN_BASENAME: &str = "provenance-report.md";
 
+/// Stable base name for the POST-APPLY JSON provenance re-emit (v0.5.0, AC-12):
+/// a distinct name from the plan-time [`PROVENANCE_JSON_BASENAME`] so the two sit
+/// side by side in the same folder and stay separately auditable.
+pub const PROVENANCE_AFTER_APPLY_JSON_BASENAME: &str = "provenance-report-after-apply.json";
+
+/// Stable base name for the post-apply Markdown provenance re-emit.
+pub const PROVENANCE_AFTER_APPLY_MARKDOWN_BASENAME: &str = "provenance-report-after-apply.md";
+
 /// One flattened pack member in the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvenanceMember {

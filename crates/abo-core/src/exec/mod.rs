@@ -79,6 +79,17 @@ pub enum ApplyMode {
     Real,
 }
 
+impl ApplyMode {
+    /// The stable lowercase tag stored in `jobs.mode` / `manifests.mode` and the
+    /// undo file (equals the serde kebab-case tag).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ApplyMode::DryRun => "dry-run",
+            ApplyMode::Real => "real",
+        }
+    }
+}
+
 /// The lifecycle phase of one journal row (see the module-level decision gate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -104,10 +115,17 @@ impl JournalPhase {
 }
 
 /// One journal row (the Phase 1 decision-gate shape): the durable record of one
-/// operation's progress that also becomes the undo manifest (R-5). The next phase
-/// persists these to the `journal` table and flushes the intent row before acting;
-/// this phase defines the type and the skeleton walk produces the intent rows in
-/// memory.
+/// operation's progress that also becomes the undo manifest (R-5). Persisted to the
+/// `journal` table with the intent row flushed before acting (Phase 2).
+///
+/// # AC-3 excluded fields (dry-run == Real journal sequence)
+///
+/// A journal row deliberately carries NO dry-run/Real marker. The two fields AC-3
+/// documents as the only permitted differences between a dry-run and a Real apply's
+/// journal sequence are: (1) `at`, the phase-timing metadata, and (2) the
+/// RealFs/MemFs (mode) marker, which lives on the `jobs.mode` / `manifests.mode`
+/// row and the undo file, NOT here. So the intent/done row sequences are otherwise
+/// byte-identical across modes, exactly as AC-3 requires.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JournalEntry {
     /// The apply `jobs.id` this row belongs to.
@@ -492,6 +510,44 @@ mod tests {
             rows,
             vec!["intent".to_string()],
             "exactly one intent, no terminal"
+        );
+    }
+
+    /// AC-3 excluded-fields documentation: a dry-run and a Real apply produce
+    /// identical journal entry sequences EXCEPT for two documented fields - the
+    /// `at` phase-timing metadata, and the RealFs/MemFs (mode) marker. This test
+    /// pins that the mode marker is NOT a `JournalEntry` field (it lives on the
+    /// `jobs.mode` / `manifests.mode` row and the undo file), so the intent/done
+    /// row sequences are otherwise byte-identical across modes. The excluded-fields
+    /// list is therefore exactly: { `at`, mode marker (external to the row) }.
+    #[test]
+    fn ac3_journal_rows_carry_no_mode_marker() {
+        let entry = JournalEntry {
+            job_id: 1,
+            seq: 0,
+            op_id: 1,
+            phase: JournalPhase::Done,
+            at: "2026-07-18T00:00:00Z".to_string(),
+            detail_json: None,
+        };
+        let value = serde_json::to_value(&entry).expect("serialize");
+        let obj = value.as_object().expect("journal entry is an object");
+        // The ONLY keys are the six JournalEntry fields; no mode / dry_run / backend
+        // marker rides the row.
+        for banned in [
+            "mode", "dry_run", "dry-run", "backend", "real", "memfs", "realfs",
+        ] {
+            assert!(
+                !obj.contains_key(banned),
+                "a journal row must not carry the AC-3 mode marker (found {banned})"
+            );
+        }
+        let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            ["at", "detail_json", "job_id", "op_id", "phase", "seq"],
+            "the journal row shape is exactly the six JournalEntry fields"
         );
     }
 

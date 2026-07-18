@@ -27,7 +27,20 @@ use sqlx::SqlitePool;
 use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
 
-use super::APPROVED;
+use super::{ApplyMode, APPROVED};
+
+/// The serde default for a manifest's `mode` when a legacy undo file carries no
+/// `mode` field. SAFETY CHOICE: an unmarked file defaults to
+/// [`ApplyMode::DryRun`], the conservative reading. A dry-run manifest's
+/// [`Manifest::reverse_ops`] is REFUSED, so treating an ambiguous file as a
+/// rehearsal guarantees a reconciliation flow can never offer to undo moves that
+/// never happened. The opposite default ("real") could turn an unmarked dry-run
+/// file into a false undo of nonexistent moves. No undo file predates this field
+/// (migration 0005 is the first to create manifests), so the default only ever
+/// fires defensively, and it fails safe.
+fn default_mode() -> ApplyMode {
+    ApplyMode::DryRun
+}
 
 /// The manifest JSON schema version (OQ-1). Bumped only on a breaking shape
 /// change; a reader rejects anything higher than the version it was built with.
@@ -67,6 +80,13 @@ pub struct ManifestOp {
 pub struct Manifest {
     /// The schema version (OQ-1); a reader rejects a higher value.
     pub manifest_schema_version: u32,
+    /// Whether this records a `dry-run` rehearsal or a `real` apply. A dry-run
+    /// manifest describes moves that never happened, so [`Manifest::reverse_ops`]
+    /// refuses to produce an undo for it. Serde-defaulted (see [`default_mode`])
+    /// so a future field addition or a legacy file reads safely without a schema
+    /// version bump.
+    #[serde(default = "default_mode")]
+    pub mode: ApplyMode,
     /// The apply `jobs.id` this manifest belongs to.
     pub job_id: i64,
     /// The `plans.id` that was applied.
@@ -106,6 +126,14 @@ pub enum ManifestError {
          this app understands up to version {supported}); update the app to read it"
     )]
     SchemaTooNew { found: u32, supported: u32 },
+    /// The undo file records a dry-run rehearsal, not a real apply: no file
+    /// actually moved, so there is nothing to reverse. Refusing here is the
+    /// safe semantic - a reconciliation flow physically cannot enumerate reverse
+    /// moves for a rehearsal, so it can never move a file based on one.
+    #[error(
+        "this undo file records a dry-run rehearsal, not a real apply; there is nothing to undo"
+    )]
+    DryRunNotReversible,
 }
 
 /// The kinds an undo can reverse. A `move`/`rename` reverses by moving back; a
@@ -125,7 +153,8 @@ fn is_reversible_kind(kind: &str) -> bool {
 /// Build the manifest for a completed apply from the plan's operation rows. Only
 /// APPROVED operations are included - they are exactly the ones the executor
 /// walked, so the undo file reverses precisely what was done and nothing else.
-pub fn build_manifest(job_id: i64, plan_id: i64, ops: &[PlanOpRow]) -> Manifest {
+/// `mode` records whether this was a `dry-run` rehearsal or a `real` apply.
+pub fn build_manifest(mode: ApplyMode, job_id: i64, plan_id: i64, ops: &[PlanOpRow]) -> Manifest {
     let ops: Vec<ManifestOp> = ops
         .iter()
         .filter(|o| o.approval == APPROVED)
@@ -141,6 +170,7 @@ pub fn build_manifest(job_id: i64, plan_id: i64, ops: &[PlanOpRow]) -> Manifest 
     let reversible = ops.iter().all(|o| is_reversible_kind(&o.kind));
     Manifest {
         manifest_schema_version: MANIFEST_SCHEMA_VERSION,
+        mode,
         job_id,
         plan_id,
         reversible,
@@ -181,17 +211,25 @@ impl Manifest {
     /// Reconstruct the reverse operation list from the manifest alone (AC-11): the
     /// ops in REVERSE `seq` order, each moving its target back to its source. No
     /// database read - everything needed is in the manifest.
-    pub fn reverse_ops(&self) -> Vec<ReverseOp> {
+    ///
+    /// REFUSES a dry-run manifest with [`ManifestError::DryRunNotReversible`]: a
+    /// rehearsal moved nothing, so there is nothing to reverse, and refusing means
+    /// no undo flow can ever act on a rehearsal. Only a `real` apply reverses.
+    pub fn reverse_ops(&self) -> Result<Vec<ReverseOp>, ManifestError> {
+        if self.mode == ApplyMode::DryRun {
+            return Err(ManifestError::DryRunNotReversible);
+        }
         let mut ops = self.ops.clone();
         ops.sort_by_key(|o| std::cmp::Reverse(o.seq));
-        ops.into_iter()
+        Ok(ops
+            .into_iter()
             .map(|o| ReverseOp {
                 op_id: o.op_id,
                 kind: o.kind,
                 from: o.target_path,
                 to: o.source_path,
             })
-            .collect()
+            .collect())
     }
 }
 
@@ -207,21 +245,26 @@ pub fn write_manifest_json(dir: &Path, manifest: &Manifest) -> std::io::Result<P
 }
 
 /// Append the manifest's index row to the `manifests` table (migration 0005).
-/// Append-only: this is an `INSERT`, never an update. Returns the new row id.
+/// Append-only: this is an `INSERT`, never an update. `mode` records dry-run vs
+/// real so a DB-side reader distinguishes a rehearsal without opening the file.
+/// Returns the new row id.
 pub async fn insert_manifest_row(
     pool: &SqlitePool,
+    mode: ApplyMode,
     job_id: i64,
     plan_id: i64,
     json_path: &str,
     reversible: bool,
 ) -> Result<i64, AppError> {
     let result = sqlx::query(
-        "INSERT INTO manifests (job_id, plan_id, json_path, reversible) VALUES (?, ?, ?, ?)",
+        "INSERT INTO manifests (job_id, plan_id, json_path, reversible, mode) \
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(job_id)
     .bind(plan_id)
     .bind(json_path)
     .bind(reversible as i64)
+    .bind(mode.as_str())
     .execute(pool)
     .await
     .map_err(|e| AppError::ApplyFailed {
@@ -245,24 +288,31 @@ pub struct ManifestExport {
 
 /// Export a completed apply's artifacts into `reports_dir` (AC-11, AC-12): write
 /// the self-contained undo file, record its index row, and re-emit the F-507
-/// provenance report reflecting the applied (final) locations. `ops` is the FULL
-/// operation list the executor was given: the undo file covers the APPROVED subset
-/// (what was walked), while the provenance re-emit covers every op that carries
-/// provenance so no flattened member is dropped (AC-25 completeness).
+/// provenance report reflecting the applied (final) locations. `mode` marks the
+/// undo file and the index row as a dry-run rehearsal or a real apply.
+///
+/// The re-emit is scoped to the APPROVED (walked) subset of `ops`, matching the
+/// undo file: only the ops that were actually applied have a "final location", so
+/// the post-apply report reflects exactly what moved. It is written under the
+/// [`crate::plan::provenance::PROVENANCE_AFTER_APPLY_JSON_BASENAME`] names so it
+/// sits BESIDE the plan-time provenance report rather than overwriting it, keeping
+/// plan-time vs post-apply separately auditable.
 pub async fn export_after_apply(
     pool: &SqlitePool,
     reports_dir: &Path,
+    mode: ApplyMode,
     job_id: i64,
     plan_id: i64,
     ops: &[PlanOpRow],
 ) -> Result<ManifestExport, AppError> {
-    let manifest = build_manifest(job_id, plan_id, ops);
+    let manifest = build_manifest(mode, job_id, plan_id, ops);
     let json_path =
         write_manifest_json(reports_dir, &manifest).map_err(|e| AppError::ApplyFailed {
             detail: format!("could not write the undo file: {e}"),
         })?;
     let manifest_id = insert_manifest_row(
         pool,
+        mode,
         job_id,
         plan_id,
         &json_path.to_string_lossy(),
@@ -270,15 +320,24 @@ pub async fn export_after_apply(
     )
     .await?;
 
-    // Re-emit the F-507 provenance report reflecting final locations (reuse the
-    // v0.3.0 generator over the persisted rows).
-    let provenance = crate::plan::provenance::build_provenance_report_from_rows(ops);
-    let (provenance_json, provenance_markdown) =
-        crate::reports::write_provenance_report(reports_dir, &provenance).map_err(|e| {
-            AppError::ApplyFailed {
-                detail: format!("could not re-emit the provenance report: {e}"),
-            }
-        })?;
+    // Re-emit the F-507 provenance report over the APPROVED (walked) ops only, so
+    // it reflects the final locations of exactly what was applied (matching the
+    // undo file). Reuses the v0.3.0 generator over the persisted rows.
+    let approved: Vec<PlanOpRow> = ops
+        .iter()
+        .filter(|o| o.approval == APPROVED)
+        .cloned()
+        .collect();
+    let provenance = crate::plan::provenance::build_provenance_report_from_rows(&approved);
+    let (provenance_json, provenance_markdown) = crate::reports::write_provenance_report(
+        reports_dir,
+        &provenance,
+        crate::plan::provenance::PROVENANCE_AFTER_APPLY_JSON_BASENAME,
+        crate::plan::provenance::PROVENANCE_AFTER_APPLY_MARKDOWN_BASENAME,
+    )
+    .map_err(|e| AppError::ApplyFailed {
+        detail: format!("could not re-emit the provenance report: {e}"),
+    })?;
 
     Ok(ManifestExport {
         manifest_id,
@@ -348,8 +407,10 @@ mod tests {
                 Some(r#"{"pack_path":"E:\\Books\\Hugo Pack","pack_name":"Hugo Pack"}"#),
             ),
         ];
-        let manifest = build_manifest(42, 1, &ops);
+        // A REAL apply is the one an undo reverses.
+        let manifest = build_manifest(ApplyMode::Real, 42, 1, &ops);
         assert_eq!(manifest.manifest_schema_version, MANIFEST_SCHEMA_VERSION);
+        assert_eq!(manifest.mode, ApplyMode::Real);
         assert!(manifest.reversible, "two moves are reversible");
         assert_eq!(manifest.ops.len(), 2);
 
@@ -368,7 +429,7 @@ mod tests {
 
         // The reverse ops come purely from the reparsed manifest: reverse seq
         // order, target -> source.
-        let reverse = reread.reverse_ops();
+        let reverse = reread.reverse_ops().expect("a real apply reverses");
         assert_eq!(reverse.len(), 2);
         assert_eq!(reverse[0].op_id, 11, "reverse walks highest seq first");
         assert_eq!(
@@ -389,13 +450,59 @@ mod tests {
         pending.approval = "pending".to_string();
         let ops = vec![op(1, 0, "move", "E:\\x", "E:\\y", None), pending];
 
-        let manifest = build_manifest(7, 3, &ops);
+        let manifest = build_manifest(ApplyMode::Real, 7, 3, &ops);
         assert_eq!(
             manifest.ops.len(),
             1,
             "only the approved op is in the undo file"
         );
         assert_eq!(manifest.ops[0].op_id, 1);
+    }
+
+    /// A dry-run manifest records a rehearsal (no file moved), so `reverse_ops`
+    /// REFUSES rather than offering to undo moves that never happened - the safe
+    /// semantic. Its `mode` still round-trips through the JSON so a reader can see
+    /// what it was.
+    #[test]
+    fn a_dry_run_manifest_refuses_to_reverse() {
+        let ops = vec![op(1, 0, "move", "E:\\x", "E:\\y", None)];
+        let manifest = build_manifest(ApplyMode::DryRun, 7, 3, &ops);
+        assert_eq!(manifest.mode, ApplyMode::DryRun);
+
+        let reread = Manifest::from_json(&manifest.to_json()).expect("round-trip");
+        assert_eq!(
+            reread.mode,
+            ApplyMode::DryRun,
+            "the dry-run marker survives"
+        );
+        assert_eq!(
+            reread.reverse_ops(),
+            Err(ManifestError::DryRunNotReversible),
+            "a rehearsal must never yield reverse ops"
+        );
+    }
+
+    /// The mode marker is serialized in the undo file JSON as the kebab-case tag,
+    /// and a legacy file with NO mode field defaults to `dry-run` (the fail-safe
+    /// reading, so an unmarked file never yields a false undo offer).
+    #[test]
+    fn mode_serializes_and_an_unmarked_file_defaults_to_dry_run() {
+        let json = build_manifest(ApplyMode::DryRun, 1, 1, &[]).to_json();
+        assert!(json.contains("\"mode\": \"dry-run\""), "json: {json}");
+
+        // A legacy undo file predating the mode field reads back as dry-run.
+        let legacy = r#"{"manifest_schema_version": 1, "job_id": 1, "plan_id": 1, "reversible": true, "ops": []}"#;
+        let parsed = Manifest::from_json(legacy).expect("legacy parse");
+        assert_eq!(
+            parsed.mode,
+            ApplyMode::DryRun,
+            "unmarked defaults to dry-run"
+        );
+        assert_eq!(
+            parsed.reverse_ops(),
+            Err(ManifestError::DryRunNotReversible),
+            "an unmarked legacy file fails safe: no reverse ops"
+        );
     }
 
     /// OQ-1: a reader rejects an undo file whose schema version is higher than it
@@ -475,7 +582,7 @@ mod tests {
             Some(r#"{"pack_path":"E:\\Books\\Hugo Pack","pack_name":"Hugo Pack"}"#),
         )];
 
-        let export = export_after_apply(&pool, reports.path(), job, plan, &ops)
+        let export = export_after_apply(&pool, reports.path(), ApplyMode::DryRun, job, plan, &ops)
             .await
             .expect("export");
 
@@ -488,20 +595,41 @@ mod tests {
             export.provenance_markdown.exists(),
             "provenance re-emitted (md)"
         );
+        // The post-apply re-emit uses its own name so it does NOT overwrite a
+        // plan-time provenance-report.json in the same folder.
+        assert_eq!(
+            export.provenance_json.file_name().and_then(|n| n.to_str()),
+            Some("provenance-report-after-apply.json")
+        );
 
-        // The undo file on disk round-trips and is self-contained.
+        // The undo file on disk round-trips, is self-contained, and carries the
+        // dry-run marker (AC-11); a dry-run manifest refuses to reverse.
         let text = std::fs::read_to_string(&export.json_path).expect("read undo file");
         let reread = Manifest::from_json(&text).expect("parse undo file");
         assert_eq!(reread.job_id, job);
         assert_eq!(reread.plan_id, plan);
         assert_eq!(reread.ops.len(), 1);
+        assert_eq!(reread.mode, ApplyMode::DryRun, "undo file carries dry-run");
+        assert_eq!(
+            reread.reverse_ops(),
+            Err(ManifestError::DryRunNotReversible)
+        );
 
-        // The index row was recorded (append-only).
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM manifests WHERE job_id = ?")
-            .bind(job)
-            .fetch_one(&pool)
-            .await
-            .expect("count manifests");
+        // The index row was recorded (append-only) and carries the same marker.
+        let (count, mode): (i64, String) = {
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM manifests WHERE job_id = ?")
+                .bind(job)
+                .fetch_one(&pool)
+                .await
+                .expect("count manifests");
+            let mode: String = sqlx::query_scalar("SELECT mode FROM manifests WHERE job_id = ?")
+                .bind(job)
+                .fetch_one(&pool)
+                .await
+                .expect("manifest mode");
+            (count, mode)
+        };
         assert_eq!(count, 1);
+        assert_eq!(mode, "dry-run", "the manifests row agrees with the file");
     }
 }

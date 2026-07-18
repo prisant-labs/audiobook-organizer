@@ -66,6 +66,22 @@ pub trait Journal {
 /// each its own committed transaction (a single `INSERT` on a pooled connection
 /// in autocommit mode), so an `intent` row is durable the instant its write
 /// returns.
+///
+/// # Durability boundary (v0.5.0)
+///
+/// `open_db` runs WAL with `synchronous = NORMAL`. Under that setting a committed
+/// intent survives a PROCESS KILL (the app being killed mid-apply): the WAL frames
+/// are already handed to the OS, which persists them regardless of the process
+/// dying. Process-kill is exactly AC-10's threat, and the kill test proves the
+/// intent row is still there after it. `synchronous = NORMAL` does NOT fsync the
+/// WAL on every commit, so a POWER LOSS or OS crash between commit and the next
+/// checkpoint could lose a just-committed intent. That harsher failure is out of
+/// scope for v0.5.0 (whose AC-10 is process-kill); crash reconciliation is v0.6.0
+/// (F-606), which is the right place to decide between a dedicated FULL-synchronous
+/// journal connection and reconciliation that tolerates a lost tail. NORMAL is kept
+/// here deliberately rather than forcing `synchronous = FULL` globally, which would
+/// slow the unrelated scan write path. See the P2 report's durability note for the
+/// v0.6.0 follow-up.
 #[derive(Clone)]
 pub struct SqliteJournal {
     pool: SqlitePool,
