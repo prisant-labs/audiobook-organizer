@@ -537,6 +537,31 @@ pub struct CheckReport {
     pub delta: Option<HealthDelta>,
 }
 
+/// The plain-language phrase for a FAILED check on the user-read report (the
+/// after-the-fact check Markdown). The internal token ([`VerifyCheckKind::as_str`])
+/// is printed in parentheses beside it for engineering traceability; this is the
+/// family-facing half, in the design-system register (books, not "operations").
+fn check_phrase(kind: VerifyCheckKind) -> &'static str {
+    match kind {
+        VerifyCheckKind::TargetExists => "the book is not in its new place",
+        VerifyCheckKind::SizeMatches => "the file is not the size it should be",
+        VerifyCheckKind::SourceGone => "the original is still in its old place",
+    }
+}
+
+/// The plain-language label for an F-202 problem id on the user-read report. The
+/// raw id is printed in parentheses beside it for traceability.
+fn problem_label(id: &str) -> &str {
+    match id {
+        "loose-root-books" => "loose books at the top level",
+        "noisy-names" => "messy folder names",
+        "deep-nesting" => "deeply nested folders",
+        "duplicate-candidate-groups" => "possible duplicate copies",
+        "empty-folders" => "empty folders",
+        other => other,
+    }
+}
+
 impl CheckReport {
     /// Build the report from a verify result, the affected roots, and an optional
     /// delta.
@@ -585,7 +610,13 @@ impl CheckReport {
             {
                 s.push_str(&format!("- {} -> {}\n", op.source_path, op.target_path));
                 for c in op.checks.iter().filter(|c| !c.passed) {
-                    s.push_str(&format!("  - {}: {}\n", c.kind.as_str(), c.detail));
+                    // Plain-language phrase on the user-read report; the internal
+                    // check token stays in parentheses for engineering traceability.
+                    s.push_str(&format!(
+                        "  - {} ({})\n",
+                        check_phrase(c.kind),
+                        c.kind.as_str()
+                    ));
                 }
             }
             s.push('\n');
@@ -593,12 +624,15 @@ impl CheckReport {
         if let Some(delta) = &self.delta {
             s.push_str("## Library health, before and after\n\n");
             for p in &delta.problems {
+                // Plain-language label on the user-read report; the internal
+                // problem id stays in parentheses for engineering traceability.
                 s.push_str(&format!(
-                    "- {}: {} to {} ({})\n",
-                    p.problem,
+                    "- {}: {} to {} {} ({})\n",
+                    problem_label(&p.problem),
                     p.before,
                     p.after,
-                    p.unit.as_str()
+                    p.unit.as_str(),
+                    p.problem
                 ));
             }
             s.push('\n');
@@ -768,6 +802,8 @@ pub async fn ensure_forward_tidying_allowed(
 mod tests {
     use super::*;
     use crate::db::open_db;
+    use crate::db::plans::{get_plan_ops, insert_plan, NewPlan, NewPlanOp};
+    use crate::db::rulesets::{insert_ruleset, NewRuleset};
     use crate::exec::{Executor, MemFs, MemJournal, SeedEntry, Vfs, VfsError, VfsMetadata};
     use tempfile::TempDir;
 
@@ -961,6 +997,64 @@ mod tests {
         assert!(!size_check.passed);
     }
 
+    /// AC-18: a move whose SOURCE is still present after the walk is a discrepancy
+    /// (the source-gone check fails). Injected fault: after the clean move, a copy
+    /// is put back at the source location (modelling a move that left the original
+    /// behind), so the target and size still check out but the source lingers.
+    #[tokio::test]
+    async fn a_lingering_source_is_caught() {
+        let seed = vec![seed_dir("E:/lib"), seed_file("E:/lib/loose.m4b", 4096)];
+        let ops = vec![op(
+            1,
+            0,
+            "move",
+            "E:/lib/loose.m4b",
+            "E:/lib/Author/loose.m4b",
+            4096,
+        )];
+        let (executor, outcome) = run_ops(&seed, ops).await;
+
+        // Injected fault: put a copy back at the original source location, so the
+        // move looks done at the target but the source lingers.
+        executor
+            .vfs()
+            .copy_file(
+                Path::new("E:/lib/Author/loose.m4b"),
+                Path::new("E:/lib/loose.m4b"),
+            )
+            .expect("recreate source");
+
+        let report = verify_job(executor.vfs(), executor.ops(), &outcome);
+        assert!(report.has_discrepancy());
+        let v = &report.ops[0];
+        assert_eq!(v.status, OpVerifyStatus::Discrepancy);
+        let source_check = v
+            .checks
+            .iter()
+            .find(|c| c.kind == VerifyCheckKind::SourceGone)
+            .unwrap();
+        assert!(
+            !source_check.passed,
+            "the lingering source is the failed check"
+        );
+        // The target and size still check out - only source-gone failed.
+        assert!(
+            v.checks
+                .iter()
+                .find(|c| c.kind == VerifyCheckKind::TargetExists)
+                .unwrap()
+                .passed
+        );
+        assert!(
+            v.checks
+                .iter()
+                .find(|c| c.kind == VerifyCheckKind::SizeMatches)
+                .unwrap()
+                .passed
+        );
+        assert!(report.discrepancy_summary_json().contains("source-gone"));
+    }
+
     /// The teardown-halt fairness guard (P5 foreign-file case, structural): an op
     /// that HALTED the walk is reported `Halted`, NOT a discrepancy, and the
     /// completed ops before it verify cleanly. So a rollback that fully restored
@@ -1144,6 +1238,118 @@ mod tests {
             .expect("forward allowed after acknowledgement");
     }
 
+    /// AC-20 (approval half): the SAME gate `plan_set_group_approval` calls, over
+    /// REAL persisted plan ops (loaded via `get_plan_ops`, the command's exact data
+    /// path), blocks approving a FORWARD plan's groups while a discrepancy is
+    /// unacknowledged, yet always allows approving an UNDO plan's groups (the undo
+    /// plan's ops genuinely carry the rollback rule id from `insert_plan`, so the
+    /// self-exemption holds on persisted data, not just hand-built rows). Undo's
+    /// approval must never be trapped - it is the remedy. Acknowledging reopens
+    /// forward approval.
+    #[tokio::test]
+    async fn approving_further_groups_is_gated_for_forward_but_never_undo() {
+        let db = TempDir::new().expect("db tempdir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let job_id: i64 = sqlx::query(
+            "INSERT INTO jobs (kind, state, started_at) VALUES ('apply','completed',?)",
+        )
+        .bind(NOW)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+
+        // Seed a scan + ruleset, then two real persisted plans: a forward plan and
+        // an undo plan whose op carries the rollback rule id.
+        let scan_id: i64 = sqlx::query(
+            "INSERT INTO scans (source, root_path, started_at, status) \
+             VALUES ('live','E:/lib',?,'completed')",
+        )
+        .bind(NOW)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .last_insert_rowid();
+        let ruleset_id = insert_ruleset(
+            &pool,
+            &NewRuleset {
+                name: "d",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            NOW,
+        )
+        .await
+        .unwrap();
+
+        let persist = |rule_id: &'static str, src: &'static str, tgt: &'static str| {
+            let pool = pool.clone();
+            async move {
+                let ops = vec![NewPlanOp {
+                    op_group: "loose-root-books",
+                    kind: "move",
+                    kind_reason: None,
+                    source_path: src,
+                    target_path: tgt,
+                    rationale: "op.",
+                    rule_id,
+                    confidence: "high",
+                    byte_size: 10,
+                    validation_state: "valid",
+                    validation_reason: None,
+                    provenance_json: None,
+                }];
+                insert_plan(
+                    &pool,
+                    &NewPlan {
+                        scan_id,
+                        ruleset_id,
+                        status: "draft",
+                        stats_json: None,
+                    },
+                    &ops,
+                    NOW,
+                )
+                .await
+                .unwrap()
+            }
+        };
+        let forward_plan = persist("loose-root-books", "E:/lib/a.m4b", "E:/lib/A/a.m4b").await;
+        let undo_plan = persist(
+            crate::exec::ROLLBACK_RULE_ID,
+            "E:/lib/A/a.m4b",
+            "E:/lib/a.m4b",
+        )
+        .await;
+        let forward_ops = get_plan_ops(&pool, forward_plan).await.unwrap();
+        let undo_ops = get_plan_ops(&pool, undo_plan).await.unwrap();
+
+        // Clear: forward-group approval is allowed.
+        ensure_forward_tidying_allowed(&pool, &forward_ops)
+            .await
+            .expect("forward approval allowed when clear");
+
+        record_block(&pool, job_id, NOW, r#"{"count":1}"#)
+            .await
+            .unwrap();
+
+        // Blocked: approving a forward group is refused; approving an undo group is
+        // still allowed (undo is the remedy - its approval is never trapped).
+        let err = ensure_forward_tidying_allowed(&pool, &forward_ops)
+            .await
+            .expect_err("forward approval refused when blocked");
+        assert_eq!(err.code(), "tidying-blocked");
+        ensure_forward_tidying_allowed(&pool, &undo_ops)
+            .await
+            .expect("undo approval is never trapped");
+
+        // Acknowledge reopens forward-group approval.
+        acknowledge_block(&pool, job_id, NOW).await.unwrap();
+        ensure_forward_tidying_allowed(&pool, &forward_ops)
+            .await
+            .expect("forward approval allowed after acknowledgement");
+    }
+
     /// The check report artifact serializes and re-reads, carrying the per-op
     /// verification and (when present) the delta - the F-1002 auditable form.
     #[test]
@@ -1171,6 +1377,60 @@ mod tests {
         assert_eq!(back.verified_ops, 1);
         assert_eq!(back.discrepancy_count, 0);
         assert!(check.to_markdown().contains("After-the-fact check"));
+    }
+
+    /// The user-read Markdown report speaks the plain-language register (MINOR 1):
+    /// a failed check and a health problem render as plain phrases, with the
+    /// internal token only in parentheses for engineering traceability.
+    #[test]
+    fn check_report_markdown_uses_plain_language() {
+        let empty = crate::classify::HealthMetrics {
+            per_class: vec![],
+            problems: vec![],
+            total_bytes: 0,
+        };
+        let report = VerifyReport {
+            job_id: 1,
+            ops: vec![OpVerification {
+                op_id: 1,
+                seq: 0,
+                kind: "move".to_string(),
+                source_path: "E:/lib/a.m4b".to_string(),
+                target_path: "E:/lib/A/a.m4b".to_string(),
+                status: OpVerifyStatus::Discrepancy,
+                checks: vec![VerifyCheck {
+                    kind: VerifyCheckKind::SourceGone,
+                    passed: false,
+                    detail: "the source is still present".to_string(),
+                }],
+            }],
+        };
+        let delta = HealthDelta {
+            before_scan_id: 1,
+            after_scan_id: 2,
+            before: empty.clone(),
+            after: empty,
+            problems: vec![ProblemDelta {
+                problem: "loose-root-books".to_string(),
+                unit: crate::classify::MetricUnit::Files,
+                before: 3,
+                after: 0,
+            }],
+        };
+        let md = CheckReport::build(ApplyMode::Real, &report, vec![], Some(delta)).to_markdown();
+
+        // Plain-language phrases, not the raw internal tokens, as the primary text.
+        assert!(
+            md.contains("the original is still in its old place"),
+            "plain check phrase present"
+        );
+        assert!(
+            md.contains("loose books at the top level"),
+            "plain problem label present"
+        );
+        // The internal tokens survive only as parenthetical traceability.
+        assert!(md.contains("(source-gone)"));
+        assert!(md.contains("(loose-root-books)"));
     }
 
     /// `affected_roots` records the distinct touched directories, reduced to a
