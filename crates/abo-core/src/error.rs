@@ -316,6 +316,15 @@ pub enum AppError {
     /// (a bad partial selection): this is the catch-all for a read/reconstruction failure.
     #[error("the undo could not be prepared: {detail}")]
     RollbackPrepareFailed { detail: String },
+
+    // ---- Post-apply check family (v0.5.0 Phase 6: F-604 after-the-fact check) ----
+    /// A previous tidy-up's after-the-fact check found a difference between what
+    /// was planned and what is on disk, and that difference has not been
+    /// acknowledged yet. Forward tidying is paused until a human acknowledges it
+    /// (AC-20). This gate is FORWARD-only: preparing or running an UNDO is never
+    /// refused this way, because undo is the remedy for such a difference.
+    #[error("further tidy-ups are paused until the after-the-fact check is acknowledged")]
+    TidyingBlocked,
 }
 
 impl AppError {
@@ -367,6 +376,8 @@ impl AppError {
             AppError::RollbackNotReversible => "rollback-not-reversible",
             AppError::RollbackSelectionNotContiguous => "rollback-selection-not-contiguous",
             AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
+            // Post-apply check family
+            AppError::TidyingBlocked => "tidying-blocked",
         }
     }
 
@@ -545,6 +556,12 @@ impl AppError {
                  refers to may be gone. Scan your library again, then build and review a fresh \
                  plan instead."
             }
+            // Post-apply check family
+            AppError::TidyingBlocked => {
+                "The last tidy-up's after-the-fact check found a difference that needs a look \
+                 before more changes are made. Review the after-the-fact check and acknowledge it; \
+                 undoing the last tidy-up is still available. Once acknowledged, tidy-ups resume."
+            }
         }
     }
 }
@@ -650,6 +667,7 @@ mod tests {
             AppError::RollbackPrepareFailed {
                 detail: "undo file could not be read".into(),
             },
+            AppError::TidyingBlocked,
         ]
     }
 

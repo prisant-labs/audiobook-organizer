@@ -66,7 +66,21 @@ use crate::plan::validate::{persist_validated_plan, validate_plan, RealFreeSpace
 
 /// The stable, kebab-case `plan_ops.rule_id` every inverse op carries, so an undo
 /// op is identifiable as one without inventing a per-forward-op rule id.
-const ROLLBACK_RULE_ID: &str = "rollback-inverse";
+///
+/// Public because the F-604 forward-tidying gate (P6,
+/// [`crate::exec::verify::ensure_forward_tidying_allowed`]) keys off it to tell a
+/// forward plan from an undo plan: an undo is the REMEDY for a discrepancy, so it
+/// is never gated by the block.
+pub const ROLLBACK_RULE_ID: &str = "rollback-inverse";
+
+/// Whether `ops` is an UNDO (inverse) plan rather than a forward one: non-empty
+/// and every op carries [`ROLLBACK_RULE_ID`]. Used by the P6 forward-tidying gate
+/// to structurally exempt undo from the discrepancy block (undo is the remedy).
+/// A forward plan never uses this rule id, so the distinction cannot be spoofed
+/// by an ordinary tidy-up.
+pub fn is_undo_plan_ops(ops: &[PlanOpRow]) -> bool {
+    !ops.is_empty() && ops.iter().all(|o| o.rule_id == ROLLBACK_RULE_ID)
+}
 
 /// One inverse operation, decided from a forward op before it becomes a
 /// [`PlannedOp`]. The `source`/`target` here are the REAL executed paths (from the
