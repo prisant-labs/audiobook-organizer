@@ -625,6 +625,21 @@ pub struct ApplyReport {
     pub ops_walked: i64,
 }
 
+/// The result of preparing an undo (v0.5.0 Phase 5, F-604), returned by the
+/// `rollback_prepare` / `rollback_prepare_partial` commands. Preparing an undo
+/// builds the INVERSE of an applied tidy-up as an ordinary plan and persists it
+/// (D-09: rollback is not a special code path), so the caller navigates to the
+/// SAME review surface a forward plan uses (`plan_get(plan_id)`), previews it,
+/// approves it, and applies it through the same executor. `plan_id` is that new
+/// inverse plan; `op_count` is how many undo operations it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RollbackPrepared {
+    /// The `plans.id` of the newly persisted inverse (undo) plan, ready to review.
+    pub plan_id: i64,
+    /// How many undo operations the inverse plan holds.
+    pub op_count: i64,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -761,6 +776,8 @@ mod contract {
         // F-607 executor seam (v0.5.0 Phase 1).
         assert_ipc_ready::<ApplyMode>();
         assert_ipc_ready::<ApplyReport>();
+        // F-604 rollback as an inverse plan (v0.5.0 Phase 5).
+        assert_ipc_ready::<RollbackPrepared>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();

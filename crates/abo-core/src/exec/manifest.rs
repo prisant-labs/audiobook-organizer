@@ -292,6 +292,47 @@ pub async fn insert_manifest_row(
     Ok(result.last_insert_rowid())
 }
 
+/// One `manifests` index row (migration 0005), read back so the undo path
+/// (F-604) can find the exported undo file and the plan/job it belongs to. The
+/// self-contained recovery data lives in the JSON at `json_path`, not here; this
+/// row is only the pointer plus the dry-run/real marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestRow {
+    pub id: i64,
+    pub job_id: i64,
+    pub plan_id: i64,
+    pub json_path: String,
+    pub reversible: bool,
+    pub mode: String,
+}
+
+/// Read one `manifests` index row by id, or `None` if it does not exist. Used by
+/// the undo path ([`crate::exec::rollback`]) to locate the exported undo file for
+/// a completed apply. A read-only `SELECT`; the append-only contract is untouched.
+pub async fn get_manifest_row(
+    pool: &SqlitePool,
+    manifest_id: i64,
+) -> Result<Option<ManifestRow>, AppError> {
+    use sqlx::Row as _;
+    let row = sqlx::query(
+        "SELECT id, job_id, plan_id, json_path, reversible, mode FROM manifests WHERE id = ?",
+    )
+    .bind(manifest_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppError::RollbackPrepareFailed {
+        detail: format!("could not read the undo file record: {e}"),
+    })?;
+    Ok(row.map(|r| ManifestRow {
+        id: r.get("id"),
+        job_id: r.get("job_id"),
+        plan_id: r.get("plan_id"),
+        json_path: r.get("json_path"),
+        reversible: r.get::<i64, _>("reversible") != 0,
+        mode: r.get("mode"),
+    }))
+}
+
 /// What [`export_after_apply`] produced, so a caller (or a test) can find every
 /// artifact without re-deriving paths.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -285,6 +285,37 @@ pub enum AppError {
     /// forced; the run can be tried again once access is granted.
     #[error("Windows denied access to an item while making changes: {path}")]
     AccessDenied { path: String },
+
+    // ---- Undo family (v0.5.0 Phase 5: F-604 rollback as an inverse plan) ----
+    //
+    // Preparing an undo builds, validates, and persists the INVERSE of an applied
+    // tidy-up as an ordinary plan (D-09: rollback is not a special code path). These
+    // are the ways preparing that inverse plan can be refused. User-facing copy says
+    // "undo" (never "rollback", "undo file", or "journal"); the machine codes keep
+    // the engineering term, and the copy-map (errorCopy.ts) speaks the family register.
+    /// The tidy-up being undone was a REHEARSAL (a dry run), which moved nothing, so
+    /// there is nothing to put back. Surfacing this (rather than panicking or failing
+    /// generically) is the plain-language form of the P2 safety semantic that a
+    /// dry-run manifest refuses to reverse. Also raised when a tidy-up recorded a
+    /// change kind that cannot be reversed (honest rather than a false undo offer).
+    #[error("this tidy-up was a rehearsal, so there is nothing to undo")]
+    RollbackNotReversible,
+
+    /// A partial undo selected changes that are not a single unbroken run of the most
+    /// recent ones (AC-16). An undo can only peel changes off the end in order: a gap
+    /// in the middle would leave the library in a state no forward plan describes, so
+    /// a non-contiguous selection is refused rather than applied.
+    #[error("an undo must cover the most recent changes in one unbroken run")]
+    RollbackSelectionNotContiguous,
+
+    /// The undo could not be prepared: the undo file could not be read, the tidy-up
+    /// it refers to is gone, or a change's original location could no longer be found
+    /// to reverse. `detail` is the developer-facing cause. Distinct from
+    /// [`RollbackNotReversible`](AppError::RollbackNotReversible) (a rehearsal or an
+    /// unreversible kind) and [`RollbackSelectionNotContiguous`](AppError::RollbackSelectionNotContiguous)
+    /// (a bad partial selection): this is the catch-all for a read/reconstruction failure.
+    #[error("the undo could not be prepared: {detail}")]
+    RollbackPrepareFailed { detail: String },
 }
 
 impl AppError {
@@ -332,6 +363,10 @@ impl AppError {
             AppError::SourceVanished { .. } => "source-vanished",
             AppError::TargetAppeared { .. } => "target-appeared",
             AppError::AccessDenied { .. } => "access-denied",
+            // Undo family
+            AppError::RollbackNotReversible => "rollback-not-reversible",
+            AppError::RollbackSelectionNotContiguous => "rollback-selection-not-contiguous",
+            AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
         }
     }
 
@@ -496,6 +531,20 @@ impl AppError {
                  tidy-up stopped there. Close any program that may be using that file or folder, \
                  or grant the app permission to it, then try the tidy-up again."
             }
+            // Undo family
+            AppError::RollbackNotReversible => {
+                "That tidy-up was a rehearsal, so nothing was actually moved and there is nothing \
+                 to undo. Run a real tidy-up first if you want changes you can undo."
+            }
+            AppError::RollbackSelectionNotContiguous => {
+                "An undo can only take back the most recent changes, in order. Choose an unbroken \
+                 run of the latest changes to undo, without skipping any in the middle."
+            }
+            AppError::RollbackPrepareFailed { .. } => {
+                "The undo could not be prepared. The undo file may be missing or the tidy-up it \
+                 refers to may be gone. Scan your library again, then build and review a fresh \
+                 plan instead."
+            }
         }
     }
 }
@@ -595,6 +644,11 @@ mod tests {
             },
             AppError::AccessDenied {
                 path: r"E:\Books\locked\book.m4b".into(),
+            },
+            AppError::RollbackNotReversible,
+            AppError::RollbackSelectionNotContiguous,
+            AppError::RollbackPrepareFailed {
+                detail: "undo file could not be read".into(),
             },
         ]
     }
