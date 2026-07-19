@@ -32,7 +32,7 @@ describe("ReviewFooter", () => {
       // A held group contributes nothing (not included).
       group({ group: "copies", op_count: 4, actionable_count: 0, status: "checking" }),
     ];
-    render(<ReviewFooter groups={groups} />);
+    render(<ReviewFooter groups={groups} planId={1} />);
 
     // "2 of 3 groups included" (loose-books + empty-folders; copies is held).
     expect(screen.getByText("2 of 3")).toBeInTheDocument();
@@ -46,7 +46,7 @@ describe("ReviewFooter", () => {
       group({ status: "checking", actionable_count: 0 }),
       group({ group: "empty-folders", status: "left-out", actionable_count: 0 }),
     ];
-    render(<ReviewFooter groups={groups} />);
+    render(<ReviewFooter groups={groups} planId={null} />);
     expect(screen.getByText("0 of 2")).toBeInTheDocument();
   });
 });

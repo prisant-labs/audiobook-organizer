@@ -356,6 +356,45 @@ impl ExecControl for NoControl {
     async fn pause_barrier(&self) {}
 }
 
+/// Observer called AFTER each operation's terminal `done` row is committed (P8
+/// prelude 0b). The executor calls `on_op_executed` once per successful operation,
+/// AFTER the `done` journal row is written and flushed, so the observer always sees
+/// a consistent journal entry. The observer is fire-and-forget: it must never block
+/// or perturb the walk, the journal, or the AC-3/AC-25 equality invariants.
+///
+/// Core purity: this trait carries no Tauri dependency. The shell wires the
+/// concrete [`ShellObserver`](crate::events) implementation that emits the
+/// `apply:op-executed` event; tests and non-event paths use [`NoObserver`].
+///
+/// # Design note: apply's `stopped` vs scan's `cancelled`
+///
+/// The executor's [`ExecOutcome::stopped`] field records a cooperative-Stop outcome
+/// (apply-side semantics, AC-26): the walk halted at a boundary with a COHERENT
+/// PARTIAL journal (every intent already has a terminal row) and no filesystem
+/// writes started after the boundary. This is DELIBERATELY different from the scan
+/// side's `cancelled` state, which DISCARDS its partial snapshot (no durable
+/// record), because an apply's partial journal IS the durable safety record. The
+/// observer is not called for un-started ops after a Stop.
+///
+/// `async_fn_in_trait` is allowed here for the same reason as [`Journal`] and
+/// [`ExecControl`].
+#[allow(async_fn_in_trait)]
+pub trait OpObserver {
+    /// Called after each operation completes successfully (its `done` journal row
+    /// is already committed when this is called). Panic-safe: the executor wraps
+    /// this call in no special handling; a panicking observer unwinds the walk.
+    async fn on_op_executed(&self, payload: &crate::ipc::ApplyOpExecutedPayload);
+}
+
+/// The inert [`OpObserver`]: does nothing. Used by [`Executor::run`],
+/// [`Executor::run_with_control`], and every call site that does not need
+/// per-operation progress events, so their behavior is byte-for-byte unchanged.
+pub struct NoObserver;
+
+impl OpObserver for NoObserver {
+    async fn on_op_executed(&self, _payload: &crate::ipc::ApplyOpExecutedPayload) {}
+}
+
 /// The executor: consumes an approved plan and a [`Vfs`], and walks the plan's
 /// operations against that filesystem. Generic over `V` so the identical code
 /// serves a dry run ([`MemFs`]) and a Real apply ([`RealFs`]) - the seam that
@@ -446,10 +485,12 @@ impl<V: Vfs> Executor<V> {
     /// has a terminal) and STOPS, reporting the halt in [`ExecOutcome::halt`]
     /// (halting a group halts the run, since one approved plan is one job).
     ///
-    /// Runs with no cooperative pause/Stop ([`NoControl`]); the pause/Stop-aware
-    /// entry point is [`run_with_control`](Self::run_with_control).
+    /// Runs with no cooperative pause/Stop ([`NoControl`]) and no per-op observer
+    /// ([`NoObserver`]); the pause/Stop-aware entry point is
+    /// [`run_with_control`](Self::run_with_control), and the observer-aware entry
+    /// point is [`run_with_observer`](Self::run_with_observer).
     pub async fn run<J: Journal>(&self, journal: &J, now: &str) -> Result<ExecOutcome, AppError> {
-        self.run_with_control(journal, now, &NoControl).await
+        self.run_with_observer(journal, now, &NoControl, &NoObserver).await
     }
 
     /// The pause/Stop-aware walk (F-608, F-104, FD-02). Identical to [`run`] except
@@ -470,6 +511,9 @@ impl<V: Vfs> Executor<V> {
     /// walk produces the exact same journal sequence as an uninterrupted run over
     /// the same inputs (AC-25).
     ///
+    /// Runs with no per-op observer ([`NoObserver`]); the observer-aware entry
+    /// point is [`run_with_observer`](Self::run_with_observer).
+    ///
     /// [`run`]: Self::run
     pub async fn run_with_control<J: Journal, C: ExecControl>(
         &self,
@@ -477,10 +521,35 @@ impl<V: Vfs> Executor<V> {
         now: &str,
         control: &C,
     ) -> Result<ExecOutcome, AppError> {
+        self.run_with_observer(journal, now, control, &NoObserver).await
+    }
+
+    /// The pause/Stop-and-observer-aware walk (P8 prelude 0b). Identical to
+    /// [`run_with_control`] except it calls `observer.on_op_executed` AFTER each
+    /// operation's `done` journal row is committed. The observer is fire-and-forget:
+    /// it must never block or perturb the walk, the journal, or the AC-3/AC-25
+    /// equality invariants. The observer is NOT called for un-started ops after a
+    /// cooperative Stop.
+    ///
+    /// [`run`]: Self::run
+    /// [`run_with_control`]: Self::run_with_control
+    pub async fn run_with_observer<J: Journal, C: ExecControl, O: OpObserver>(
+        &self,
+        journal: &J,
+        now: &str,
+        control: &C,
+        observer: &O,
+    ) -> Result<ExecOutcome, AppError> {
         let mut produced = Vec::new();
         let mut ops_walked = 0usize;
         let mut halt: Option<ExecHalt> = None;
         let mut stopped = false;
+        // Pre-compute the total approved op count for observer payloads (P8 0b).
+        let total = self
+            .ops
+            .iter()
+            .filter(|o| o.approval == APPROVED)
+            .count() as i64;
         for op in self.ops.iter().filter(|o| o.approval == APPROVED) {
             // Operation boundary (F-608/F-104): consult pause/Stop BEFORE writing
             // the next intent, so nothing mid-op is ever interrupted and no journal
@@ -532,6 +601,20 @@ impl<V: Vfs> Executor<V> {
                     journal.write_done(&done).await?;
                     produced.push(done);
                     ops_walked += 1;
+                    // Notify the observer AFTER the done row is committed (P8 prelude
+                    // 0b). Fire-and-forget: the observer may not block the walk or
+                    // write to the journal. The payload is pure plain data; the shell
+                    // composes sentences from the strings module, not here.
+                    observer
+                        .on_op_executed(&crate::ipc::ApplyOpExecutedPayload {
+                            job_id: self.job_id,
+                            op_id: op.id,
+                            kind: op.kind.clone(),
+                            label: display_label(op),
+                            done_count: ops_walked as i64,
+                            total,
+                        })
+                        .await;
                 }
                 Err(op_halt) => {
                     // Terminal `failed` row so every intent has a terminal row (the
@@ -810,6 +893,36 @@ fn relative_to(path: &str, root: &str) -> String {
     match path.strip_prefix(root) {
         Some(rest) => rest.trim_start_matches(['/', '\\']).to_string(),
         None => path.to_string(),
+    }
+}
+
+/// A plain-language display label for the `apply:op-executed` observer payload
+/// (P8 prelude 0b). Uses the last path component of `source_path`, stripping the
+/// last file extension for audio-file moves. Never exposes a full raw path.
+///
+/// For `mkdir`, where the source is often empty or a directory placeholder,
+/// falls back to the last component of `target_path` (the folder being created).
+fn display_label(op: &PlanOpRow) -> String {
+    let src = &op.source_path;
+    let last_of = |path: &str| -> String {
+        path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
+    };
+    let last = last_of(src);
+    if last.is_empty() && op.kind == "mkdir" {
+        return last_of(&op.target_path);
+    }
+    // For file moves: strip the last extension (e.g. ".m4b") when present and
+    // there is a non-empty stem before it.
+    match op.kind.as_str() {
+        "move" | "rename" | "quarantine" => {
+            if let Some(dot) = last.rfind('.') {
+                if dot > 0 {
+                    return last[..dot].to_string();
+                }
+            }
+            last
+        }
+        _ => last,
     }
 }
 

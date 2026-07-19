@@ -19,6 +19,13 @@ export interface ReviewProps {
   // comment on why this is shared rather than re-fetched here). `null` before
   // any scan has ever completed (AC-28-adjacent honest empty state).
   scanId: number | null;
+  /**
+   * Called when the user confirms the tidy-up from the footer strip (P8,
+   * F-904, AC-27). The shell starts the apply job and navigates to the Apply
+   * surface. Optional: when omitted the confirm button shows the pre-v0.5.0
+   * "not available yet" stub message rather than starting a real apply.
+   */
+  onStartApply?: (planId: number) => Promise<void>;
 }
 
 // F-903 plan review surface (T-19..T-25, AC-10..AC-20): the two-pane review.
@@ -31,7 +38,7 @@ export interface ReviewProps {
 // (matching Library.tsx's precedent): the full F-908 states are Phase 7's
 // brief (T-29..T-32) and are meant to supersede these, not be duplicated by
 // them.
-export function Review({ scanId }: ReviewProps) {
+export function Review({ scanId, onStartApply }: ReviewProps) {
   const { status, review, ops, error, errorCode, regenerate, cancel, toggleGroup, excludeOp } =
     usePlanReview(scanId);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
@@ -140,7 +147,7 @@ export function Review({ scanId }: ReviewProps) {
         </div>
       </div>
 
-      <ReviewFooter groups={review.groups} />
+      <ReviewFooter groups={review.groups} planId={review.plan_id} onStartApply={onStartApply} />
     </div>
   );
 }

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri_specta::Event;
 
-use abo_core::ipc::{JobCompletedPayload, JobFailedPayload, JobProgressPayload};
+use abo_core::ipc::{ApplyOpExecutedPayload, JobCompletedPayload, JobFailedPayload, JobProgressPayload};
 
 // Re-emit note: `job:progress` is now genuinely emitted (F-104), unlike the
 // v0.1.0 spine where it was frozen-but-never-emitted. The event, payload, and
@@ -59,6 +59,23 @@ pub fn emit_job_failed(app: &AppHandle, job_id: i64, code: &str) {
         code: code.to_string(),
     })
     .emit(app);
+}
+
+/// Typed `apply:op-executed` event (P8 prelude 0b), emitted after each operation's
+/// `done` journal row is committed in a running apply job. The event is
+/// fire-and-forget: a dropped event never fails the apply.
+///
+/// Wire name pinned explicitly so a rename of the Rust struct does not silently
+/// break the frontend listener. The frontend listens via the generated
+/// `events.applyOpExecuted` binding, never a raw string.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, Event)]
+#[tauri_specta(event_name = "apply:op-executed")]
+pub struct JobOpExecuted(pub ApplyOpExecutedPayload);
+
+/// Emit `apply:op-executed` for one completed operation. Best-effort: a dropped
+/// event (for example before the webview exists) never fails the apply.
+pub fn emit_apply_op_executed(app: &AppHandle, payload: ApplyOpExecutedPayload) {
+    let _ = JobOpExecuted(payload).emit(app);
 }
 
 /// Emit `job:progress` for a running scan (F-104), carrying the units done so

@@ -295,7 +295,8 @@ export const commands = {
 	/**
 	 *  The status of one apply job and its after-the-fact check (F-604): lifecycle
 	 *  state, whether it raised an unacknowledged discrepancy blocking further
-	 *  FORWARD tidy-ups (AC-20), and how many differences the check found.
+	 *  FORWARD tidy-ups (AC-20), how many differences the check found, and whether
+	 *  the job is currently paused at an operation boundary (P8 prelude 0a).
 	 */
 	jobStatus: (jobId: number) => typedError<JobStatus, AppError>(__TAURI_INVOKE("job_status", { jobId })),
 	/**
@@ -345,6 +346,7 @@ export const commands = {
 
 /** Events */
 export const events = {
+	applyOpExecuted: makeEvent<JobOpExecuted>("apply:op-executed"),
 	jobCompleted: makeEvent<JobCompleted>("job:completed"),
 	jobFailed: makeEvent<JobFailed>("job:failed"),
 	jobProgress: makeEvent<JobProgress>("job:progress"),
@@ -745,6 +747,39 @@ export type ApplyMode =
 "real";
 
 /**
+ *  Payload of the `apply:op-executed` event (P8 prelude, 0b), emitted after each
+ *  operation's `done` journal row is committed in a running apply job. The event is
+ *  fire-and-forget: it never perturbs the walk, the journal, or the AC-3/AC-25
+ *  equality invariants.
+ * 
+ *  The shell emits this from the [`crate::exec::OpObserver`] seam; the core never
+ *  imports Tauri. The UI uses the `kind` and `label` to compose a plain sentence
+ *  from the frontend strings module (FD-23). Raw paths are deliberately excluded
+ *  (design-system FD-13, R-12): the `label` is the last path component only.
+ */
+export type ApplyOpExecutedPayload = {
+	/**  The `jobs.id` this event belongs to (for frontend filtering). */
+	job_id: number,
+	/**  The `plan_ops.id` of the just-executed operation. */
+	op_id: number,
+	/**
+	 *  The operation kind: `"move"`, `"rename"`, `"quarantine"`, `"mkdir"`,
+	 *  `"rmdir-empty"`, or `"no-op"`.
+	 */
+	kind: string,
+	/**
+	 *  A plain-language display label for the book or folder - the last path
+	 *  component of `source_path` (extension stripped for audio-file moves), or
+	 *  the last component of `target_path` for `mkdir`. Never a full raw path.
+	 */
+	label: string,
+	/**  How many operations have completed so far (the done count, including this one). */
+	done_count: number,
+	/**  The total number of approved operations in this walk. */
+	total: number,
+};
+
+/**
  *  One example book on the "Worth a look first" shelf (F-902, v0.4.0 Phase 4,
  *  design-system Section 4.6). `entry_id` names a book WITHIN the snapshot that
  *  produced the enclosing [`LibraryOverview`] (its `scan_id`), so the frontend
@@ -1037,6 +1072,17 @@ export type JobFailedPayload = {
 };
 
 /**
+ *  Typed `apply:op-executed` event (P8 prelude 0b), emitted after each operation's
+ *  `done` journal row is committed in a running apply job. The event is
+ *  fire-and-forget: a dropped event never fails the apply.
+ * 
+ *  Wire name pinned explicitly so a rename of the Rust struct does not silently
+ *  break the frontend listener. The frontend listens via the generated
+ *  `events.applyOpExecuted` binding, never a raw string.
+ */
+export type JobOpExecuted = ApplyOpExecutedPayload;
+
+/**
  *  Typed `job:progress` event.
  * 
  *  DEFINED but NEVER EMITTED in the v0.1.0 spine (this phase's brief): the spine
@@ -1119,6 +1165,14 @@ export type JobStatus = {
 	 *  the block detail). Zero when there is no outstanding block.
 	 */
 	discrepancy_count: number,
+	/**
+	 *  Whether the job is currently paused at an operation boundary (P8 prelude,
+	 *  0a). Sourced from the in-memory [`ApplyControlRegistry`] in the shell; always
+	 *  `false` for jobs that have already reached a terminal state (they have left
+	 *  the registry). `jobs.state` stays `"running"` while paused so the
+	 *  single-writer lock query remains correct.
+	 */
+	paused: boolean,
 };
 
 /**

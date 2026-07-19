@@ -155,6 +155,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             events::JobFailed,
             // Frozen but never emitted in the spine (see events::JobProgress).
             events::JobProgress,
+            // P8 prelude 0b: per-operation progress event for the apply surface.
+            events::JobOpExecuted,
         ])
         .dangerously_cast_bigints_to_number()
 }

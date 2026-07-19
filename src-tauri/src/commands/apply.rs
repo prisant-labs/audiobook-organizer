@@ -45,10 +45,10 @@ use abo_core::exec::manifest::export_after_apply;
 use abo_core::exec::verify::{affected_roots, write_check_report};
 use abo_core::exec::{
     delta_health_metrics, ensure_forward_tidying_allowed, record_block, verify_job, ApplyMode,
-    ApplyScope, CheckReport, ExecControl, ExecHalt, Executor, MemFs, RealFs, SeedEntry,
-    SqliteJournal, Vfs,
+    ApplyScope, CheckReport, ExecControl, ExecHalt, Executor, MemFs, OpObserver,
+    RealFs, SeedEntry, SqliteJournal, Vfs,
 };
-use abo_core::ipc::{AppError, ApplyReport, EntryRow, JobStarted};
+use abo_core::ipc::{AppError, ApplyOpExecutedPayload, ApplyReport, EntryRow, JobStarted};
 use abo_core::plan::builder::default_set_aside_root;
 use abo_core::scan::walk::now_iso8601_utc;
 use futures::FutureExt;
@@ -202,6 +202,21 @@ impl Drop for ApplyControlGuard {
     }
 }
 
+/// Shell-side [`OpObserver`] that emits one `apply:op-executed` Tauri event per
+/// completed operation (P8 prelude 0b). Fire-and-forget: an emit failure (for
+/// example no webview yet) is swallowed so the apply is never failed by a missed
+/// progress event. The AC-3/AC-25 journal-equality invariants are unaffected because
+/// this observer writes NOTHING to the journal.
+struct ShellObserver {
+    app: tauri::AppHandle,
+}
+
+impl OpObserver for ShellObserver {
+    async fn on_op_executed(&self, payload: &ApplyOpExecutedPayload) {
+        crate::events::emit_apply_op_executed(&self.app, payload.clone());
+    }
+}
+
 /// Start applying an approved plan as a background job (F-601/F-607/F-904),
 /// returning immediately with the new apply `jobs.id`.
 ///
@@ -225,6 +240,7 @@ impl Drop for ApplyControlGuard {
 #[tauri::command]
 #[specta::specta]
 pub async fn apply_start(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     plan_id: i64,
     mode: ApplyMode,
@@ -306,14 +322,17 @@ pub async fn apply_start(
     let scan_id = plan.scan_id;
 
     // Everything the task needs is owned (`'static`): the pool clones cheaply, the
-    // ops/scope/paths are owned, and the control is an Arc. The task outlives this
-    // command, so nothing borrows State.
+    // ops/scope/paths are owned, and the control is an Arc. AppHandle is clonable.
+    // The task outlives this command, so nothing borrows State.
     let pool_owned = pool.clone();
     let registry = state.apply_controls.clone();
 
     tauri::async_runtime::spawn(async move {
         let journal = SqliteJournal::new(pool_owned.clone());
         let pool_for_wrapper = pool_owned.clone();
+        // The per-op observer emits `apply:op-executed` events to the frontend (P8
+        // prelude 0b). One AppHandle clone per task (clonable, cheap handle wrapper).
+        let observer = ShellObserver { app };
 
         // The walk is identical code over either backend (the Vfs seam is what
         // makes a dry run a first-class product); building the executor and running
@@ -347,6 +366,7 @@ pub async fn apply_start(
                         before_scan_id,
                         &library_root,
                         &*control,
+                        &observer,
                     )
                     .await
                     .map(|_| ())
@@ -368,6 +388,7 @@ pub async fn apply_start(
                         before_scan_id,
                         &library_root,
                         &*control,
+                        &observer,
                     )
                     .await
                     .map(|_| ())
@@ -452,7 +473,7 @@ pub async fn run_apply_to_terminal<Fut>(
 /// `Journal`/`ExecControl` traits themselves, which is what keeps those traits'
 /// `async fn`s expressible (the documented P2 landmine).
 #[allow(clippy::too_many_arguments)]
-async fn walk_and_finalize<V: Vfs, C: ExecControl>(
+async fn walk_and_finalize<V: Vfs, C: ExecControl, O: OpObserver>(
     pool: &SqlitePool,
     executor: Executor<V>,
     journal: &SqliteJournal,
@@ -464,13 +485,15 @@ async fn walk_and_finalize<V: Vfs, C: ExecControl>(
     before_scan_id: i64,
     library_root: &str,
     control: &C,
+    observer: &O,
 ) -> Result<ApplyReport, AppError> {
     // journal-before-act: intent flushed and committed before each filesystem call
     // (F-602, AC-10). A failed intent flush is a hard stop (journal-write-failed).
     // The control is consulted at operation boundaries only (F-608 pause, F-104
     // Stop), never mid-op, and never writes a journal row of its own (AC-24, AC-25).
+    // The observer is called AFTER each done row (P8 prelude 0b, fire-and-forget).
     let outcome = match executor
-        .run_with_control(journal, started_at, control)
+        .run_with_observer(journal, started_at, control, observer)
         .await
     {
         Ok(outcome) => outcome,
@@ -831,6 +854,7 @@ mod tests {
             0,
             "",
             &abo_core::exec::NoControl,
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect_err("a halted walk surfaces the halt as an error");
@@ -968,6 +992,7 @@ mod tests {
             0,
             "",
             &abo_core::exec::NoControl,
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect("a clean walk completes");
@@ -1075,6 +1100,7 @@ mod tests {
             0,
             "",
             &abo_core::exec::NoControl,
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect("the walk completed (the discrepancy is post-facto, not a halt)");
@@ -1188,6 +1214,7 @@ mod tests {
             0,
             "",
             &StopAfter::new(2),
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect("a stopped walk is not an error");
@@ -1195,6 +1222,17 @@ mod tests {
         // Only the pre-Stop prefix ran, and it verified.
         assert_eq!(report.ops_walked, 1, "one op ran before the Stop");
         assert_eq!(report.verified_ops, 1, "the executed prefix was verified");
+
+        // 0c rider (P8 prelude): a cooperative Stop NEVER raises a block
+        // (AC-26 - stopped is coherent partial, not a discrepancy). The after-the-fact
+        // check runs over the executed prefix and finds it consistent (no moves claimed
+        // that did not happen), so neither `blocked` nor any `discrepancy_count` > 0
+        // should be set here.
+        assert!(!report.blocked, "a stopped walk does not raise a block");
+        assert_eq!(
+            report.discrepancy_count, 0,
+            "a stopped walk has no discrepancy"
+        );
 
         // The DISTINCT terminal state: stopped, not failed and not completed.
         let state: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = ?")

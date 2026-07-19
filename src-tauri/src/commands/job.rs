@@ -22,14 +22,15 @@ use crate::AppState;
 
 /// The status of one apply job and its after-the-fact check (F-604): lifecycle
 /// state, whether it raised an unacknowledged discrepancy blocking further
-/// FORWARD tidy-ups (AC-20), and how many differences the check found.
+/// FORWARD tidy-ups (AC-20), how many differences the check found, and whether
+/// the job is currently paused at an operation boundary (P8 prelude 0a).
 #[tauri::command]
 #[specta::specta]
 pub async fn job_status(
     state: tauri::State<'_, AppState>,
     job_id: i64,
 ) -> Result<JobStatus, AppError> {
-    build_job_status(&state.pool, job_id).await
+    build_job_status(&state.pool, job_id, &state.apply_controls).await
 }
 
 /// Acknowledge a job's after-the-fact check discrepancy (F-604, AC-20): append an
@@ -44,7 +45,7 @@ pub async fn acknowledge_check(
 ) -> Result<JobStatus, AppError> {
     let now = now_iso8601_utc();
     acknowledge_block(&state.pool, job_id, &now).await?;
-    build_job_status(&state.pool, job_id).await
+    build_job_status(&state.pool, job_id, &state.apply_controls).await
 }
 
 /// Pause a running apply job between books (F-608, FD-02, AC-24).
@@ -134,10 +135,17 @@ fn stop_apply(registry: &ApplyControlRegistry, job_id: i64) -> bool {
     }
 }
 
-/// Read the `jobs` row and the block state into a [`JobStatus`]. The discrepancy
-/// count is parsed from the outstanding block's `detail_json` (`{"count": N}`);
-/// zero when the job has no outstanding block.
-async fn build_job_status(pool: &SqlitePool, job_id: i64) -> Result<JobStatus, AppError> {
+/// Read the `jobs` row, the block state, and the live pause state into a
+/// [`JobStatus`]. The discrepancy count is parsed from the outstanding block's
+/// `detail_json` (`{"count": N}`); zero when the job has no outstanding block.
+/// The `paused` field is sourced from the in-memory control registry (P8 prelude
+/// 0a): `true` when the job is registered AND currently paused; `false` for all
+/// terminal jobs (they have left the registry by the time this runs).
+async fn build_job_status(
+    pool: &SqlitePool,
+    job_id: i64,
+    registry: &ApplyControlRegistry,
+) -> Result<JobStatus, AppError> {
     let row: Option<(String, Option<String>)> =
         sqlx::query_as("SELECT state, error_code FROM jobs WHERE id = ?")
             .bind(job_id)
@@ -164,12 +172,23 @@ async fn build_job_status(pool: &SqlitePool, job_id: i64) -> Result<JobStatus, A
         0
     };
 
+    // P8 prelude 0a: derive `paused` from the in-memory registry. Terminal jobs
+    // are removed from the registry by `ApplyControlGuard::drop`, so any job
+    // found here is still running; jobs not found are terminal (paused = false).
+    let paused = registry
+        .lock()
+        .expect("apply control registry poisoned")
+        .get(&job_id)
+        .map(|c| c.is_paused())
+        .unwrap_or(false);
+
     Ok(JobStatus {
         job_id,
         state,
         error_code,
         blocks_further_tidying,
         discrepancy_count,
+        paused,
     })
 }
 
@@ -191,6 +210,15 @@ mod tests {
             .last_insert_rowid()
     }
 
+    use crate::commands::apply::ApplyControl;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    /// An empty control registry for tests that do not need a running apply.
+    fn empty_registry() -> ApplyControlRegistry {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
     /// A clean job reports no block and a zero discrepancy count.
     #[tokio::test]
     async fn a_clean_job_status_is_unblocked() {
@@ -198,10 +226,13 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let job_id = seed_completed_job(&pool).await;
 
-        let status = build_job_status(&pool, job_id).await.expect("status");
+        let status = build_job_status(&pool, job_id, &empty_registry())
+            .await
+            .expect("status");
         assert_eq!(status.state, "completed");
         assert!(!status.blocks_further_tidying);
         assert_eq!(status.discrepancy_count, 0);
+        assert!(!status.paused, "a terminal job is never paused");
     }
 
     /// A job with a recorded discrepancy reports the block and the count, and an
@@ -216,21 +247,56 @@ mod tests {
             .await
             .expect("record block");
 
-        let status = build_job_status(&pool, job_id).await.expect("status");
+        let status = build_job_status(&pool, job_id, &empty_registry())
+            .await
+            .expect("status");
         assert!(status.blocks_further_tidying);
         assert_eq!(status.discrepancy_count, 2);
 
         acknowledge_block(&pool, job_id, NOW).await.expect("ack");
-        let after = build_job_status(&pool, job_id).await.expect("status");
+        let after = build_job_status(&pool, job_id, &empty_registry())
+            .await
+            .expect("status");
         assert!(!after.blocks_further_tidying);
         assert_eq!(after.discrepancy_count, 0);
     }
 
-    // ---- Phase 7: pause/resume/stop command logic (AC-24, AC-26) ----
+    /// P8 prelude 0a: `paused` is derived from the live control registry, not the
+    /// `jobs` row. A job registered with a paused control reports `paused: true`;
+    /// the same job with an un-paused control (or not in the registry) reports false.
+    #[tokio::test]
+    async fn job_status_reflects_pause_from_registry() {
+        let db = TempDir::new().expect("db tempdir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let job_id = seed_completed_job(&pool).await;
 
-    use crate::commands::apply::ApplyControl;
-    use std::collections::HashMap;
-    use std::sync::{Arc, Mutex};
+        // Not in registry -> paused: false.
+        let s = build_job_status(&pool, job_id, &empty_registry())
+            .await
+            .expect("status");
+        assert!(!s.paused, "absent from registry -> not paused");
+
+        // In registry, not paused -> paused: false.
+        let control = Arc::new(ApplyControl::new());
+        let registry: ApplyControlRegistry = Arc::new(Mutex::new({
+            let mut m = HashMap::new();
+            m.insert(job_id, control.clone());
+            m
+        }));
+        let s = build_job_status(&pool, job_id, &registry)
+            .await
+            .expect("status");
+        assert!(!s.paused, "registered but not paused -> paused: false");
+
+        // Pause the control -> paused: true.
+        control.pause();
+        let s = build_job_status(&pool, job_id, &registry)
+            .await
+            .expect("status");
+        assert!(s.paused, "paused control -> paused: true");
+    }
+
+    // ---- Phase 7: pause/resume/stop command logic (AC-24, AC-26) ----
 
     /// A registry holding one control for `job_id`, as `apply_start` would register
     /// while an apply runs.

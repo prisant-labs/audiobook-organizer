@@ -3,9 +3,11 @@ import { render, cleanup } from "@testing-library/react";
 import axe from "axe-core";
 import { Library } from "@/routes/Library";
 import { Review } from "@/routes/Review";
+import { Apply } from "@/routes/Apply";
 import { commands } from "@/lib/bindings";
 import { getCover } from "@/lib/covers";
 import { usePlanReview } from "@/hooks/usePlanReview";
+import { useApplyJob, type UseApplyJob } from "@/hooks/useApplyJob";
 import type { LibraryOverview, PlanGroupView, PlanOpView } from "@/lib/bindings";
 import type { UseHealthMetrics } from "@/hooks/useHealthMetrics";
 import type { UsePlanReview } from "@/hooks/usePlanReview";
@@ -35,11 +37,13 @@ vi.mock("@/lib/bindings", async (importOriginal) => {
 });
 vi.mock("@/lib/covers", () => ({ getCover: vi.fn() }));
 vi.mock("@/hooks/usePlanReview", () => ({ usePlanReview: vi.fn() }));
+vi.mock("@/hooks/useApplyJob", () => ({ useApplyJob: vi.fn() }));
 
 const mockedScanStart = vi.mocked(commands.scanStart);
 const mockedScanCancel = vi.mocked(commands.scanCancel);
 const mockedGetCover = vi.mocked(getCover);
 const mockedUsePlanReview = vi.mocked(usePlanReview);
+const mockedUseApplyJob = vi.mocked(useApplyJob);
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -47,6 +51,7 @@ beforeEach(() => {
   mockedScanCancel.mockReset();
   mockedGetCover.mockReset().mockResolvedValue(null);
   mockedUsePlanReview.mockReset();
+  mockedUseApplyJob.mockReset();
 });
 
 function health(overview: LibraryOverview | null): UseHealthMetrics {
@@ -148,6 +153,23 @@ function describeViolations(results: axe.AxeResults) {
     .map((v) => `${v.impact} ${v.id}: ${v.description} (${v.nodes.length} node(s))`);
 }
 
+function applyJobState(overrides: Partial<UseApplyJob> = {}): UseApplyJob {
+  return {
+    phase: "running",
+    paused: false,
+    feed: [{ id: 1, sentence: "Moved Sapiens to its new shelf." }],
+    doneCount: 1,
+    total: 5,
+    mode: "dry-run",
+    errorCode: null,
+    error: null,
+    blocked: false,
+    discrepancyCount: 0,
+    actions: { pause: vi.fn(), resume: vi.fn(), stop: vi.fn(), acknowledge: vi.fn() },
+    ...overrides,
+  };
+}
+
 describe("axe-core accessibility smoke (T-36, AC-41)", () => {
   it("library home has zero serious/critical violations", async () => {
     const { container } = render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} />);
@@ -160,6 +182,18 @@ describe("axe-core accessibility smoke (T-36, AC-41)", () => {
   it("the review surface has zero serious/critical violations", async () => {
     mockedUsePlanReview.mockReturnValue(reviewHookState());
     const { container } = render(<Review scanId={9} />);
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+
+  it("the apply surface has zero serious/critical violations", async () => {
+    // Running phase with one feed sentence - the richest DOM the Apply screen
+    // produces while active. Mocking useApplyJob keeps this a fast unit-level
+    // smoke test (no IPC, no real Tauri bridge).
+    mockedUseApplyJob.mockReturnValue(applyJobState());
+    const { container } = render(<Apply jobId={1} onDone={vi.fn()} />);
     const results = await axe.run(container);
     expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
       [],
