@@ -2,9 +2,12 @@
 //
 // Owns the apply-surface state machine for a live apply job:
 //  - Subscribes to `apply:op-executed` to build a scrolling sentence feed.
-//  - Subscribes to `job:completed` / `job:failed` to detect terminal events.
-//  - Polls `job_status` after each event to derive the current phase (including
-//    the `paused` flag, which lives only in memory on the backend registry).
+//  - Subscribes to `job:completed` / `job:failed` / `job:stopped` to detect every
+//    terminal transition reliably (the walk fires no op event after a Stop, and a
+//    halt fires none for the failed op - so a status poll alone would race them).
+//  - Refreshes `job_status` after each event to derive the current phase (including
+//    the `paused` flag, which lives only in memory on the backend registry) and to
+//    backfill the progress counters from the durable journal on mount.
 //  - Exposes `pause`, `resume`, `stop`, and `acknowledge` actions.
 //
 // Phase mapping (from JobStatus.state + .paused + .blocks_further_tidying):
@@ -71,26 +74,49 @@ export interface UseApplyJob {
 
 // ---------- private helpers ----------
 
-/** Convert a completed op into a plain-language sentence (FD-23, no raw paths). */
-function opToSentence(kind: string, label: string): string | null {
+/**
+ * Convert a completed op into a plain-language sentence (FD-23, no raw paths).
+ *
+ * MODE-AWARE (Critical 1): a dry-run rehearsal moves nothing, so its feed says
+ * what was CHECKED, never what was moved. Only the dry-run mode is reachable this
+ * release, so a mode-agnostic "Moved X" sentence would be false on every line the
+ * user actually sees. The real-apply templates ship ready for when a Real apply
+ * becomes reachable.
+ */
+function opToSentence(
+  kind: string,
+  label: string,
+  mode: "dry-run" | "real",
+): string | null {
+  const rehearsal = mode === "dry-run";
   switch (kind) {
     case "move":
     case "rename":
-      return STRINGS.apply.opMovedSentence(label);
+      return rehearsal
+        ? STRINGS.apply.rehearsalOpMovedSentence(label)
+        : STRINGS.apply.opMovedSentence(label);
     case "quarantine":
-      return STRINGS.apply.opSetAsideSentence(label);
+      return rehearsal
+        ? STRINGS.apply.rehearsalOpSetAsideSentence(label)
+        : STRINGS.apply.opSetAsideSentence(label);
     case "rmdir-empty":
-      return STRINGS.apply.opRemovedEmpty;
+      return rehearsal
+        ? STRINGS.apply.rehearsalOpRemovedEmpty
+        : STRINGS.apply.opRemovedEmpty;
     case "mkdir":
-      return STRINGS.apply.opCreatedFolder;
+      return rehearsal
+        ? STRINGS.apply.rehearsalOpCreatedFolder
+        : STRINGS.apply.opCreatedFolder;
     case "no-op":
       // No-ops complete silently - not shown in the feed (they are
       // bookkeeping rows, not user-visible actions).
       return null;
     default:
-      // Unknown kind: show a generic "moved" sentence rather than leaking an
-      // internal token. The label is still safe (last path component only).
-      return STRINGS.apply.opMovedSentence(label);
+      // Unknown kind: show a generic sentence rather than leaking an internal
+      // token. The label is still safe (last path component only).
+      return rehearsal
+        ? STRINGS.apply.rehearsalOpMovedSentence(label)
+        : STRINGS.apply.opMovedSentence(label);
   }
 }
 
@@ -133,6 +159,14 @@ export function useApplyJob(jobId: number, mode: "dry-run" | "real"): UseApplyJo
       setDiscrepancyCount(status.discrepancy_count);
       setErrorCode(status.error_code);
 
+      // Backfill the progress counters from the durable journal (IMPORTANT 4) so a
+      // fast dry-run that finished before the listeners attached still shows the
+      // true "X of Y books". `Math.max` keeps this monotonic: a live event that has
+      // already advanced the counters is never dragged backwards by a slightly
+      // older status read.
+      setDoneCount((prev) => Math.max(prev, status.done_count));
+      setTotal((prev) => Math.max(prev, status.total));
+
       if (st === "running") {
         setPhase("running");
       } else if (st === "stopped") {
@@ -167,16 +201,18 @@ export function useApplyJob(jobId: number, mode: "dry-run" | "real"): UseApplyJo
       const payload = event.payload;
       if (payload.job_id !== jobId) return;
 
-      // Add the sentence for this op to the feed (omit no-ops).
-      const sentence = opToSentence(payload.kind, payload.label);
+      // Add the sentence for this op to the feed (omit no-ops). Mode-aware so a
+      // rehearsal never claims a real move (Critical 1).
+      const sentence = opToSentence(payload.kind, payload.label, mode);
       if (sentence !== null) {
         setFeed((prev) => [...prev, { id: payload.op_id, sentence }]);
       }
 
-      // Update progress counters directly from the event payload (lower
-      // latency than waiting for job_status to settle).
-      setDoneCount(payload.done_count);
-      setTotal(payload.total);
+      // Update progress counters from the event payload (lower latency than
+      // waiting for job_status to settle); `Math.max` keeps them monotonic against
+      // the mount backfill.
+      setDoneCount((prev) => Math.max(prev, payload.done_count));
+      setTotal((prev) => Math.max(prev, payload.total));
 
       // Refresh status for the paused flag - the backend may have flipped it
       // after the last op in the current run.
@@ -193,12 +229,22 @@ export function useApplyJob(jobId: number, mode: "dry-run" | "real"): UseApplyJo
       void refreshStatus();
     });
 
+    // The DISTINCT cooperative-Stop terminal event (IMPORTANT 3): the walk fires no
+    // `apply:op-executed` after a Stop, so without this the surface would race a
+    // single status poll and often miss the `stopped` transition. The status
+    // refresh here is the same authoritative read the other terminal events use.
+    const unlistenStopped = events.jobStopped.listen((event) => {
+      if (event.payload.job_id !== jobId) return;
+      void refreshStatus();
+    });
+
     return () => {
       unlistenOp.then((f) => f());
       unlistenCompleted.then((f) => f());
       unlistenFailed.then((f) => f());
+      unlistenStopped.then((f) => f());
     };
-  }, [jobId, refreshStatus]);
+  }, [jobId, mode, refreshStatus]);
 
   // ---------- actions ----------
 

@@ -5,7 +5,10 @@ import { DEFAULT_ROUTE, type RouteId } from "@/routes";
 import { DEFAULT_THEME, isTheme, type Theme } from "@/lib/theme";
 import { pickLibraryFolder } from "@/lib/dialog";
 import type { AppSettings } from "@/lib/settings";
-import { commands } from "@/lib/bindings";
+import { commands, type AppError } from "@/lib/bindings";
+import { appErrorCode, formatAppError } from "@/lib/appError";
+import { copyForCode } from "@/lib/errorCopy";
+import { ErrorCallout } from "@/components/states/ErrorCallout";
 import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
 import { ScreenContainer } from "./ScreenContainer";
@@ -44,6 +47,10 @@ interface ActiveJob {
 export function AppShell({ settings, onUpdate }: AppShellProps) {
   const [route, setRoute] = useState<RouteId>(DEFAULT_ROUTE);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
+  // A tidy-up that never started (apply_start failed): there is no job to show, so
+  // this holds the family-safe error surface instead of failing silently to the
+  // console (P8 minor). Cleared by the retry action, which returns to the review.
+  const [startError, setStartError] = useState<AppError | null>(null);
   // ONE `classify_overview` load for the whole shell (T-15): the Sidebar
   // badges and the Library home both derive from this single `health` value,
   // so they can never disagree and both refresh together when a scan
@@ -70,12 +77,13 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   // NEVER targets E:\Books - Audio or any real library in CI/tests; the plan
   // fixture path is the only real-world path a dry-run touches, and it uses MemFs.
   const onStartApply = useCallback(async (planId: number) => {
+    setStartError(null);
     const result = await commands.applyStart(planId, "dry-run");
     if (result.status === "error") {
-      // Surface failure from the shell: apply_start failing means the job never
-      // started, so there is no job to navigate to. A future release will route
-      // this to an ErrorCallout; for now log and stay on the review screen.
-      console.error("apply_start failed:", result.error);
+      // apply_start failing means the job never started, so there is no job to
+      // navigate to. Surface the family-safe error state (P8 minor) rather than a
+      // console-only log; the user can dismiss it and try again from the review.
+      setStartError(result.error);
       return;
     }
     setActiveJob({ jobId: result.data.job_id, mode: "dry-run" });
@@ -97,6 +105,12 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
         <ScreenContainer>
           {activeJob ? (
             <Apply jobId={activeJob.jobId} mode={activeJob.mode} onDone={onApplyDone} />
+          ) : startError ? (
+            <ErrorCallout
+              copy={copyForCode(appErrorCode(startError))}
+              detail={formatAppError(startError)}
+              onRetry={() => setStartError(null)}
+            />
           ) : (
             <RouteContent
               route={route}

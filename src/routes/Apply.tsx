@@ -24,6 +24,7 @@
 import { useEffect, useRef } from "react";
 import { CheckCircle2, AlertTriangle, PauseCircle, StopCircle } from "lucide-react";
 import { STRINGS } from "@/lib/strings";
+import { copyForCode } from "@/lib/errorCopy";
 import { useApplyJob } from "@/hooks/useApplyJob";
 
 export interface ApplyProps {
@@ -65,8 +66,18 @@ function SecondaryButton({ label, onClick }: { label: string; onClick: () => voi
 // ---------- main component ----------
 
 export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
-  const { phase, paused, feed, doneCount, total, mode: effectiveMode, error, actions } =
-    useApplyJob(jobId, mode);
+  const {
+    phase,
+    paused,
+    feed,
+    doneCount,
+    total,
+    mode: effectiveMode,
+    errorCode,
+    error,
+    discrepancyCount,
+    actions,
+  } = useApplyJob(jobId, mode);
 
   // Auto-scroll the feed tail to the bottom whenever new sentences arrive.
   const feedRef = useRef<HTMLDivElement>(null);
@@ -102,12 +113,15 @@ export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
       <div
         ref={feedRef}
         className="flex-1 overflow-y-auto px-6 py-4"
-        aria-label="Activity"
+        role="log"
+        aria-label={STRINGS.apply.activityLabel}
         aria-live="polite"
         aria-relevant="additions"
       >
         {feed.length === 0 && phase === "running" && !paused && (
-          <p className="text-[13.5px] text-ink-3">{STRINGS.apply.subline}</p>
+          <p className="text-[13.5px] text-ink-3">
+            {effectiveMode === "dry-run" ? STRINGS.apply.rehearsalSubline : STRINGS.apply.subline}
+          </p>
         )}
         <ul className="space-y-1.5 list-none">
           {feed.map((item) => (
@@ -147,10 +161,14 @@ export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
           <StatePanel
             icon={<StopCircle size={18} aria-hidden className="text-ink-3" />}
             heading={STRINGS.apply.stoppedHeading}
-            body={STRINGS.apply.stoppedBody}
+            body={
+              effectiveMode === "dry-run"
+                ? STRINGS.apply.rehearsalStoppedBody
+                : STRINGS.apply.stoppedBody
+            }
           >
             <div className="mt-3">
-              <SecondaryButton label="Done" onClick={onDone} />
+              <PrimaryButton label={STRINGS.apply.doneAction} onClick={onDone} />
             </div>
           </StatePanel>
         )}
@@ -168,7 +186,7 @@ export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
             </p>
             <p className="mt-1 text-[12.5px] text-ink-3">{STRINGS.apply.undoSaved}</p>
             <div className="mt-3">
-              <PrimaryButton label="Done" onClick={onDone} />
+              <PrimaryButton label={STRINGS.apply.doneAction} onClick={onDone} />
             </div>
           </StatePanel>
         )}
@@ -181,7 +199,7 @@ export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
             body={STRINGS.apply.rehearsalCompletedBody}
           >
             <div className="mt-3">
-              <PrimaryButton label="Done" onClick={onDone} />
+              <PrimaryButton label={STRINGS.apply.doneAction} onClick={onDone} />
             </div>
           </StatePanel>
         )}
@@ -193,6 +211,22 @@ export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
             heading={STRINGS.apply.blockedHeading}
             body={STRINGS.apply.blockedBody}
           >
+            {/* IMPORTANT 5: name how many differences the check found, so "Got it"
+                is no longer the only content. The technical pointer to the saved
+                report sits behind "Show file details" (FD-13). */}
+            {discrepancyCount > 0 && (
+              <p className="mt-1.5 text-[13px] font-medium text-ink-2">
+                {STRINGS.apply.blockedCountLine(discrepancyCount)}
+              </p>
+            )}
+            <details className="mt-2 max-w-[52ch]">
+              <summary className="cursor-pointer text-[12.5px] font-semibold text-link">
+                {STRINGS.states.showFileDetails}
+              </summary>
+              <p className="mt-2 text-[12.5px] leading-relaxed text-ink-3">
+                {STRINGS.apply.blockedReportPointer}
+              </p>
+            </details>
             <div className="mt-3">
               <PrimaryButton label={STRINGS.apply.acknowledgeAction} onClick={actions.acknowledge} />
             </div>
@@ -201,7 +235,7 @@ export function Apply({ jobId, mode = "dry-run", onDone }: ApplyProps) {
 
         {/* Failed (FD-04 surface: what happened / what is safe / what to do next) */}
         {phase === "failed" && (
-          <FailedPanel detail={error} />
+          <FailedPanel errorCode={errorCode} detail={error} onDone={onDone} />
         )}
       </div>
     </div>
@@ -231,18 +265,51 @@ function StatePanel({ icon, heading, body, children }: StatePanelProps) {
   );
 }
 
-/** FD-04 failure surface: plain language, what stopped the tidy-up, what is safe, disclosure. */
-function FailedPanel({ detail }: { detail: string | null }) {
+/**
+ * FD-04 failure surface (Critical 2): the three family-safe parts, driven by the
+ * per-code copy map so the "what happened" and "what to do next" lines are
+ * specific to the actual failure, not a generic heading. The machine code stays
+ * behind "Show file details" (FD-13), and a primary action lets the user leave a
+ * failed apply (the surface is otherwise a dead end - the shell clears the active
+ * job only through this handler).
+ *
+ * The tone (`--danger` vs `--warn`) follows the code's own copy entry, exactly as
+ * the shared ErrorCallout does everywhere else; both token pairs are WCAG AA in
+ * both themes (AC-31), and both are distinct from `--alert`.
+ */
+function FailedPanel({
+  errorCode,
+  detail,
+  onDone,
+}: {
+  errorCode: string | null;
+  detail: string | null;
+  onDone: () => void;
+}) {
+  const copy = copyForCode(errorCode ?? "");
+  const toneText = copy.tone === "danger" ? "text-danger" : "text-warn";
   return (
     <div className="flex items-start gap-2.5" role="alert">
-      <AlertTriangle size={18} aria-hidden className="mt-0.5 flex-none text-danger" />
+      <AlertTriangle size={18} aria-hidden className={`mt-0.5 flex-none ${toneText}`} />
       <div>
-        <p className="text-[14px] font-semibold text-danger">{STRINGS.apply.failedHeading}</p>
+        {/* What happened: the plain-language banner + the code-specific sentence. */}
+        <p className={`text-[14px] font-semibold ${toneText}`}>{STRINGS.apply.failedHeading}</p>
         <p className="mt-1 max-w-[52ch] text-[13px] leading-relaxed text-ink-2 text-pretty">
+          {copy.sentence}
+        </p>
+        {/* What is safe: always true - no audiobook is ever left half-moved. */}
+        <p className="mt-1.5 max-w-[52ch] text-[13px] leading-relaxed text-ink-2 text-pretty">
           {STRINGS.apply.failedSafeNote}
         </p>
-        {/* FD-13 disclosure: raw technical code for tier-1 support; never shown
-            as the primary sentence. Summary text never contains a path. */}
+        {/* What to do next: the one calm remediation for this specific code. */}
+        <p className="mt-1.5 max-w-[52ch] text-[13px] leading-relaxed text-ink-2 text-pretty">
+          {copy.nextStep}
+        </p>
+        <div className="mt-3">
+          <PrimaryButton label={STRINGS.apply.doneAction} onClick={onDone} />
+        </div>
+        {/* FD-13 disclosure: the raw machine code for tier-1 support; never shown
+            as a family-facing line. The summary text never contains a path. */}
         {detail && (
           <details className="mt-3 max-w-[52ch]">
             <summary className="cursor-pointer text-[12.5px] font-semibold text-link">

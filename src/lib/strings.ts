@@ -213,17 +213,28 @@ export const STRINGS = {
   apply: {
     // Heading while running (dry-run mode adds the badge below separately).
     heading: "Tidying up your books",
-    // Sub-line shown while the walk is running.
+    // Sub-line shown while a REAL walk is running (it moves books for real).
     subline: "Moving books to their new shelves. This may take a little while.",
+    // Sub-line shown while a REHEARSAL (dry-run) is running: a rehearsal moves
+    // nothing, so it never claims to (the surface must never present a rehearsal
+    // as real moves - Critical 1).
+    rehearsalSubline:
+      "Checking each book against its new shelf. This may take a little while.",
     // Badge shown for a rehearsal (dry-run) apply - NOT a real move.
     rehearsalBadge: "Rehearsal",
     // Pause / resume labels (AC-28): the label toggles depending on state.
     pauseAction: "Pause between books",
     resumeAction: "Resume",
     stopAction: "Stop",
+    // The calm "I'm finished with this screen" action shared by every terminal
+    // state (stopped / completed / rehearsal complete / failed), FD-23: one key,
+    // one word, never inlined at a call site.
+    doneAction: "Done",
+    // Accessible name for the scrolling sentence feed region (FD-23).
+    activityLabel: "Activity",
     // Acknowledge action for the blocked-further-groups state (F-604, AC-29).
     acknowledgeAction: "Got it",
-    // Progress line: "3 of 47 books moved"
+    // Progress line: "3 of 47 books"
     progressLine: (done: number, total: number) =>
       `${done.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} books`,
     // Paused state: shown instead of the sub-line when the job is paused.
@@ -232,8 +243,13 @@ export const STRINGS = {
       "The tidy-up is waiting at a safe stopping point. Your books are exactly where they were when you paused.",
     // Stopped state: cooperative Stop, not an error (AC-26).
     stoppedHeading: "Stopped between books",
+    // Real-apply stopped body: some books really did move to their new places.
     stoppedBody:
       "The tidy-up was stopped at a safe point. The books that have already been moved are in their new places. Nothing was lost or damaged.",
+    // Rehearsal stopped body (Critical 1): a rehearsal moved nothing, so it never
+    // claims books are "in their new places".
+    rehearsalStoppedBody:
+      "The rehearsal was stopped at a safe point. No books were moved - this was only a rehearsal. Nothing was lost or damaged.",
     // Completed state (no block).
     completedHeading: "Tidy-up complete",
     completedBody: "All the included books have been tidied up.",
@@ -243,17 +259,35 @@ export const STRINGS = {
     blockedHeading: "Tidy-up complete - needs a look",
     blockedBody:
       "The books have been moved, but the after-the-fact check found something that needs your attention before the next tidy-up can run. Everything is safe.",
+    // How many differences the after-the-fact check found (IMPORTANT 5): the
+    // blocked state names the specifics instead of an unexplained "Got it".
+    blockedCountLine: (count: number) =>
+      count === 1
+        ? "The check found 1 thing to look at before the next tidy-up."
+        : `The check found ${count.toLocaleString("en-US")} things to look at before the next tidy-up.`,
+    // The technical pointer to the saved check report (FD-13): named behind
+    // "Show file details", never on the family-facing line.
+    blockedReportPointer:
+      'The full check details are saved as "after-the-fact-check.md" in your Reports folder.',
     // Failed state (FD-04, AC-29): plain language, what happened / what is safe / what to do next.
     failedHeading: "Something stopped the tidy-up",
     // What is safe (always true for all failure modes - no audiobook is ever deleted mid-op).
     failedSafeNote:
       "Your books are safe. No book was moved only partway - every change either completed or was left as it was.",
-    // Sentence templates for the scrolling feed of completed ops.
+    // Sentence templates for the scrolling feed of completed ops on a REAL apply.
     // Called with the op's `label` (the book or folder name, no path).
     opMovedSentence: (label: string) => `Moved ${label} to its new shelf.`,
     opSetAsideSentence: (label: string) => `Set aside ${label}.`,
     opRemovedEmpty: "Removed an empty folder.",
     opCreatedFolder: "Created a new folder.",
+    // Feed sentences for a REHEARSAL (dry-run): nothing actually moved, so every
+    // sentence says what was CHECKED, never what was moved (Critical 1).
+    rehearsalOpMovedSentence: (label: string) =>
+      `Checked ${label} - ready for its new shelf.`,
+    rehearsalOpSetAsideSentence: (label: string) =>
+      `Checked ${label} - ready to set aside.`,
+    rehearsalOpRemovedEmpty: "Checked an empty folder - ready to remove.",
+    rehearsalOpCreatedFolder: "Checked the spot for a new folder.",
     // Dry-run framing (never presented as real moves).
     rehearsalCompletedHeading: "Rehearsal complete",
     rehearsalCompletedBody:
