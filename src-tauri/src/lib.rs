@@ -15,10 +15,13 @@
 //! re-plan preview `commands::plan::plan_preview` and the scan Stop control
 //! (`scan_cancel`, already wired since v0.2.0; this phase gives it a real
 //! frontend affordance, AC-36).
-//! v0.5.0 (acting) Phase 1 adds the F-607 executor seam command
-//! (`commands::apply::apply_start`): a dry-run walk of an approved plan against an
-//! in-memory `MemFs`. A Real apply is refused with `apply-not-supported` this
-//! phase (D-09); the operation logic and the F-904 apply surface land later.
+//! v0.5.0 (acting) lands the full executor: `commands::apply::apply_start`
+//! runs an approved plan as a spawned job (DryRun against `MemFs`, Real against
+//! `RealFs`), with journal-before-act, single-writer locking, pause/resume and
+//! Stop (`job_pause`/`job_resume`), post-apply verification with the
+//! block-further-tidying gate, rollback preparation (`rollback_prepare`), and
+//! the F-904 apply surface. The v1 UI pins mode to dry-run; a Real apply
+//! against the actual library remains a human-only action (D-10).
 //!   - commands -> IPC command handlers (payload contract lives in abo-core::ipc)
 //!   - events   -> backend -> frontend typed event emission
 //!
