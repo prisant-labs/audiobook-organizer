@@ -9,6 +9,8 @@ import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { Apply } from "../Apply";
 import { useApplyJob, type UseApplyJob } from "@/hooks/useApplyJob";
+import { ERROR_COPY } from "@/lib/errorCopy";
+import { STRINGS } from "@/lib/strings";
 
 vi.mock("@/hooks/useApplyJob", () => ({ useApplyJob: vi.fn() }));
 const mockedUseApplyJob = vi.mocked(useApplyJob);
@@ -143,7 +145,7 @@ describe("Apply - paused phase", () => {
 // ---------- phase: stopped ----------
 
 describe("Apply - stopped phase", () => {
-  it("shows 'stopped between books' copy and no primary action button", () => {
+  it("shows 'stopped between books' copy and a single Done action", () => {
     mockedUseApplyJob.mockReturnValue({
       ...baseRunning(),
       phase: "stopped",
@@ -153,9 +155,43 @@ describe("Apply - stopped phase", () => {
     render(<Apply jobId={1} onDone={vi.fn()} />);
 
     expect(screen.getByText(/stopped between books/i)).toBeInTheDocument();
-    // No Pause/Resume/Stop in the stopped state
+    // No Pause/Resume/Stop in the stopped state; exactly one primary action.
     expect(screen.queryByRole("button", { name: /pause between books/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+    expect(screen.getByRole("button", { name: new RegExp(STRINGS.apply.doneAction, "i") })).toBeInTheDocument();
+  });
+
+  it("a stopped REHEARSAL never claims books moved to their new places (Critical 1)", () => {
+    mockedUseApplyJob.mockReturnValue({
+      ...baseRunning(),
+      phase: "stopped",
+      mode: "dry-run",
+      doneCount: 1,
+      total: 5,
+    });
+    render(<Apply jobId={1} onDone={vi.fn()} />);
+
+    expect(screen.getByText(STRINGS.apply.rehearsalStoppedBody)).toBeInTheDocument();
+    expect(screen.queryByText(/in their new places/i)).toBeNull();
+  });
+});
+
+// ---------- mode-aware feed (Critical 1) ----------
+
+describe("Apply - rehearsal feed", () => {
+  it("a dry-run feed sentence is a 'Checked' line, not a 'Moved' claim", () => {
+    // The hook composes the sentence, so at the ROUTE level we assert the surface
+    // simply renders whatever the (mode-aware) hook produced; the hook's own
+    // mode-to-sentence mapping is covered in useApplyJob.test.ts.
+    mockedUseApplyJob.mockReturnValue(
+      baseRunning({
+        mode: "dry-run",
+        feed: [{ id: 1, sentence: STRINGS.apply.rehearsalOpMovedSentence("The Eye of the World") }],
+      }),
+    );
+    render(<Apply jobId={1} onDone={vi.fn()} />);
+    expect(screen.getByText(/checked the eye of the world - ready for its new shelf\./i)).toBeInTheDocument();
+    expect(screen.queryByText(/^moved /i)).toBeNull();
   });
 });
 
@@ -220,12 +256,31 @@ describe("Apply - blocked phase", () => {
     fireEvent.click(screen.getByRole("button", { name: /got it/i }));
     expect(acknowledge).toHaveBeenCalledTimes(1);
   });
+
+  it("names how many differences the check found, and hides the report pointer behind Show file details (IMPORTANT 5)", () => {
+    mockedUseApplyJob.mockReturnValue({
+      ...baseRunning(),
+      phase: "blocked",
+      blocked: true,
+      discrepancyCount: 3,
+    });
+    const { container } = render(<Apply jobId={1} onDone={vi.fn()} />);
+
+    // The specifics: how many things the check found, so "Got it" is no longer the
+    // only content.
+    expect(screen.getByText(STRINGS.apply.blockedCountLine(3))).toBeInTheDocument();
+    // The technical pointer lives inside the disclosure, not on the summary line.
+    expect(screen.getByText(/show file details/i)).toBeInTheDocument();
+    const summaryEl = container.querySelector("summary");
+    expect(summaryEl?.textContent).not.toContain("after-the-fact-check.md");
+    expect(screen.getByText(STRINGS.apply.blockedReportPointer)).toBeInTheDocument();
+  });
 });
 
 // ---------- phase: failed (FD-04 surface) ----------
 
 describe("Apply - failed phase", () => {
-  it("renders the FD-04 surface: what happened, what is safe, what to do next", () => {
+  it("renders all THREE FD-04 parts from the per-code copy map (Critical 2)", () => {
     mockedUseApplyJob.mockReturnValue({
       ...baseRunning(),
       phase: "failed",
@@ -234,12 +289,45 @@ describe("Apply - failed phase", () => {
     });
     render(<Apply jobId={1} onDone={vi.fn()} />);
 
-    // What stopped the tidy-up (plain language heading)
+    // 1. What happened - the CODE-SPECIFIC sentence from ERROR_COPY, not a generic
+    //    heading alone (the banner is present too, but the specific sentence proves
+    //    the panel now consumes the exhaustive copy map).
     expect(screen.getByText(/something stopped the tidy-up/i)).toBeInTheDocument();
-    // What is safe (always shown)
-    expect(screen.getByText(/your books are safe/i)).toBeInTheDocument();
-    // Show file details disclosure (FD-13)
+    expect(screen.getByText(ERROR_COPY["source-vanished"].sentence)).toBeInTheDocument();
+    // 2. What is safe - always shown.
+    expect(screen.getByText(STRINGS.apply.failedSafeNote)).toBeInTheDocument();
+    // 3. What to do next - the CODE-SPECIFIC next step from ERROR_COPY.
+    expect(screen.getByText(ERROR_COPY["source-vanished"].nextStep)).toBeInTheDocument();
+    // Show file details disclosure (FD-13).
     expect(screen.getByText(/show file details/i)).toBeInTheDocument();
+  });
+
+  it("offers a primary action so a failed apply is not a dead end (Critical 2)", () => {
+    const onDone = vi.fn();
+    mockedUseApplyJob.mockReturnValue({
+      ...baseRunning(),
+      phase: "failed",
+      errorCode: "access-denied",
+      error: "access-denied",
+    });
+    render(<Apply jobId={1} onDone={onDone} />);
+
+    const done = screen.getByRole("button", { name: new RegExp(STRINGS.apply.doneAction, "i") });
+    expect(done).toBeInTheDocument();
+    fireEvent.click(done);
+    expect(onDone).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses a per-code sentence, not the generic fallback, for a known code", () => {
+    mockedUseApplyJob.mockReturnValue({
+      ...baseRunning(),
+      phase: "failed",
+      errorCode: "access-denied",
+      error: "access-denied",
+    });
+    render(<Apply jobId={1} onDone={vi.fn()} />);
+    expect(screen.getByText(ERROR_COPY["access-denied"].sentence)).toBeInTheDocument();
+    expect(screen.getByText(ERROR_COPY["access-denied"].nextStep)).toBeInTheDocument();
   });
 
   it("never shows a raw path as primary content", () => {

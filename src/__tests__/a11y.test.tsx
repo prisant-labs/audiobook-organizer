@@ -199,4 +199,35 @@ describe("axe-core accessibility smoke (T-36, AC-41)", () => {
       [],
     );
   });
+
+  it("the apply FAILED panel has zero serious/critical violations", async () => {
+    // The FD-04 failure surface (Critical 2): danger/warn tone, disclosure, and a
+    // primary action - the highest-stakes state, so it gets its own axe smoke.
+    mockedUseApplyJob.mockReturnValue(
+      applyJobState({
+        phase: "failed",
+        feed: [],
+        errorCode: "access-denied",
+        error: "access-denied",
+      }),
+    );
+    const { container } = render(<Apply jobId={1} onDone={vi.fn()} />);
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+
+  it("the apply BLOCKED panel has zero serious/critical violations", async () => {
+    // The completed-but-blocked surface (IMPORTANT 5): count line, disclosure, and
+    // the acknowledge action.
+    mockedUseApplyJob.mockReturnValue(
+      applyJobState({ phase: "blocked", feed: [], blocked: true, discrepancyCount: 2 }),
+    );
+    const { container } = render(<Apply jobId={1} onDone={vi.fn()} />);
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
 });
