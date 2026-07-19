@@ -153,6 +153,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
         .events(collect_events![
             events::JobCompleted,
             events::JobFailed,
+            // P8 IMPORTANT 3: apply's DISTINCT cooperative-Stop terminal event, so
+            // the activity surface transitions to "stopped between books" reliably.
+            events::JobStopped,
             // Frozen but never emitted in the spine (see events::JobProgress).
             events::JobProgress,
             // P8 prelude 0b: per-operation progress event for the apply surface.

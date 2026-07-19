@@ -182,6 +182,35 @@ async fn build_job_status(
         .map(|c| c.is_paused())
         .unwrap_or(false);
 
+    // P8 IMPORTANT 4 (backfill): seed the activity surface's progress counters from
+    // the DURABLE journal so a fast dry-run that finished before the UI attached its
+    // `apply:op-executed` listeners still shows the true "X of Y books", not
+    // "0 of 0". `done_count` is the committed `done` rows; `total` is the plan's
+    // approved-op count, found via any journal row's `op_id` (the `jobs` row carries
+    // no `plan_id`). Both read 0 only before the job journals its first op, which the
+    // live events then fill in.
+    let done_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM journal WHERE job_id = ? AND phase = 'done'")
+            .bind(job_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::ApplyFailed {
+                detail: format!("could not read the tidy-up's progress: {e}"),
+            })?;
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM plan_ops \
+         WHERE approval = 'approved' AND plan_id = ( \
+             SELECT po.plan_id FROM plan_ops po \
+             JOIN journal j ON j.op_id = po.id \
+             WHERE j.job_id = ? LIMIT 1)",
+    )
+    .bind(job_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::ApplyFailed {
+        detail: format!("could not read the tidy-up's total: {e}"),
+    })?;
+
     Ok(JobStatus {
         job_id,
         state,
@@ -189,6 +218,8 @@ async fn build_job_status(
         blocks_further_tidying,
         discrepancy_count,
         paused,
+        done_count,
+        total,
     })
 }
 
@@ -294,6 +325,90 @@ mod tests {
             .await
             .expect("status");
         assert!(s.paused, "paused control -> paused: true");
+    }
+
+    /// P8 IMPORTANT 4 (backfill): `done_count` and `total` are read from the durable
+    /// journal + plan, so a job whose events were missed still reports the true
+    /// progress. A job with two approved ops, one of which has committed its `done`
+    /// row, reports `done_count = 1` and `total = 2`; a job with no journal reads 0.
+    #[tokio::test]
+    async fn job_status_backfills_progress_from_the_journal() {
+        let db = TempDir::new().expect("db tempdir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let job_id = seed_completed_job(&pool).await;
+
+        // No journal yet: both counters read 0 (the pre-first-op transient).
+        let empty = build_job_status(&pool, job_id, &empty_registry())
+            .await
+            .expect("status");
+        assert_eq!(empty.done_count, 0);
+        assert_eq!(empty.total, 0);
+
+        // A scan + ruleset + plan so the plan_ops FK resolves, then two approved ops.
+        let scan_id =
+            sqlx::query("INSERT INTO scans (source, root_path, started_at, status) VALUES ('live','E:/lib',?,'completed')")
+                .bind(NOW)
+                .execute(&pool)
+                .await
+                .expect("scan")
+                .last_insert_rowid();
+        let ruleset_id = abo_core::db::rulesets::insert_ruleset(
+            &pool,
+            &abo_core::db::rulesets::NewRuleset {
+                name: "d",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            NOW,
+        )
+        .await
+        .expect("ruleset");
+        let plan_id = sqlx::query(
+            "INSERT INTO plans (scan_id, ruleset_id, created_at, status) VALUES (?, ?, ?, 'draft')",
+        )
+        .bind(scan_id)
+        .bind(ruleset_id)
+        .bind(NOW)
+        .execute(&pool)
+        .await
+        .expect("plan")
+        .last_insert_rowid();
+        // Two approved ops and one excluded op (excluded must NOT count toward total).
+        let mut op_ids = Vec::new();
+        for (seq, approval) in [(0, "approved"), (1, "approved"), (2, "excluded")] {
+            let id = sqlx::query(
+                "INSERT INTO plan_ops (plan_id, seq, op_group, kind, source_path, target_path, \
+                 rationale, rule_id, confidence, approval) \
+                 VALUES (?, ?, 'loose-root-books', 'move', 'E:/lib/a.m4b', 'E:/lib/A/a.m4b', \
+                 'r', 'rule', 'high', ?)",
+            )
+            .bind(plan_id)
+            .bind(seq)
+            .bind(approval)
+            .execute(&pool)
+            .await
+            .expect("op")
+            .last_insert_rowid();
+            op_ids.push(id);
+        }
+
+        // One committed `done` row on the first approved op (intent + done).
+        for (op_id, phase) in [(op_ids[0], "intent"), (op_ids[0], "done")] {
+            sqlx::query("INSERT INTO journal (job_id, seq, op_id, phase, at) VALUES (?, 0, ?, ?, ?)")
+                .bind(job_id)
+                .bind(op_id)
+                .bind(phase)
+                .bind(NOW)
+                .execute(&pool)
+                .await
+                .expect("journal row");
+        }
+
+        let status = build_job_status(&pool, job_id, &empty_registry())
+            .await
+            .expect("status");
+        assert_eq!(status.done_count, 1, "one op has a committed done row");
+        assert_eq!(status.total, 2, "two approved ops; the excluded op is not counted");
     }
 
     // ---- Phase 7: pause/resume/stop command logic (AC-24, AC-26) ----

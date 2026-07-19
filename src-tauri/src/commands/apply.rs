@@ -330,6 +330,10 @@ pub async fn apply_start(
     tauri::async_runtime::spawn(async move {
         let journal = SqliteJournal::new(pool_owned.clone());
         let pool_for_wrapper = pool_owned.clone();
+        // Held back for the terminal-event emit below (P8 IMPORTANT 3): both are
+        // cloned BEFORE `app` and `pool_owned` are moved into the observer / walk.
+        let app_terminal = app.clone();
+        let pool_terminal = pool_owned.clone();
         // The per-op observer emits `apply:op-executed` events to the frontend (P8
         // prelude 0b). One AppHandle clone per task (clonable, cheap handle wrapper).
         let observer = ShellObserver { app };
@@ -397,9 +401,57 @@ pub async fn apply_start(
         };
 
         run_apply_to_terminal(pool_for_wrapper, job_id, flag, registry, work).await;
+
+        // P8 IMPORTANT 3: the walk is now durably terminal (the `jobs` row is
+        // `completed`, `failed`, or `stopped`, and the control has left the
+        // registry). Emit the matching terminal event so the activity surface
+        // transitions reliably instead of racing the last `apply:op-executed` event
+        // with a single status poll. Fire-and-forget and post-durable-state: a
+        // dropped event is harmless because the mount/op-executed status refresh is
+        // the fallback. `scan_id` is the plan's scan (the value already captured for
+        // the dry-run seed); a scan listener filters it out by `job_id`.
+        emit_apply_terminal(&app_terminal, &pool_terminal, job_id, scan_id).await;
     });
 
     Ok(JobStarted { job_id })
+}
+
+/// Emit the terminal event that matches an apply job's DURABLE final state (P8
+/// IMPORTANT 3), read straight back from the `jobs` row after the walk finished:
+/// `job:completed` for a clean or blocked completion, `job:stopped` for a
+/// cooperative Stop (AC-26), `job:failed` (carrying the stable error code) for a
+/// halt/panic. Fire-and-forget: it runs AFTER the state is durably marked, so a
+/// missed event never perturbs the walk, and the activity surface's status refresh
+/// remains the fallback. A read error is swallowed (the durable row is the truth;
+/// the fallback poll still resolves the phase).
+async fn emit_apply_terminal(app: &tauri::AppHandle, pool: &SqlitePool, job_id: i64, scan_id: i64) {
+    let row: Option<(String, Option<String>)> =
+        match sqlx::query_as("SELECT state, error_code FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("could not read terminal state to emit an event for job {job_id}: {e}");
+                return;
+            }
+        };
+    let Some((state, error_code)) = row else {
+        return;
+    };
+    match state.as_str() {
+        "completed" => crate::events::emit_job_completed(app, job_id, scan_id),
+        "stopped" => crate::events::emit_job_stopped(app, job_id),
+        "failed" => crate::events::emit_job_failed(
+            app,
+            job_id,
+            error_code.as_deref().unwrap_or("apply-failed"),
+        ),
+        // Any non-terminal state here would be a bug (the walk always marks the row
+        // terminal); stay silent rather than emit a misleading event.
+        _ => {}
+    }
 }
 
 /// Drive a spawned apply's `work` future to a terminal `jobs`-row state,

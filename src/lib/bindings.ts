@@ -350,6 +350,7 @@ export const events = {
 	jobCompleted: makeEvent<JobCompleted>("job:completed"),
 	jobFailed: makeEvent<JobFailed>("job:failed"),
 	jobProgress: makeEvent<JobProgress>("job:progress"),
+	jobStopped: makeEvent<JobStopped>("job:stopped"),
 };
 
 /* Types */
@@ -1040,7 +1041,11 @@ export type HealthMetrics = {
 	total_bytes: number,
 };
 
-/**  Typed `job:completed` event, emitted when a spawned scan finishes cleanly. */
+/**
+ *  Typed `job:completed` event, emitted when a spawned scan OR apply finishes
+ *  cleanly. Listeners filter by `job_id` (a job id is unique across scan and
+ *  apply), so an apply completion never disturbs a scan listener and vice versa.
+ */
 export type JobCompleted = JobCompletedPayload;
 
 /**
@@ -1055,7 +1060,10 @@ export type JobCompletedPayload = {
 	scan_id: number,
 };
 
-/**  Typed `job:failed` event, emitted when a spawned scan errors. */
+/**
+ *  Typed `job:failed` event, emitted when a spawned scan OR apply errors. Carries
+ *  the stable machine `code`; listeners filter by `job_id`.
+ */
 export type JobFailed = JobFailedPayload;
 
 /**
@@ -1173,6 +1181,43 @@ export type JobStatus = {
 	 *  single-writer lock query remains correct.
 	 */
 	paused: boolean,
+	/**
+	 *  How many operations have finished so far, read from the DURABLE journal
+	 *  (`done` rows). This is the backfill source for the activity surface's
+	 *  progress line: a fast dry-run that finished before the UI attached its
+	 *  `apply:op-executed` listeners still shows the true count, not "0 of 0".
+	 *  The live event carries the same number for the low-latency in-flight case.
+	 */
+	done_count: number,
+	/**
+	 *  The total number of approved operations in this job's walk, found from the
+	 *  plan the job is applying. The backfill partner of `done_count`; `0` only for
+	 *  a job that has not journaled its first operation yet, which the live events
+	 *  then fill in.
+	 */
+	total: number,
+};
+
+/**
+ *  Typed `job:stopped` event (P8, IMPORTANT 3), emitted after an apply job's
+ *  DISTINCT `stopped` terminal state is durably marked. Mirrors the completed /
+ *  failed terminal events so the activity surface transitions reliably rather than
+ *  racing the walk's final state write. Fire-and-forget, post-durable-state.
+ */
+export type JobStopped = JobStoppedPayload;
+
+/**
+ *  Payload of the `job:stopped` event (P8, IMPORTANT 3), emitted after an apply
+ *  job's DISTINCT `stopped` terminal state is durably marked in the `jobs` row
+ *  (a cooperative Stop, AC-26). It mirrors the `job:completed`/`job:failed`
+ *  terminal events so the activity surface transitions to "stopped between books"
+ *  reliably instead of racing the walk's final state write with a single status
+ *  poll. Fire-and-forget and post-durable-state: a dropped event never perturbs
+ *  the walk, and the status poll remains the fallback.
+ */
+export type JobStoppedPayload = {
+	/**  The `jobs.id` of the apply job that stopped cooperatively. */
+	job_id: number,
 };
 
 /**

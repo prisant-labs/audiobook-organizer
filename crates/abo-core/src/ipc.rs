@@ -680,6 +680,17 @@ pub struct JobStatus {
     /// the registry). `jobs.state` stays `"running"` while paused so the
     /// single-writer lock query remains correct.
     pub paused: bool,
+    /// How many operations have finished so far, read from the DURABLE journal
+    /// (`done` rows). This is the backfill source for the activity surface's
+    /// progress line: a fast dry-run that finished before the UI attached its
+    /// `apply:op-executed` listeners still shows the true count, not "0 of 0".
+    /// The live event carries the same number for the low-latency in-flight case.
+    pub done_count: i64,
+    /// The total number of approved operations in this job's walk, found from the
+    /// plan the job is applying. The backfill partner of `done_count`; `0` only for
+    /// a job that has not journaled its first operation yet, which the live events
+    /// then fill in.
+    pub total: i64,
 }
 
 /// Payload of the `apply:op-executed` event (P8 prelude, 0b), emitted after each
@@ -764,6 +775,19 @@ pub struct JobFailedPayload {
     pub job_id: i64,
     /// The stable kebab-case error code (equals [`AppError::code`]).
     pub code: String,
+}
+
+/// Payload of the `job:stopped` event (P8, IMPORTANT 3), emitted after an apply
+/// job's DISTINCT `stopped` terminal state is durably marked in the `jobs` row
+/// (a cooperative Stop, AC-26). It mirrors the `job:completed`/`job:failed`
+/// terminal events so the activity surface transitions to "stopped between books"
+/// reliably instead of racing the walk's final state write with a single status
+/// poll. Fire-and-forget and post-durable-state: a dropped event never perturbs
+/// the walk, and the status poll remains the fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct JobStoppedPayload {
+    /// The `jobs.id` of the apply job that stopped cooperatively.
+    pub job_id: i64,
 }
 
 /// Payload of the `job:progress` event.
