@@ -394,21 +394,26 @@ mod tests {
 
         // One committed `done` row on the first approved op (intent + done).
         for (op_id, phase) in [(op_ids[0], "intent"), (op_ids[0], "done")] {
-            sqlx::query("INSERT INTO journal (job_id, seq, op_id, phase, at) VALUES (?, 0, ?, ?, ?)")
-                .bind(job_id)
-                .bind(op_id)
-                .bind(phase)
-                .bind(NOW)
-                .execute(&pool)
-                .await
-                .expect("journal row");
+            sqlx::query(
+                "INSERT INTO journal (job_id, seq, op_id, phase, at) VALUES (?, 0, ?, ?, ?)",
+            )
+            .bind(job_id)
+            .bind(op_id)
+            .bind(phase)
+            .bind(NOW)
+            .execute(&pool)
+            .await
+            .expect("journal row");
         }
 
         let status = build_job_status(&pool, job_id, &empty_registry())
             .await
             .expect("status");
         assert_eq!(status.done_count, 1, "one op has a committed done row");
-        assert_eq!(status.total, 2, "two approved ops; the excluded op is not counted");
+        assert_eq!(
+            status.total, 2,
+            "two approved ops; the excluded op is not counted"
+        );
     }
 
     // ---- Phase 7: pause/resume/stop command logic (AC-24, AC-26) ----

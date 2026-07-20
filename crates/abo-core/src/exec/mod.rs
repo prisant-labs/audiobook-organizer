@@ -490,7 +490,8 @@ impl<V: Vfs> Executor<V> {
     /// [`run_with_control`](Self::run_with_control), and the observer-aware entry
     /// point is [`run_with_observer`](Self::run_with_observer).
     pub async fn run<J: Journal>(&self, journal: &J, now: &str) -> Result<ExecOutcome, AppError> {
-        self.run_with_observer(journal, now, &NoControl, &NoObserver).await
+        self.run_with_observer(journal, now, &NoControl, &NoObserver)
+            .await
     }
 
     /// The pause/Stop-aware walk (F-608, F-104, FD-02). Identical to [`run`] except
@@ -521,7 +522,8 @@ impl<V: Vfs> Executor<V> {
         now: &str,
         control: &C,
     ) -> Result<ExecOutcome, AppError> {
-        self.run_with_observer(journal, now, control, &NoObserver).await
+        self.run_with_observer(journal, now, control, &NoObserver)
+            .await
     }
 
     /// The pause/Stop-and-observer-aware walk (P8 prelude 0b). Identical to
@@ -545,11 +547,7 @@ impl<V: Vfs> Executor<V> {
         let mut halt: Option<ExecHalt> = None;
         let mut stopped = false;
         // Pre-compute the total approved op count for observer payloads (P8 0b).
-        let total = self
-            .ops
-            .iter()
-            .filter(|o| o.approval == APPROVED)
-            .count() as i64;
+        let total = self.ops.iter().filter(|o| o.approval == APPROVED).count() as i64;
         for op in self.ops.iter().filter(|o| o.approval == APPROVED) {
             // Operation boundary (F-608/F-104): consult pause/Stop BEFORE writing
             // the next intent, so nothing mid-op is ever interrupted and no journal
@@ -904,9 +902,8 @@ fn relative_to(path: &str, root: &str) -> String {
 /// falls back to the last component of `target_path` (the folder being created).
 fn display_label(op: &PlanOpRow) -> String {
     let src = &op.source_path;
-    let last_of = |path: &str| -> String {
-        path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
-    };
+    let last_of =
+        |path: &str| -> String { path.rsplit(['/', '\\']).next().unwrap_or(path).to_string() };
     let last = last_of(src);
     if last.is_empty() && op.kind == "mkdir" {
         return last_of(&op.target_path);

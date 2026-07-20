@@ -45,8 +45,8 @@ use abo_core::exec::manifest::export_after_apply;
 use abo_core::exec::verify::{affected_roots, write_check_report};
 use abo_core::exec::{
     delta_health_metrics, ensure_forward_tidying_allowed, record_block, verify_job, ApplyMode,
-    ApplyScope, CheckReport, ExecControl, ExecHalt, Executor, MemFs, OpObserver,
-    RealFs, SeedEntry, SqliteJournal, Vfs,
+    ApplyScope, CheckReport, ExecControl, ExecHalt, Executor, MemFs, OpObserver, RealFs, SeedEntry,
+    SqliteJournal, Vfs,
 };
 use abo_core::ipc::{AppError, ApplyOpExecutedPayload, ApplyReport, EntryRow, JobStarted};
 use abo_core::plan::builder::default_set_aside_root;
