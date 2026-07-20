@@ -96,6 +96,88 @@ pub fn strip_extended_length_prefix(path: &Path) -> PathBuf {
     }
 }
 
+/// Apply the Windows extended-length (`\\?\`) verbatim prefix to `path` WITHOUT
+/// requiring it to exist - the executor's counterpart to [`to_extended_length`].
+///
+/// [`to_extended_length`] resolves the path with [`std::fs::canonicalize`], which
+/// only works on a path that already exists: right for the scanner's walk root,
+/// wrong for an executor operation's TARGET, which does not exist until the op
+/// creates it (a move's destination, a `create_dir_all` target). This prefixes
+/// the absolute form directly instead, so those paths still open past the legacy
+/// 260-char `MAX_PATH` limit (FD-19). It folds no `.`/`..` components, which is
+/// safe here: plan paths are already normalized absolute paths. This is the one
+/// path-dialect helper the v0.5.0 executor's [`RealFs`](crate::exec::RealFs)
+/// applies at every real filesystem call, keeping `\\?\` handling in this seam
+/// rather than scattered through the operation logic.
+///
+/// Non-Windows (the CI test leg): returns the path unchanged; there is no `\\?\`
+/// concept off Windows.
+#[cfg(windows)]
+pub fn to_extended_length_prefixed(path: &Path) -> PathBuf {
+    let s = path.as_os_str().to_string_lossy();
+    if s.starts_with(r"\\?\") {
+        return path.to_path_buf();
+    }
+    manual_extended_length(path)
+}
+
+/// Non-Windows counterpart to [`to_extended_length_prefixed`]: no `\\?\` concept,
+/// so the path is returned unchanged. Keeps every `RealFs` call site `cfg`-free.
+#[cfg(not(windows))]
+pub fn to_extended_length_prefixed(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
+// ---- Volume detection (F-601 executor: same-volume rename vs cross-volume copy) ----
+//
+// The executor routes a same-volume move through a metadata-only rename (AC-4)
+// and a cross-volume move through copy + verify + delete (AC-5). "Same volume" is
+// decided by comparing the two paths' VOLUME PREFIX. This is pure STRING
+// semantics (a drive letter or a UNC share), not an OS call, so it needs no
+// cfg-gate and is deterministic on every host - which is also what lets a MemFs
+// dry run simulate a cross-volume move with two distinct drive-letter roots, so
+// AC-5 is testable in memory (the CFG RULE: no platform reality leaks in here).
+
+/// The volume a path lives on, as a normalized lowercase string, or `None` when
+/// the path carries no recognizable volume (a relative path, or a POSIX path with
+/// no drive). The `\\?\` verbatim prefix is stripped first so `\\?\E:\x` and
+/// `E:\x` share a volume. Recognizes a Windows drive letter (`e:` from `E:\x` or
+/// `E:/x`) and a UNC share (`\\server\share` from `\\server\share\x`).
+pub fn volume_prefix(path: &Path) -> Option<String> {
+    let stripped = strip_extended_length_prefix(path);
+    let s = stripped.to_string_lossy().replace('/', "\\");
+    // UNC: \\server\share\... -> \\server\share
+    if let Some(rest) = s.strip_prefix("\\\\") {
+        let mut parts = rest.splitn(3, '\\');
+        let server = parts.next().unwrap_or("");
+        let share = parts.next().unwrap_or("");
+        if !server.is_empty() && !share.is_empty() {
+            return Some(format!("\\\\{server}\\{share}").to_lowercase());
+        }
+        return None;
+    }
+    // Drive: X:\... or a bare X: -> x:
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && (bytes[0] as char).is_ascii_alphabetic() {
+        return Some(s[..2].to_lowercase());
+    }
+    None
+}
+
+/// Whether two paths live on the same volume. When either volume cannot be
+/// determined the answer is `true` (same volume): the executor then attempts a
+/// metadata-only rename, and a genuine cross-device rename fails cleanly with no
+/// partial state rather than risking an unnecessary copy+delete. In this product
+/// every plan path sits under one library root, so same-volume is the common (and
+/// in practice only) case; distinct drive letters are what a dry run uses to
+/// exercise the cross-volume copy+verify+delete path.
+pub fn same_volume(a: &Path, b: &Path) -> bool {
+    match (volume_prefix(a), volume_prefix(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => true,
+    }
+}
+
 // ---- Free-space seam (F-404 cross-volume sizing) ----
 //
 // F-404 validation sizes cross-volume `copy+verify+delete` moves against the
@@ -262,6 +344,57 @@ mod tests {
             strip_extended_length_prefix(&p),
             PathBuf::from(r"C:\Users\x\scan-basic\file.m4b")
         );
+    }
+
+    #[test]
+    fn same_volume_true_within_a_drive_false_across_drives() {
+        // Same drive letter (separator- and case-insensitive) is one volume.
+        assert!(same_volume(
+            Path::new(r"E:\Books\A"),
+            Path::new(r"E:\Books\B")
+        ));
+        assert!(same_volume(
+            Path::new(r"E:\Books\A"),
+            Path::new("e:/Books/B")
+        ));
+        // Distinct drive letters are distinct volumes (the cross-volume trigger).
+        assert!(!same_volume(
+            Path::new(r"E:\Books\A"),
+            Path::new(r"F:\Other\B")
+        ));
+    }
+
+    #[test]
+    fn same_volume_strips_the_verbatim_prefix_before_comparing() {
+        // `\\?\E:\x` and `E:\x` are the same volume: the prefix is stripped first.
+        assert!(same_volume(
+            Path::new(r"\\?\E:\Books\A"),
+            Path::new(r"E:\Books\B")
+        ));
+    }
+
+    #[test]
+    fn same_volume_compares_unc_shares() {
+        assert!(same_volume(
+            Path::new(r"\\server\share\a"),
+            Path::new(r"\\server\share\b")
+        ));
+        // A different share on the same server is a different volume.
+        assert!(!same_volume(
+            Path::new(r"\\server\share1\a"),
+            Path::new(r"\\server\share2\b")
+        ));
+    }
+
+    #[test]
+    fn volume_prefix_is_none_for_a_relative_path_and_same_volume_defaults_true() {
+        // No recognizable volume -> None; two such paths default to same-volume so
+        // the executor tries a rename (a real cross-device rename fails cleanly).
+        assert_eq!(volume_prefix(Path::new("relative/dir/x")), None);
+        assert!(same_volume(
+            Path::new("relative/a"),
+            Path::new("relative/b")
+        ));
     }
 
     #[test]

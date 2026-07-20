@@ -55,6 +55,15 @@ export const STRINGS = {
     retentionHelp: "The app remembers this many recent scans, then lets the oldest go.",
   },
 
+  // Set-aside retention (F-904 history/undo surface and the dry-run report).
+  // FD-34 + FD-10 + AC-23: the product NEVER auto-deletes anything in the
+  // set-aside area; the user empties it themselves. Plain-language register:
+  // "set aside", never "quarantine" (FD-31).
+  setAside: {
+    retentionNote:
+      "Set-aside items stay where they are until you empty the Set Aside folder yourself. The app never deletes anything there.",
+  },
+
   // The ruleset editor (F-906, v0.4.0 Phase 6, AC-32/AC-33): "how your
   // shelves get organized", hosted inside Settings. Deliberately never says
   // "ruleset" - plain-language register per design-system Section 6.1 and the
@@ -193,6 +202,96 @@ export const STRINGS = {
     confirmNotAvailable:
       "Applying a tidy-up isn't available in this version yet - that arrives in a later update. For now you can review the plan, include or leave out groups, and look at the file details.",
     allExcludedNote: "Turn on at least one group to tidy up.",
+  },
+
+  // Apply / activity surface (F-904, v0.5.0 Phase 8, design-system Section 4.16
+  // and 5.1). One screen, one job, scrolling sentences, Stop and Pause.
+  // Plain-language register throughout (design-system Section 6): never
+  // "operation", "ops", "journal", "manifest", "rollback", "verification",
+  // "dedupe", "quarantine", "dashboard", or "cancel token" on any user-facing line.
+  // FD-10 canon string: pulled from library.reassurance at render time (AC-30).
+  apply: {
+    // Heading while running (dry-run mode adds the badge below separately).
+    heading: "Tidying up your books",
+    // Sub-line shown while a REAL walk is running (it moves books for real).
+    subline: "Moving books to their new shelves. This may take a little while.",
+    // Sub-line shown while a REHEARSAL (dry-run) is running: a rehearsal moves
+    // nothing, so it never claims to (the surface must never present a rehearsal
+    // as real moves - Critical 1).
+    rehearsalSubline:
+      "Checking each book against its new shelf. This may take a little while.",
+    // Badge shown for a rehearsal (dry-run) apply - NOT a real move.
+    rehearsalBadge: "Rehearsal",
+    // Pause / resume labels (AC-28): the label toggles depending on state.
+    pauseAction: "Pause between books",
+    resumeAction: "Resume",
+    stopAction: "Stop",
+    // The calm "I'm finished with this screen" action shared by every terminal
+    // state (stopped / completed / rehearsal complete / failed), FD-23: one key,
+    // one word, never inlined at a call site.
+    doneAction: "Done",
+    // Accessible name for the scrolling sentence feed region (FD-23).
+    activityLabel: "Activity",
+    // Acknowledge action for the blocked-further-groups state (F-604, AC-29).
+    acknowledgeAction: "Got it",
+    // Progress line: "3 of 47 books"
+    progressLine: (done: number, total: number) =>
+      `${done.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} books`,
+    // Paused state: shown instead of the sub-line when the job is paused.
+    pausedHeading: "Paused between books",
+    pausedBody:
+      "The tidy-up is waiting at a safe stopping point. Your books are exactly where they were when you paused.",
+    // Stopped state: cooperative Stop, not an error (AC-26).
+    stoppedHeading: "Stopped between books",
+    // Real-apply stopped body: some books really did move to their new places.
+    stoppedBody:
+      "The tidy-up was stopped at a safe point. The books that have already been moved are in their new places. Nothing was lost or damaged.",
+    // Rehearsal stopped body (Critical 1): a rehearsal moved nothing, so it never
+    // claims books are "in their new places".
+    rehearsalStoppedBody:
+      "The rehearsal was stopped at a safe point. No books were moved - this was only a rehearsal. Nothing was lost or damaged.",
+    // Completed state (no block).
+    completedHeading: "Tidy-up complete",
+    completedBody: "All the included books have been tidied up.",
+    // Completed with undo file saved note.
+    undoSaved: "Your undo file has been saved. You can put everything back from the History screen.",
+    // Completed-but-blocked state (F-604, AC-20, AC-29).
+    blockedHeading: "Tidy-up complete - needs a look",
+    blockedBody:
+      "The books have been moved, but the after-the-fact check found something that needs your attention before the next tidy-up can run. Everything is safe.",
+    // How many differences the after-the-fact check found (IMPORTANT 5): the
+    // blocked state names the specifics instead of an unexplained "Got it".
+    blockedCountLine: (count: number) =>
+      count === 1
+        ? "The check found 1 thing to look at before the next tidy-up."
+        : `The check found ${count.toLocaleString("en-US")} things to look at before the next tidy-up.`,
+    // The technical pointer to the saved check report (FD-13): named behind
+    // "Show file details", never on the family-facing line.
+    blockedReportPointer:
+      'The full check details are saved as "after-the-fact-check.md" in your Reports folder.',
+    // Failed state (FD-04, AC-29): plain language, what happened / what is safe / what to do next.
+    failedHeading: "Something stopped the tidy-up",
+    // What is safe (always true for all failure modes - no audiobook is ever deleted mid-op).
+    failedSafeNote:
+      "Your books are safe. No book was moved only partway - every change either completed or was left as it was.",
+    // Sentence templates for the scrolling feed of completed ops on a REAL apply.
+    // Called with the op's `label` (the book or folder name, no path).
+    opMovedSentence: (label: string) => `Moved ${label} to its new shelf.`,
+    opSetAsideSentence: (label: string) => `Set aside ${label}.`,
+    opRemovedEmpty: "Removed an empty folder.",
+    opCreatedFolder: "Created a new folder.",
+    // Feed sentences for a REHEARSAL (dry-run): nothing actually moved, so every
+    // sentence says what was CHECKED, never what was moved (Critical 1).
+    rehearsalOpMovedSentence: (label: string) =>
+      `Checked ${label} - ready for its new shelf.`,
+    rehearsalOpSetAsideSentence: (label: string) =>
+      `Checked ${label} - ready to set aside.`,
+    rehearsalOpRemovedEmpty: "Checked an empty folder - ready to remove.",
+    rehearsalOpCreatedFolder: "Checked the spot for a new folder.",
+    // Dry-run framing (never presented as real moves).
+    rehearsalCompletedHeading: "Rehearsal complete",
+    rehearsalCompletedBody:
+      "This was a rehearsal - no books were actually moved. Everything looks good. Run it for real from the tidy-up screen whenever you're ready.",
   },
 
   // Error / empty / loading states (F-908, v0.4.0 Phase 7, design-system

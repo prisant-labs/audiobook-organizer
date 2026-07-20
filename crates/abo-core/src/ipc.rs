@@ -48,6 +48,11 @@ pub use crate::error::AppError;
 /// [`crate::classify`], where the pure `health_metrics` computation lives.
 pub use crate::classify::{ClassMetric, FolderClass, HealthMetrics, MetricUnit, ProblemMetric};
 
+/// Re-exported so the `apply_start` command's `mode` argument is reachable under
+/// `abo_core::ipc` (AC-4). Defined in [`crate::exec`], where the executor owns the
+/// dry-run vs Real distinction (F-607).
+pub use crate::exec::ApplyMode;
+
 /// The category of a [`ScanWarning`].
 ///
 /// The two per-entry kinds ([`JunctionSkipped`](ScanWarningKind::JunctionSkipped)
@@ -596,6 +601,126 @@ pub struct PlanPreview {
     pub groups: Vec<PlanGroupView>,
 }
 
+// ---- Phase 1 shell payloads (F-607 executor seam, v0.5.0 Phase 1) ----
+
+/// The result of an `apply_start` run (v0.5.0 Phase 1 dry-run seam), returned by
+/// the `apply_start` command. Reports the plan and apply-job the run belongs to,
+/// whether it was a dry run, and how many approved operations the executor
+/// walked.
+///
+/// This is the SKELETON return for the seam phase: it proves the dry-run walk ran
+/// against a `MemFs` seeded from the plan's snapshot without touching disk (AC-2).
+/// The F-904 apply + activity surface (a later phase) grows the real event-driven
+/// progress contract on top of the same command; `dry_run` is always `true` here
+/// because a Real apply is refused with `apply-not-supported` this phase (D-09).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ApplyReport {
+    /// The `plans.id` this run applied.
+    pub plan_id: i64,
+    /// The apply `jobs.id` recorded for this run.
+    pub job_id: i64,
+    /// Whether this was a dry run (always `true` this phase).
+    pub dry_run: bool,
+    /// How many approved operations the executor walked.
+    pub ops_walked: i64,
+    /// How many of the walked operations the after-the-fact check (F-604, AC-18)
+    /// confirmed: target exists, size matches the snapshot, source gone.
+    pub verified_ops: i64,
+    /// How many walked operations the after-the-fact check found a difference on
+    /// (a move journaled as done that reality contradicts). Zero on a clean apply.
+    pub discrepancy_count: i64,
+    /// Whether this apply raised an unacknowledged discrepancy block (AC-20). When
+    /// true, further FORWARD tidy-ups are paused until it is acknowledged; undo is
+    /// never blocked.
+    pub blocked: bool,
+}
+
+/// The result of preparing an undo (v0.5.0 Phase 5, F-604), returned by the
+/// `rollback_prepare` / `rollback_prepare_partial` commands. Preparing an undo
+/// builds the INVERSE of an applied tidy-up as an ordinary plan and persists it
+/// (D-09: rollback is not a special code path), so the caller navigates to the
+/// SAME review surface a forward plan uses (`plan_get(plan_id)`), previews it,
+/// approves it, and applies it through the same executor. `plan_id` is that new
+/// inverse plan; `op_count` is how many undo operations it holds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct RollbackPrepared {
+    /// The `plans.id` of the newly persisted inverse (undo) plan, ready to review.
+    pub plan_id: i64,
+    /// How many undo operations the inverse plan holds.
+    pub op_count: i64,
+}
+
+/// The status of one apply `jobs` row plus its after-the-fact check (F-604),
+/// returned by `job_status` and `acknowledge_check`. This is what the F-904
+/// activity surface (P8) reads to render the done state and the
+/// blocked-further-groups state after a verification discrepancy (AC-20, AC-29).
+///
+/// The block state is DURABLE (it survives a restart, living in
+/// `verification_blocks`): a job that raised an unacknowledged discrepancy still
+/// reports `blocks_further_tidying = true` after relaunch, so a blocked library
+/// is never silently forgotten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct JobStatus {
+    /// The `jobs.id` this status is about.
+    pub job_id: i64,
+    /// The job's lifecycle state (`running` | `completed` | `failed` | ...).
+    pub state: String,
+    /// The stable machine error code when the job `failed`, else `None`.
+    pub error_code: Option<String>,
+    /// Whether this job raised an UNACKNOWLEDGED discrepancy block, so further
+    /// FORWARD tidy-ups are paused until it is acknowledged (AC-20). Undo is never
+    /// blocked. Cleared by `acknowledge_check`.
+    pub blocks_further_tidying: bool,
+    /// How many operations the after-the-fact check found a difference on (from
+    /// the block detail). Zero when there is no outstanding block.
+    pub discrepancy_count: i64,
+    /// Whether the job is currently paused at an operation boundary (P8 prelude,
+    /// 0a). Sourced from the in-memory [`ApplyControlRegistry`] in the shell; always
+    /// `false` for jobs that have already reached a terminal state (they have left
+    /// the registry). `jobs.state` stays `"running"` while paused so the
+    /// single-writer lock query remains correct.
+    pub paused: bool,
+    /// How many operations have finished so far, read from the DURABLE journal
+    /// (`done` rows). This is the backfill source for the activity surface's
+    /// progress line: a fast dry-run that finished before the UI attached its
+    /// `apply:op-executed` listeners still shows the true count, not "0 of 0".
+    /// The live event carries the same number for the low-latency in-flight case.
+    pub done_count: i64,
+    /// The total number of approved operations in this job's walk, found from the
+    /// plan the job is applying. The backfill partner of `done_count`; `0` only for
+    /// a job that has not journaled its first operation yet, which the live events
+    /// then fill in.
+    pub total: i64,
+}
+
+/// Payload of the `apply:op-executed` event (P8 prelude, 0b), emitted after each
+/// operation's `done` journal row is committed in a running apply job. The event is
+/// fire-and-forget: it never perturbs the walk, the journal, or the AC-3/AC-25
+/// equality invariants.
+///
+/// The shell emits this from the [`crate::exec::OpObserver`] seam; the core never
+/// imports Tauri. The UI uses the `kind` and `label` to compose a plain sentence
+/// from the frontend strings module (FD-23). Raw paths are deliberately excluded
+/// (design-system FD-13, R-12): the `label` is the last path component only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ApplyOpExecutedPayload {
+    /// The `jobs.id` this event belongs to (for frontend filtering).
+    pub job_id: i64,
+    /// The `plan_ops.id` of the just-executed operation.
+    pub op_id: i64,
+    /// The operation kind: `"move"`, `"rename"`, `"quarantine"`, `"mkdir"`,
+    /// `"rmdir-empty"`, or `"no-op"`.
+    pub kind: String,
+    /// A plain-language display label for the book or folder - the last path
+    /// component of `source_path` (extension stripped for audio-file moves), or
+    /// the last component of `target_path` for `mkdir`. Never a full raw path.
+    pub label: String,
+    /// How many operations have completed so far (the done count, including this one).
+    pub done_count: i64,
+    /// The total number of approved operations in this walk.
+    pub total: i64,
+}
+
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
 
 /// Returned by the `scan_start` command the instant a scan is accepted (F-104).
@@ -650,6 +775,19 @@ pub struct JobFailedPayload {
     pub job_id: i64,
     /// The stable kebab-case error code (equals [`AppError::code`]).
     pub code: String,
+}
+
+/// Payload of the `job:stopped` event (P8, IMPORTANT 3), emitted after an apply
+/// job's DISTINCT `stopped` terminal state is durably marked in the `jobs` row
+/// (a cooperative Stop, AC-26). It mirrors the `job:completed`/`job:failed`
+/// terminal events so the activity surface transitions to "stopped between books"
+/// reliably instead of racing the walk's final state write with a single status
+/// poll. Fire-and-forget and post-durable-state: a dropped event never perturbs
+/// the walk, and the status poll remains the fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct JobStoppedPayload {
+    /// The `jobs.id` of the apply job that stopped cooperatively.
+    pub job_id: i64,
 }
 
 /// Payload of the `job:progress` event.
@@ -729,6 +867,13 @@ mod contract {
         assert_ipc_ready::<ExtractedFieldView>();
         assert_ipc_ready::<PlanOpView>();
         assert_ipc_ready::<PlanOpsPage>();
+        // F-607 executor seam (v0.5.0 Phase 1).
+        assert_ipc_ready::<ApplyMode>();
+        assert_ipc_ready::<ApplyReport>();
+        // F-604 rollback as an inverse plan (v0.5.0 Phase 5).
+        assert_ipc_ready::<RollbackPrepared>();
+        // F-604 after-the-fact check status (v0.5.0 Phase 6).
+        assert_ipc_ready::<JobStatus>();
         // Phase 5 shell payloads (command returns + event payloads).
         assert_ipc_ready::<JobStarted>();
         assert_ipc_ready::<DbStatus>();

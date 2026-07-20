@@ -15,6 +15,13 @@
 //! re-plan preview `commands::plan::plan_preview` and the scan Stop control
 //! (`scan_cancel`, already wired since v0.2.0; this phase gives it a real
 //! frontend affordance, AC-36).
+//! v0.5.0 (acting) lands the full executor: `commands::apply::apply_start`
+//! runs an approved plan as a spawned job (DryRun against `MemFs`, Real against
+//! `RealFs`), with journal-before-act, single-writer locking, pause/resume and
+//! Stop (`job_pause`/`job_resume`), post-apply verification with the
+//! block-further-tidying gate, rollback preparation (`rollback_prepare`), and
+//! the F-904 apply surface. The v1 UI pins mode to dry-run; a Real apply
+//! against the actual library remains a human-only action (D-10).
 //!   - commands -> IPC command handlers (payload contract lives in abo-core::ipc)
 //!   - events   -> backend -> frontend typed event emission
 //!
@@ -39,8 +46,15 @@ mod events;
 // layer module-private.
 pub use commands::{run_job_to_terminal, JobEnd};
 
+// Re-exported for the apply panic-safety integration test (`tests/apply_terminal.rs`):
+// the apply terminal-state wrapper, its pause/Stop control type, and the control
+// registry, so the test can drive a spawned apply's terminal path (including a
+// panic inside the walk releasing the single-writer in-process flag) directly.
+pub use commands::apply::{run_apply_to_terminal, ApplyControl, ApplyControlRegistry};
+
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use abo_core::job::CancelFlag;
@@ -75,6 +89,21 @@ pub struct AppState {
     /// picks a library. A plain `std::sync::Mutex`: every access is a brief,
     /// non-async snapshot/replace, never held across an `.await`.
     pub library_root: Arc<Mutex<Option<PathBuf>>>,
+    /// The in-process single-writer apply guard (F-601, AC-8): set true while an
+    /// apply runs, so a second `apply_start` in THIS process is refused instantly
+    /// with `job-already-running` before any database work. An `AtomicBool` (not a
+    /// lock guard) so it is safe to read across the apply's `.await` points; the
+    /// durable `running` apply `jobs` row is the cross-restart backstop. Reset on
+    /// every exit path (including a panic) by an RAII guard living in the SPAWNED
+    /// apply task, so the flag frees when the walk ends, not when `apply_start`
+    /// returns (which is now immediate).
+    pub apply_in_flight: Arc<AtomicBool>,
+    /// Live pause/resume/Stop controls for in-flight apply jobs (F-608, F-104),
+    /// keyed by `jobs.id`. `apply_start` inserts one when it spawns the walk and it
+    /// is removed when the job reaches a terminal state; `job_pause`/`job_resume`/
+    /// `job_stop` look one up to control a running apply. A paused apply keeps its
+    /// entry here AND its single-writer lock (a paused apply is still THE apply).
+    pub apply_controls: commands::apply::ApplyControlRegistry,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -115,12 +144,25 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::ruleset::ruleset_delete,
             commands::ruleset::ruleset_count,
             commands::ruleset::ruleset_preset_examples,
+            commands::apply::apply_start,
+            commands::rollback::rollback_prepare,
+            commands::rollback::rollback_prepare_partial,
+            commands::job::job_status,
+            commands::job::acknowledge_check,
+            commands::job::job_pause,
+            commands::job::job_resume,
+            commands::job::job_stop,
         ])
         .events(collect_events![
             events::JobCompleted,
             events::JobFailed,
+            // P8 IMPORTANT 3: apply's DISTINCT cooperative-Stop terminal event, so
+            // the activity surface transitions to "stopped between books" reliably.
+            events::JobStopped,
             // Frozen but never emitted in the spine (see events::JobProgress).
             events::JobProgress,
+            // P8 prelude 0b: per-operation progress event for the apply surface.
+            events::JobOpExecuted,
         ])
         .dangerously_cast_bigints_to_number()
 }
@@ -144,6 +186,19 @@ pub fn run() {
     export_bindings("../src/lib/bindings.ts").expect("failed to export typescript bindings");
 
     tauri::Builder::default()
+        // Single-instance (F-601, AC-8): registered FIRST per the plugin's contract.
+        // A SECOND launch runs this callback in the FIRST (existing) instance and
+        // then exits, so only ONE process ever holds the apply single-writer lock -
+        // this is what makes that lock process-wide and makes the startup reclaim of
+        // a stranded apply row sound (a fresh launch implies no other live instance).
+        // Focus and un-minimize the existing window so a relaunch brings the app
+        // forward. No event is emitted, so no new JS/IPC surface is added.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(build_log_plugin())
         // Folder selection ONLY (F-909, FD-29): the OS folder picker so the user
         // can choose the library root. This is the one capability the security
@@ -213,11 +268,33 @@ pub fn run() {
                 log::info!("swept {swept} stale cover cache file(s) at startup");
             }
 
+            // Crash-detected release of the single-writer apply lock (F-601, AC-8):
+            // a `running` apply `jobs` row a previous session left behind (killed
+            // mid-apply) is reclaimed here, so it never blocks a fresh apply. Only
+            // touches apply jobs; a stranded scan is left as-is. Best-effort: a DB
+            // error only defers the reclaim to the next launch.
+            let reclaimed = tauri::async_runtime::block_on(async {
+                abo_core::exec::lock::reclaim_stranded_apply_jobs(
+                    &pool,
+                    &abo_core::scan::walk::now_iso8601_utc(),
+                )
+                .await
+            });
+            match reclaimed {
+                Ok(n) if n > 0 => {
+                    log::warn!("reclaimed {n} stranded apply lock(s) left by a prior session");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("could not reclaim stranded apply locks at startup: {e}"),
+            }
+
             app.manage(AppState {
                 pool,
                 db_outcome,
                 jobs: Arc::new(Mutex::new(HashMap::new())),
                 library_root: Arc::new(Mutex::new(library_root)),
+                apply_in_flight: Arc::new(AtomicBool::new(false)),
+                apply_controls: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
         })

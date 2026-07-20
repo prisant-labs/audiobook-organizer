@@ -195,6 +195,108 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: false,
     tone: "warn",
   },
+
+  // -- Applying changes (v0.5.0; making changes for real is not on yet) -------
+  "apply-not-supported": {
+    sentence: "Making changes for real isn't available in this version yet.",
+    nextStep:
+      "You can preview what a tidy-up would do. Making changes for real arrives in a later version.",
+    retryable: false,
+    tone: "warn",
+  },
+  "apply-failed": {
+    sentence: "The app couldn't record this tidy-up run.",
+    nextStep: "Try again. If it keeps happening, restart the app - your audiobooks are untouched.",
+    retryable: true,
+    tone: "danger",
+  },
+  "journal-write-failed": {
+    sentence: "The app stopped before making any change because it couldn't first note what it was about to do.",
+    nextStep: "Nothing was moved. Try again. If it keeps happening, restart the app - your audiobooks are untouched.",
+    retryable: true,
+    tone: "danger",
+  },
+
+  // -- Making changes for real (v0.5.0 executor: safety-first, never overwrite) --
+  "job-already-running": {
+    sentence: "A tidy-up is already in progress.",
+    nextStep: "Wait for it to finish, then start the next one. Only one tidy-up runs at a time.",
+    retryable: false,
+    tone: "warn",
+  },
+  "source-vanished": {
+    sentence: "Something this tidy-up was going to change is no longer where it was.",
+    nextStep: "Scan your library again to refresh it, then review and run the tidy-up once more.",
+    retryable: true,
+    tone: "warn",
+  },
+  "target-appeared": {
+    sentence: "Something already exists where a change would go, so it was left alone.",
+    nextStep:
+      "Nothing was overwritten. Scan your library again, then review and run the tidy-up once more.",
+    retryable: true,
+    tone: "warn",
+  },
+  "copy-verify-mismatch": {
+    sentence: "A file copied to another drive didn't match the original, so the change was stopped.",
+    nextStep:
+      "Your original file is safe and untouched. Check the other drive for errors, then try the tidy-up again.",
+    retryable: true,
+    tone: "danger",
+  },
+  "access-denied": {
+    sentence: "Windows wouldn't let the app change an item, even after a second try.",
+    nextStep:
+      "Close any program using that file or folder, or give the app permission to it, then try again.",
+    retryable: true,
+    tone: "danger",
+  },
+
+  // -- Undoing a tidy-up (v0.5.0: putting things back the way they were) -------
+  "rollback-not-reversible": {
+    sentence: "That tidy-up was a practice run, so nothing actually moved.",
+    nextStep:
+      "There's nothing to undo. Run a real tidy-up first if you want changes you can put back.",
+    retryable: false,
+    tone: "warn",
+  },
+  "rollback-selection-not-contiguous": {
+    sentence: "An undo can only take back the most recent changes, in order.",
+    nextStep:
+      "Choose an unbroken run of the latest changes to undo, without skipping any in the middle.",
+    retryable: false,
+    tone: "warn",
+  },
+  "rollback-prepare-failed": {
+    sentence: "The undo couldn't be prepared.",
+    nextStep:
+      "The undo file may be missing or the tidy-up it refers to may be gone. Scan your library again, then build and review a fresh plan instead.",
+    retryable: true,
+    tone: "danger",
+  },
+
+  // -- After-the-fact check (v0.5.0: paused until a difference is acknowledged) --
+  "tidying-blocked": {
+    sentence: "The last tidy-up's after-the-fact check found a difference that needs a look.",
+    nextStep:
+      "Review the after-the-fact check and acknowledge it to continue. Undoing the last tidy-up is still available.",
+    retryable: false,
+    tone: "warn",
+  },
+
+  // -- Pause / Stop controls (v0.5.0: pausing between books, F-608) ------------
+  "nothing-to-pause": {
+    sentence: "There's no tidy-up running to pause.",
+    nextStep: "Start a tidy-up first - you can pause it between books while it runs.",
+    retryable: false,
+    tone: "warn",
+  },
+  "nothing-to-resume": {
+    sentence: "This tidy-up isn't paused, so there's nothing to resume.",
+    nextStep: "If a tidy-up is paused, use Resume to continue it between books.",
+    retryable: false,
+    tone: "warn",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-

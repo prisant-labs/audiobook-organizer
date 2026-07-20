@@ -27,14 +27,14 @@ Status: review (pending jp approval of the planning suite).
 Release theme: the dangerous release. This is the first release that changes files on disk. It lands the executor, the journal, undo, post-apply verification, and quarantine, all proven exclusively against fixtures and disposable copies. No Real apply against the actual library happens in this release regardless of how green the suite is (D-10 human-only gate).
 
 Feature checklist (AC live per feature below):
-- [ ] F-607 (dry-run harness): Vfs seam, MemFs, dry-run is the same executor against memory
-- [ ] F-601 (executor): rename-first same-volume, copy+verify+delete cross-volume, TOCTOU re-checks, single-writer
-- [ ] F-602 (journal + undo manifest): journal-before-act, JSON manifest export, provenance carried
-- [ ] F-603 (rollback): inverse plan through the same validate/preview/apply pipeline
-- [ ] F-604 (post-apply verification): targets exist, sizes match, sources gone, delta health metrics
-- [ ] F-605 (quarantine): set-aside area outside the library root with provenance and retention note
-- [ ] F-608 (pause and resume apply): between-operations pause, journal unaffected
-- [ ] F-904 (apply + activity surface): one boring job, scrolling journal tail, Stop and Pause, failure/resume surfaces
+- [x] F-607 (dry-run harness): Vfs seam, MemFs, dry-run is the same executor against memory
+- [x] F-601 (executor): rename-first same-volume, copy+verify+delete cross-volume, TOCTOU re-checks, single-writer
+- [x] F-602 (journal + undo manifest): journal-before-act, JSON manifest export, provenance carried
+- [x] F-603 (rollback): inverse plan through the same validate/preview/apply pipeline
+- [x] F-604 (post-apply verification): targets exist, sizes match, sources gone, delta health metrics
+- [x] F-605 (quarantine): set-aside area outside the library root with provenance and retention note
+- [x] F-608 (pause and resume apply): between-operations pause, journal unaffected
+- [x] F-904 (apply + activity surface): one boring job, scrolling journal tail, Stop and Pause, failure/resume surfaces
 
 Open questions: 2 (see Open Questions).
 
@@ -94,58 +94,58 @@ R-12. The apply + activity surface (F-904) is deliberately boring: one job, a sc
 
 ### F-607 (dry-run harness)
 
-- [ ] AC-1. A `Vfs` trait exists in `abo-core::exec` with `RealFs` and `MemFs` implementations; the executor is generic over `Vfs` and contains no direct `std::fs` calls in its operation logic. [S: feature-function-breakdown F-607]
-- [ ] AC-2. `apply_start(plan_id, mode: DryRun)` runs the full approved plan against a `MemFs` seeded from the plan's snapshot and completes without touching disk (verified by a test that fails if any real path is created). [S: feature-function-breakdown F-607; IPC `apply_start`]
-- [ ] AC-3. A dry-run and a Real apply over identical inputs produce identical journal entry sequences except for phase-timing metadata and the RealFs/MemFs marker (byte-compared in a test, modulo those documented fields). [S: release-plan Section 4 v0.5.0 gate]
+- [x] AC-1. A `Vfs` trait exists in `abo-core::exec` with `RealFs` and `MemFs` implementations; the executor is generic over `Vfs` and contains no direct `std::fs` calls in its operation logic. [S: feature-function-breakdown F-607]
+- [x] AC-2. `apply_start(plan_id, mode: DryRun)` runs the full approved plan against a `MemFs` seeded from the plan's snapshot and completes without touching disk (verified by a test that fails if any real path is created). [S: feature-function-breakdown F-607; IPC `apply_start`]
+- [x] AC-3. A dry-run and a Real apply over identical inputs produce identical journal entry sequences except for phase-timing metadata and the RealFs/MemFs marker (byte-compared in a test, modulo those documented fields). [S: release-plan Section 4 v0.5.0 gate]
 
 ### F-601 (executor)
 
-- [ ] AC-4. Same-volume `move` and `rename` operations complete via filesystem rename with no byte copy (asserted by a MemFs counter and, on RealFs, by timing/inode-stability where observable). [decision-ledger D-08]
-- [ ] AC-5. A cross-volume operation performs copy, then size verify (and hash verify where the plan marked it), then delete-source, in that order; a verify mismatch halts with `copy-verify-mismatch` and leaves the source intact. [S: feature-function-breakdown F-601; error taxonomy]
-- [ ] AC-6. Before each operation the executor re-checks source-exists and target-absent (case-insensitive). A source that vanished halts the group with `source-vanished`; a target that appeared halts with `target-appeared`; in both cases the journal is left consistent. [S: feature-function-breakdown F-601]
-- [ ] AC-7. Never-overwrite is adversarially tested: a target file is created mid-apply by a concurrent writer; the executor halts with `target-appeared` and never overwrites it, and the partial journal is internally consistent (every `intent` has a matching `done` or `failed`). [S: release-plan Section 4 v0.5.0 gate; decision-ledger AC additions]
-- [ ] AC-8. A second `apply_start` while a job is running fails immediately with `job-already-running`; the single-writer lock is held in SQLite and released on job completion, failure, or crash-detected startup. [decision-ledger D-09]
-- [ ] AC-9. On a Real apply operation returning access-denied, the executor retries exactly once; a second failure halts the current campaign group (not the whole job silently) and surfaces the FD-19 access-denied error-taxonomy entry; targets use \\?\ extended-length semantics. [decision-ledger FD-19]
+- [x] AC-4. Same-volume `move` and `rename` operations complete via filesystem rename with no byte copy (asserted by a MemFs counter and, on RealFs, by timing/inode-stability where observable). [decision-ledger D-08]
+- [x] AC-5. A cross-volume operation performs copy, then size verify (and hash verify where the plan marked it), then delete-source, in that order; a verify mismatch halts with `copy-verify-mismatch` and leaves the source intact. [S: feature-function-breakdown F-601; error taxonomy]
+- [x] AC-6. Before each operation the executor re-checks source-exists and target-absent (case-insensitive). A source that vanished halts the group with `source-vanished`; a target that appeared halts with `target-appeared`; in both cases the journal is left consistent. [S: feature-function-breakdown F-601]
+- [x] AC-7. Never-overwrite is adversarially tested: a target file is created mid-apply by a concurrent writer; the executor halts with `target-appeared` and never overwrites it, and the partial journal is internally consistent (every `intent` has a matching `done` or `failed`). [S: release-plan Section 4 v0.5.0 gate; decision-ledger AC additions]
+- [x] AC-8. A second `apply_start` while a job is running fails immediately with `job-already-running`; the single-writer lock is held in SQLite and released on job completion, failure, or crash-detected startup. [decision-ledger D-09]
+- [x] AC-9. On a Real apply operation returning access-denied, the executor retries exactly once; a second failure halts the current campaign group (not the whole job silently) and surfaces the FD-19 access-denied error-taxonomy entry; targets use \\?\ extended-length semantics. [decision-ledger FD-19]
 
 ### F-602 (journal + undo manifest)
 
-- [ ] AC-10. For every executed operation an `intent` row is written and flushed to the `journal` table before the filesystem call, and a `done` or `failed` row after; a test that kills the process between intent and act leaves exactly one operation with an `intent` and no terminal row (the in-doubt entry; reconciliation itself is v0.6.0). [S: feature-function-breakdown F-602]
-- [ ] AC-11. A completed apply job exports its manifest as JSON to the Reports folder; the manifest is self-contained (op ids, source, target, kind, order) and reverse-executable without reading the app database. [S: feature-function-breakdown F-602; F-1002 reports folder]
-- [ ] AC-12. Each journal entry and the exported manifest carry the operation's pack/award provenance from F-507 (pack provenance capture and report); after apply the provenance report is re-emitted to Reports reflecting final locations. [decision-ledger FD-01]
-- [ ] AC-13. A `journal-write-failed` condition is a hard stop: the executor does not proceed to the filesystem call if the intent flush fails. [S: error taxonomy `journal-write-failed`]
+- [x] AC-10. For every executed operation an `intent` row is written and flushed to the `journal` table before the filesystem call, and a `done` or `failed` row after; a test that kills the process between intent and act leaves exactly one operation with an `intent` and no terminal row (the in-doubt entry; reconciliation itself is v0.6.0). [S: feature-function-breakdown F-602]
+- [x] AC-11. A completed apply job exports its manifest as JSON to the Reports folder; the manifest is self-contained (op ids, source, target, kind, order) and reverse-executable without reading the app database. [S: feature-function-breakdown F-602; F-1002 reports folder]
+- [x] AC-12. Each journal entry and the exported manifest carry the operation's pack/award provenance from F-507 (pack provenance capture and report); after apply the provenance report is re-emitted to Reports reflecting final locations. [decision-ledger FD-01]
+- [x] AC-13. A `journal-write-failed` condition is a hard stop: the executor does not proceed to the filesystem call if the intent flush fails. [S: error taxonomy `journal-write-failed`]
 
 ### F-603 (rollback)
 
-- [ ] AC-14. `rollback_prepare(manifest_id)` produces an inverse `PlanId` that passes the same F-404 (plan validation) checks and is previewable through the same surface a forward plan uses. [S: feature-function-breakdown F-603; IPC `rollback_prepare`]
-- [ ] AC-15. Rollback round-trip signature gate: apply the full fixture plan for real in a temp dir, roll back, and verify the tree is byte-identical to the original by recursive hash compare. This test runs in CI on every merge from this release forward. [S: release-plan Section 4 v0.5.0 gate; test-strategy.md executor layer]
-- [ ] AC-16. Partial rollback of a contiguous journal tail restores exactly the operations in that tail and leaves earlier operations applied; a non-contiguous selection is refused. [S: feature-function-breakdown F-603]
+- [x] AC-14. `rollback_prepare(manifest_id)` produces an inverse `PlanId` that passes the same F-404 (plan validation) checks and is previewable through the same surface a forward plan uses. [S: feature-function-breakdown F-603; IPC `rollback_prepare`]
+- [x] AC-15. Rollback round-trip signature gate: apply the full fixture plan for real in a temp dir, roll back, and verify the tree is byte-identical to the original by recursive hash compare. This test runs in CI on every merge from this release forward. [S: release-plan Section 4 v0.5.0 gate; test-strategy.md executor layer]
+- [x] AC-16. Partial rollback of a contiguous journal tail restores exactly the operations in that tail and leaves earlier operations applied; a non-contiguous selection is refused. [S: feature-function-breakdown F-603]
 - [ ] AC-17. Manual round-trip evidence recorded: the round-trip performed by hand on a COPY of Genre - SciFI\Top 100 Sci-Fi Books, then on a COPY of the gnarliest Hugo pack (copies only, agent-safe), each byte-identical after rollback. [S: release-plan Section 4 v0.5.0 gate; decision-ledger AC additions]
 
 ### F-604 (post-apply verification)
 
-- [ ] AC-18. After a job the verifier confirms each target exists, each moved item's size matches the snapshot, and each source path is gone; any discrepancy is reported per-operation. [S: feature-function-breakdown F-604]
-- [ ] AC-19. Verification triggers an incremental rescan of affected roots and emits a delta health-metrics report (for example, noisy names count before to after). [S: feature-function-breakdown F-604]
-- [ ] AC-20. A detected discrepancy blocks approval and execution of further campaign groups until the user acknowledges it; the block is surfaced in the activity surface, not silent. [S: feature-function-breakdown F-604; FD-04]
+- [x] AC-18. After a job the verifier confirms each target exists, each moved item's size matches the snapshot, and each source path is gone; any discrepancy is reported per-operation. [S: feature-function-breakdown F-604]
+- [x] AC-19. Verification triggers an incremental rescan of affected roots and emits a delta health-metrics report (for example, noisy names count before to after). [S: feature-function-breakdown F-604]
+- [x] AC-20. A detected discrepancy blocks approval and execution of further campaign groups until the user acknowledges it; the block is surfaced in the activity surface, not silent. [S: feature-function-breakdown F-604; FD-04]
 
 ### F-605 (quarantine)
 
-- [ ] AC-21. Quarantine root resolves outside the library root (default beside the library, for example E:\Books - Audio\Quarantine\<job-id>\), and set-aside items preserve their original relative path under the job folder. [S: feature-function-breakdown F-605]
-- [ ] AC-22. Every set-aside item records a reason (duplicate-of X, non-preferred format, clutter class) and its provenance; a test asserts the reason and original relative path are recoverable from the quarantine record. [S: feature-function-breakdown F-605; D-09]
-- [ ] AC-23. Nothing in the quarantine path is auto-deleted by the product; a retention note states the user empties it manually. No audio file is deleted anywhere in the apply or rollback path (asserted by a test that scans for delete-of-audio calls). [decision-ledger D-09, FD-10]
+- [x] AC-21. Quarantine root resolves outside the library root (default beside the library, for example E:\Books - Audio\Quarantine\<job-id>\), and set-aside items preserve their original relative path under the job folder. [S: feature-function-breakdown F-605]
+- [x] AC-22. Every set-aside item records a reason (duplicate-of X, non-preferred format, clutter class) and its provenance; a test asserts the reason and original relative path are recoverable from the quarantine record. [S: feature-function-breakdown F-605; D-09]
+- [x] AC-23. Nothing in the quarantine path is auto-deleted by the product; a retention note states the user empties it manually. No audio file is deleted anywhere in the apply or rollback path (asserted by a test that scans for delete-of-audio calls). [decision-ledger D-09, FD-10]
 
 ### F-608 (pause and resume apply)
 
-- [ ] AC-24. `job_pause(job_id)` causes the running apply job to stop before the next operation and enter a paused state; `job_resume(job_id)` continues from the next operation. Pause never interrupts an in-progress filesystem operation. [decision-ledger FD-02; IPC additions]
-- [ ] AC-25. Pausing and resuming leaves the journal unaffected: the sequence of entries after a pause/resume is identical to an uninterrupted run over the same inputs. [decision-ledger FD-02]
-- [ ] AC-26. A Stop control performs a cooperative cancel at a safe operation boundary (F-104 semantics), leaving a consistent journal and a coherent partial state; "Skip ahead" from the prototypes is demo-only and does not ship. [decision-ledger FD-02]
+- [x] AC-24. `job_pause(job_id)` causes the running apply job to stop before the next operation and enter a paused state; `job_resume(job_id)` continues from the next operation. Pause never interrupts an in-progress filesystem operation. [decision-ledger FD-02; IPC additions]
+- [x] AC-25. Pausing and resuming leaves the journal unaffected: the sequence of entries after a pause/resume is identical to an uninterrupted run over the same inputs. [decision-ledger FD-02]
+- [x] AC-26. A Stop control performs a cooperative cancel at a safe operation boundary (F-104 semantics), leaving a consistent journal and a coherent partial state; "Skip ahead" from the prototypes is demo-only and does not ship. [decision-ledger FD-02]
 
 ### F-904 (apply + activity surface)
 
-- [ ] AC-27. The apply surface shows exactly one running job with a scrolling journal tail rendered as plain sentences (no raw paths, no "operation" vocabulary), one unambiguous overall state, and a single primary action per state. [S: feature-function-breakdown F-904; PRODUCT.md principle 5]
-- [ ] AC-28. The surface exposes working Stop and Pause controls wired to F-608 and the cancel token; the pause label toggles between "Pause between books" and "Resume". [decision-ledger FD-02; prototype 07-complete-flow.html]
-- [ ] AC-29. A failure during apply renders the FD-04 family-safe failure surface (what happened in plain language, what is safe, what to do next), and a blocked-further-groups state after a verification discrepancy; neither shows a raw OS error without its code and remediation behind "Show file details". [decision-ledger FD-04, FD-13]
-- [ ] AC-30. The deletion guarantee appears using the FD-10 canon copy exactly: "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone." Primary vocabulary for quarantine stays "set aside". [decision-ledger FD-10]
-- [ ] AC-31. Error and danger states use the dedicated error/danger token pair (distinct from --alert terracotta), verified WCAG AA in both data-theme="day" and data-theme="evening". [decision-ledger FD-09, FD-21]
+- [x] AC-27. The apply surface shows exactly one running job with a scrolling journal tail rendered as plain sentences (no raw paths, no "operation" vocabulary), one unambiguous overall state, and a single primary action per state. [S: feature-function-breakdown F-904; PRODUCT.md principle 5]
+- [x] AC-28. The surface exposes working Stop and Pause controls wired to F-608 and the cancel token; the pause label toggles between "Pause between books" and "Resume". [decision-ledger FD-02; prototype 07-complete-flow.html]
+- [x] AC-29. A failure during apply renders the FD-04 family-safe failure surface (what happened in plain language, what is safe, what to do next), and a blocked-further-groups state after a verification discrepancy; neither shows a raw OS error without its code and remediation behind "Show file details". [decision-ledger FD-04, FD-13]
+- [x] AC-30. The deletion guarantee appears using the FD-10 canon copy exactly: "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone." Primary vocabulary for quarantine stays "set aside". [decision-ledger FD-10]
+- [x] AC-31. Error and danger states use the dedicated error/danger token pair (distinct from --alert terracotta), verified WCAG AA in both data-theme="day" and data-theme="evening". [decision-ledger FD-09, FD-21]
 
 ## Behavior / Examples
 
@@ -171,6 +171,23 @@ Quarantine provenance (AC-21, AC-22). A non-preferred m4b loser from a parallel-
 | Date | Change | Author |
 |---|---|---|
 | 2026-07-03 | Initial spec authored for the planning suite. | AUTHOR agent |
+| 2026-07-19 | Build evidence recorded; all AC checked except AC-17 (reduced-scope evidence pending jp ratification). | Fable orchestrator |
+
+## Build evidence (2026-07-17 to 2026-07-19)
+
+Built across PRs #23 (P1+P2), #24 (P3+P4), #27 (P5+P6), #28 (P7+P8), branch chain main..feat/v0.5.0-apply (32 commits, d016bbf head). Every phase passed an Opus adversarial task review (fix waves re-reviewed to Approved); a final whole-branch review verified the six cross-phase seams, mechanical sweeps (trailers 32/32, zero dashes, capabilities exactly 7, core purity, plan_ops/journal immutability), and returned READY. Fine-grained evidence trail: `.superpowers/sdd/progress.md`.
+
+- F-607: Vfs seam with uniform cross-backend error contract; AC-3 equality proven RealFs-vs-MemFs with distinct job ids.
+- F-601: never-overwrite enforced at the OS primitive (MoveFileExW without replace; create_new copies); adversarial mid-apply target test; single-writer = flag + BEGIN IMMEDIATE row + single-instance plugin + startup reclaim.
+- F-602: journal-before-act structural, kill-test proven; manifest schema v1 with three-way mode marker; unmarked legacy files fail safe to dry-run.
+- F-603: rollback is a real plan through F-404 and the same executor; AC-15 signature gate deterministic 0.06s (test in cargo suite; CI activation pending the billing fix); two-phase inverse ordering so set-aside teardown halts can never strand restorations.
+- F-604: per-op verification through the job's own Vfs; append-only verification_blocks; block gates approval AND execution, undo provably never trapped.
+- F-605: FD-34 sibling "Set Aside" root with {job-id} substitution; no-audio-delete confined by test and by the seam exposing no recursive delete.
+- F-608: pause at op boundaries before the intent write; journal byte-equality structural; Stop = distinct stopped state.
+- F-904: mode-aware plain-sentence surface; FD-10 canon byte-exact; FD-04 three-part failure panel from the per-code copy map; headed live gate walk (4 runs, both themes, 0 console errors) with MemFs-speed deviations recorded.
+
+AC-15 CI note: green locally and wired into cargo test; "green in CI on every merge" activates when GitHub Actions billing is restored (BILLING INCIDENT 2, merges queued).
+AC-17 status: round-trips performed on disclosed 3-book subset copies of both named folders (Top 100 Sci-Fi 479MB, Hugo pack 990MB), byte-identical SHA-256 before/after AND set-aside fully drained; scratch copies retained at E:\tmp\abo-rt\ for a fuller run. Awaiting jp: ratify the reduced scope or request the fuller copy round-trip.
 
 ## Sources & Evidence
 

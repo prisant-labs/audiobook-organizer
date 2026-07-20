@@ -92,13 +92,60 @@ use crate::ruleset::{
 };
 use crate::scan::typing::FileClass;
 
-/// The folder name new set-aside shells and clutter land under, relative to
-/// the library root. Never deletes: the never-delete-audio invariant means a
-/// pack shell or non-preferred copy is MOVED here, not removed. The on-disk
-/// name is the plain-language "Set Aside" (FD-31); "quarantine" stays internal
-/// vocabulary (the const name, the op kind, type names) and never appears on
-/// disk or in a stored rationale sentence.
+/// The folder name new set-aside shells and clutter land under. Never deletes:
+/// the never-delete-audio invariant means a pack shell or non-preferred copy is
+/// MOVED here, not removed. The on-disk name is the plain-language "Set Aside"
+/// (FD-31); "quarantine" stays internal vocabulary (the const name, the op kind,
+/// type names) and never appears on disk or in a stored rationale sentence.
+///
+/// FD-34: the set-aside ROOT this names is a SIBLING of the library, resolved
+/// OUTSIDE the library root (default `<library-parent>\Set Aside\`), not a folder
+/// inside it. See [`default_set_aside_root`].
 pub const QUARANTINE_DIRNAME: &str = "Set Aside";
+
+/// The literal path segment the builder stamps where the apply job's id will go
+/// in a set-aside target (`<set-aside-root>\{job-id}\<original relative path>`,
+/// FD-34). The plan is built before any apply job exists, and `plan_ops` is
+/// frozen, so the builder cannot know the real job id: it writes this stable
+/// placeholder, and the executor substitutes the real `jobs.id` into the segment
+/// at apply time for the ops it walks (never rewriting the frozen row). A fixed
+/// token keeps the builder pure and its golden job-independent; the per-job
+/// segment gives each tidy-up its own collision-free set-aside folder (FD-34).
+pub const QUARANTINE_JOB_PLACEHOLDER: &str = "{job-id}";
+
+/// The FD-34 default set-aside root: a `Set Aside` folder that is a SIBLING of
+/// the library (one level up from `library_root`), resolved OUTSIDE the library
+/// so a post-apply rescan and family media players never index set-aside items.
+/// Same-volume by construction (a sibling is on the library's volume), which
+/// keeps set-aside moves rename-first (D-08).
+///
+/// Pure string semantics keyed off the library root's own separator (the CFG
+/// RULE), so it is host-independent. A bare synthetic root with no separator
+/// (the fixture convention, e.g. `library`) yields the bare sibling name
+/// `Set Aside` at the same level. A real root (`E:\Books - Audio`) yields
+/// `E:\Set Aside`. A configured override (F-803 settings) replaces this default.
+pub fn default_set_aside_root(library_root: &str) -> String {
+    let sep = separator_of(library_root);
+    let parent = parent_dir(library_root, sep);
+    if parent == library_root {
+        // No separator in the root: the sibling sits at the same (top) level.
+        QUARANTINE_DIRNAME.to_string()
+    } else {
+        join_path(parent, sep, &[QUARANTINE_DIRNAME])
+    }
+}
+
+/// `path` made relative to `library_root` (the root prefix and one leading
+/// separator removed), so a set-aside target can preserve a book's ORIGINAL
+/// relative path under the per-job folder (FD-34, AC-21). A path that does not
+/// sit under the root is returned unchanged (defensive: the builder only ever
+/// sets aside items scanned under the library root).
+fn rel_under_root<'a>(path: &'a str, library_root: &str, sep: char) -> &'a str {
+    match path.strip_prefix(library_root) {
+        Some(rest) => rest.trim_start_matches(sep),
+        None => path,
+    }
+}
 
 /// One of the eight internal plan passes. The order of [`InternalPass::ALL`]
 /// is the order passes run in, which (together with per-pass source-path
@@ -544,6 +591,10 @@ struct Builder<'a> {
     merged_by_id: HashMap<usize, &'a MergedEntry>,
     ruleset: &'a Ruleset,
     library_root: String,
+    /// The resolved FD-34 set-aside root (a sibling of the library, OUTSIDE it),
+    /// under which every set-aside target lands as
+    /// `<set_aside_root>\{job-id}\<original relative path>`.
+    set_aside_root: String,
     sep: char,
     /// Total descendant file bytes per folder id (0 for files/leaf-less).
     folder_bytes: HashMap<usize, u64>,
@@ -753,6 +804,31 @@ pub fn build_plan(
     ruleset: &Ruleset,
     library_root: &str,
 ) -> BuiltPlan {
+    let set_aside_root = default_set_aside_root(library_root);
+    build_plan_with_set_aside_root(
+        nodes,
+        classifications,
+        merged,
+        ruleset,
+        library_root,
+        &set_aside_root,
+    )
+}
+
+/// [`build_plan`] with an explicit set-aside root (FD-34). The one production
+/// caller ([`crate::plan::report::build_and_persist_plan`]) resolves the root
+/// from F-803 settings, falling back to [`default_set_aside_root`]; every other
+/// caller uses [`build_plan`], which passes the FD-34 default. Set-aside targets
+/// become `<set_aside_root>\{job-id}\<original relative path>`
+/// ([`QUARANTINE_JOB_PLACEHOLDER`]); everything else is identical.
+pub fn build_plan_with_set_aside_root(
+    nodes: &[PlanNode],
+    classifications: &[FolderClassification],
+    merged: &[MergedEntry],
+    ruleset: &Ruleset,
+    library_root: &str,
+    set_aside_root: &str,
+) -> BuiltPlan {
     let index_of: HashMap<usize, usize> =
         nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
 
@@ -788,6 +864,7 @@ pub fn build_plan(
         merged_by_id,
         ruleset,
         library_root: library_root.to_string(),
+        set_aside_root: set_aside_root.to_string(),
         sep: separator_of(library_root),
         folder_bytes,
         created_dirs,
@@ -1445,20 +1522,38 @@ fn detect_clutter_quarantine(b: &Builder) -> Vec<usize> {
     out
 }
 
-/// Ensure the library-root `Set Aside` directory is scheduled for creation
-/// (emitting one `mkdir` the first time any set-aside op in `pass` needs it),
-/// and return its path. Deduplicated via the shared `created_dirs` set, so the
-/// mkdir appears exactly once and always before the first move into it.
-fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) -> String {
-    let quarantine_dir = join_path(&b.library_root, b.sep, &[QUARANTINE_DIRNAME]);
-    if !b.created_dirs.contains(&quarantine_dir) {
-        b.created_dirs.insert(quarantine_dir.clone());
+/// The per-job set-aside folder every set-aside target lands under (FD-34):
+/// `<set_aside_root>\{job-id}\`. The `{job-id}` segment is the
+/// [`QUARANTINE_JOB_PLACEHOLDER`] the executor substitutes at apply time.
+fn set_aside_job_dir(b: &Builder) -> String {
+    join_path(&b.set_aside_root, b.sep, &[QUARANTINE_JOB_PLACEHOLDER])
+}
+
+/// The FD-34 set-aside target for an item at `source_path`:
+/// `<set_aside_root>\{job-id}\<original relative path>` (AC-21). The original
+/// relative path is preserved under the per-job folder so a set-aside item is
+/// restorable to exactly where it came from.
+fn set_aside_target(b: &Builder, source_path: &str) -> String {
+    let rel = rel_under_root(source_path, &b.library_root, b.sep);
+    join_path(&set_aside_job_dir(b), b.sep, &[rel])
+}
+
+/// Schedule the FD-34 per-job set-aside folder (`<set_aside_root>\{job-id}\`) for
+/// creation, emitting one `mkdir` the first time any set-aside op in `pass` needs
+/// it. Deduplicated via the shared `created_dirs` set, so the mkdir appears
+/// exactly once and always before the first move into it. Deeper set-aside
+/// parents (each item's own relative subpath) are created by the executor's
+/// mkdir-first step, exactly as for every other move target.
+fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) {
+    let job_dir = set_aside_job_dir(b);
+    if !b.created_dirs.contains(&job_dir) {
+        b.created_dirs.insert(job_dir.clone());
         b.ops.push(PlannedOp {
             op_group: pass.as_str().to_string(),
             kind: "mkdir".to_string(),
             kind_reason: None,
             source_path: String::new(),
-            target_path: quarantine_dir.clone(),
+            target_path: job_dir,
             rationale:
                 "Create the \"Set Aside\" folder so items can be set aside without deleting anything."
                     .to_string(),
@@ -1468,7 +1563,6 @@ fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) -> String {
             provenance_json: None,
         });
     }
-    quarantine_dir
 }
 
 fn pass_empty_cleanup(b: &mut Builder) {
@@ -1479,8 +1573,8 @@ fn pass_empty_cleanup(b: &mut Builder) {
     shells.sort_by(|(_, a), (_, c)| a.cmp(c));
     for (_, shell_path) in shells {
         let name = base_name(&shell_path, b.sep).to_string();
-        let quarantine_dir = ensure_quarantine_dir(b, pass);
-        let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
+        ensure_quarantine_dir(b, pass);
+        let target = set_aside_target(b, &shell_path);
         b.ops.push(PlannedOp {
             op_group: pass.as_str().to_string(),
             kind: "quarantine".to_string(),
@@ -1506,8 +1600,8 @@ fn pass_empty_cleanup(b: &mut Builder) {
         let src = b.node(id).path.clone();
         let name = base_name(&src, b.sep).to_string();
         let size = b.node(id).size;
-        let quarantine_dir = ensure_quarantine_dir(b, pass);
-        let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
+        ensure_quarantine_dir(b, pass);
+        let target = set_aside_target(b, &src);
         b.ops.push(PlannedOp {
             op_group: InternalPass::DedupeQuarantine.as_str().to_string(),
             kind: "quarantine".to_string(),
@@ -1537,8 +1631,8 @@ fn pass_empty_cleanup(b: &mut Builder) {
         // empty-cleanup order (strictly after every move); only its op_group tag
         // (the display fold) reflects the owning pass.
         let owning = b.clutter_owning_pass(id);
-        let quarantine_dir = ensure_quarantine_dir(b, pass);
-        let target = join_path(&quarantine_dir, b.sep, &[name.as_str()]);
+        ensure_quarantine_dir(b, pass);
+        let target = set_aside_target(b, &src);
         b.ops.push(PlannedOp {
             op_group: owning.as_str().to_string(),
             kind: "quarantine".to_string(),
@@ -1830,6 +1924,68 @@ mod tests {
 
     fn ops_of<'a>(plan: &'a BuiltPlan, group: &str) -> Vec<&'a PlannedOp> {
         plan.ops.iter().filter(|o| o.op_group == group).collect()
+    }
+
+    // ---- FD-34: set-aside root resolves OUTSIDE the library (AC-21). --------
+
+    /// The FD-34 default set-aside root is a `Set Aside` SIBLING of the library,
+    /// one level up, on the library's own volume (so moves stay rename-first).
+    #[test]
+    fn default_set_aside_root_is_a_sibling_outside_the_library() {
+        // A real Windows root: the sibling sits at the drive root beside it.
+        assert_eq!(default_set_aside_root(r"E:\Books - Audio"), r"E:\Set Aside");
+        // A nested real root: the sibling sits beside the library folder.
+        assert_eq!(
+            default_set_aside_root(r"E:\Media\Books"),
+            r"E:\Media\Set Aside"
+        );
+        // A POSIX/synthetic root keeps forward slashes.
+        assert_eq!(default_set_aside_root("E:/Library"), "E:/Set Aside");
+        // A bare synthetic root (the fixture convention) has no parent, so the
+        // sibling is the bare name at the same top level.
+        assert_eq!(default_set_aside_root("lib"), "Set Aside");
+    }
+
+    /// FD-34 end to end: with a real drive-letter library root, every set-aside
+    /// target lands OUTSIDE the library root, under the per-job folder, on the
+    /// same volume (D-08 rename-first), preserving the original relative path.
+    #[test]
+    fn set_aside_targets_land_outside_the_real_library_root() {
+        let root = "E:/Books";
+        let nodes = vec![
+            dir(0, None, "E:/Books/Some Book"),
+            file(1, Some(0), "E:/Books/Some Book/track01.mp3", 40_000),
+            file(2, Some(0), "E:/Books/Some Book/track02.mp3", 40_000),
+            dir(3, Some(0), "E:/Books/Some Book/0 M4B"),
+            file(4, Some(3), "E:/Books/Some Book/0 M4B/Some Book.m4b", 80_000),
+        ];
+        let (cs, merged) = analyze(&nodes);
+        let plan = build_plan(&nodes, &cs, &merged, &default_ruleset(), root);
+        let losers: Vec<&PlannedOp> = plan.ops.iter().filter(|o| o.kind == "quarantine").collect();
+        assert_eq!(losers.len(), 2, "both mp3 losers are set aside");
+        for q in &losers {
+            // Outside the library root (FD-34), under the sibling set-aside root.
+            assert!(
+                !q.target_path.starts_with("E:/Books/"),
+                "a set-aside target must be OUTSIDE the library root: {}",
+                q.target_path
+            );
+            assert!(
+                q.target_path.starts_with("E:/Set Aside/{job-id}/"),
+                "target under the per-job set-aside folder: {}",
+                q.target_path
+            );
+            // Same volume as the library (D-08 rename-first stays valid).
+            assert!(q.target_path.starts_with("E:/"));
+            // AC-21: original relative path preserved under the job folder.
+            let rel = &q.source_path[root.len() + 1..];
+            assert!(
+                q.target_path.ends_with(rel),
+                "original relative path preserved: {} -> {}",
+                q.source_path,
+                q.target_path
+            );
+        }
     }
 
     // ---- AC-11: eight internal passes fold to exactly seven groups. --------
@@ -2202,11 +2358,15 @@ mod tests {
         assert_eq!(quarantines.len(), 1, "the emptied shell is quarantined");
         let q = quarantines[0];
         assert_eq!(q.source_path, "lib/Hugo Collection");
+        // FD-34: the shell is set aside OUTSIDE the library, under the per-job
+        // folder, preserving its original relative path (AC-21). ROOT is "lib"
+        // (a bare synthetic root), so the sibling set-aside root is "Set Aside".
         assert!(
-            q.target_path.starts_with("lib/Set Aside/"),
-            "target: {}",
+            !q.target_path.starts_with("lib/"),
+            "FD-34: a set-aside target never sits inside the library root: {}",
             q.target_path
         );
+        assert_eq!(q.target_path, "Set Aside/{job-id}/Hugo Collection");
         // The quarantine (a removal) comes after both member moves.
         let q_idx = plan
             .ops
@@ -2386,7 +2546,20 @@ mod tests {
                 Some("copies")
             );
             assert!(q.source_path.ends_with(".mp3"), "loser is an mp3");
-            assert!(q.target_path.starts_with("lib/Set Aside/"));
+            // FD-34: set aside OUTSIDE the library under the per-job folder,
+            // preserving the original relative path (AC-21).
+            assert!(
+                !q.target_path.starts_with("lib/"),
+                "FD-34: a set-aside target never sits inside the library root: {}",
+                q.target_path
+            );
+            assert!(q.target_path.starts_with("Set Aside/{job-id}/"));
+            assert!(
+                q.target_path.ends_with(&q.source_path["lib/".len()..]),
+                "AC-21: the original relative path is preserved under the job folder: {} -> {}",
+                q.source_path,
+                q.target_path
+            );
         }
         // The m4b is never a quarantine source anywhere in the plan.
         assert!(
@@ -2555,7 +2728,16 @@ mod tests {
             group_for_op_group(&op.op_group).map(|g| g.label()),
             Some("bundles")
         );
-        assert!(op.target_path.starts_with("lib/Set Aside/"));
+        // FD-34: set aside OUTSIDE the library, preserving the relative path.
+        assert!(
+            !op.target_path.starts_with("lib/"),
+            "FD-34: a set-aside target never sits inside the library root: {}",
+            op.target_path
+        );
+        assert_eq!(
+            op.target_path,
+            "Set Aside/{job-id}/Hugo Collection/release.nfo"
+        );
     }
 
     /// FD-31: clutter left behind in a multi-book folder (which is emptied in

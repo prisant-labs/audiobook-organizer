@@ -218,6 +218,130 @@ pub enum AppError {
     /// (never generated, or its scan/ruleset predecessor is gone).
     #[error("plan not found: {plan_id}")]
     PlanNotFound { plan_id: i64 },
+
+    // ---- Apply family (v0.5.0 Phase 1: F-607 executor seam) ----
+    /// A `Real` (non-dry-run) apply was requested, but this build implements only
+    /// the dry-run walk (v0.5.0 Phase 1 Vfs seam); the executor's operation logic
+    /// lands in a later phase. Returned BEFORE any filesystem work, so an
+    /// intermediate build can never half-apply (D-09 safety invariant).
+    #[error("real apply is not available in this build yet")]
+    ApplyNotSupported,
+
+    /// An apply job could not be recorded or closed (a SQLite error on the apply
+    /// job's own bookkeeping row). This is the app-database side of starting or
+    /// finishing an apply run; a filesystem failure during an actual operation is
+    /// surfaced by the executor's later phases with their own codes.
+    #[error("apply job could not be recorded: {detail}")]
+    ApplyFailed { detail: String },
+
+    /// The journal's `intent` row could not be flushed before the filesystem call
+    /// (v0.5.0 Phase 2, journal-before-act, R-5). This is a HARD STOP: the executor
+    /// does not proceed to the filesystem call if the intent flush fails (AC-13),
+    /// so nothing is ever moved without a durable intent record to reconcile from.
+    /// `detail` is the developer-facing SQLite cause.
+    #[error("could not record what was about to happen before making a change: {detail}")]
+    JournalWriteFailed { detail: String },
+
+    // ---- Apply execution family (v0.5.0 Phase 3: F-601 executor core) ----
+    //
+    // These are the apply-TIME hazards the executor surfaces while it is moving
+    // files: the single-writer lock, the TOCTOU re-checks, the never-overwrite
+    // guard, the cross-volume verify, and the access-denied retry. Distinct from
+    // the plan-family codes (which are plan-BUILD-time verdicts): `snapshot-stale`
+    // is a source missing at validation time, `collision-on-disk` a target present
+    // at validation time, whereas `source-vanished` / `target-appeared` are the
+    // SAME hazards re-checked immediately before each real operation (AC-6).
+    /// A second apply was started while one is already running. The single-writer
+    /// lock (a running apply `jobs` row plus an in-process guard, AC-8) refuses the
+    /// second start immediately so two apply runs never touch the library at once.
+    #[error("a tidy-up is already running")]
+    JobAlreadyRunning,
+
+    /// A cross-volume move copied the file, then the copy's size did not match the
+    /// original, so the change was stopped and the original left untouched (AC-5).
+    /// The copy+verify+delete order means the source is always still there when
+    /// this fires; the (unverified) copy is removed so nothing partial is left.
+    #[error("a copied file did not match the original, so the change was stopped: {path}")]
+    CopyVerifyMismatch { path: String },
+
+    /// A source recorded in the plan was gone when the executor re-checked it just
+    /// before acting (AC-6): the library changed under the plan. The group is
+    /// halted with the journal left consistent (every started op has a terminal
+    /// row). Distinct from [`SnapshotStale`](AppError::SnapshotStale), the
+    /// plan-build-time counterpart.
+    #[error("something to change is no longer where it was: {path}")]
+    SourceVanished { path: String },
+
+    /// Something already existed where a change would land when the executor
+    /// re-checked just before acting (AC-6), or appeared mid-apply from another
+    /// program (AC-7). Never-overwrite: the item is left untouched and the group is
+    /// halted. Distinct from [`CollisionOnDisk`](AppError::CollisionOnDisk), the
+    /// plan-build-time counterpart.
+    #[error("something already exists where a change would go, so it was left alone: {path}")]
+    TargetAppeared { path: String },
+
+    /// Windows denied access to an item during an apply. The executor retried once,
+    /// then stopped the current group rather than looping (AC-9). Nothing was
+    /// forced; the run can be tried again once access is granted.
+    #[error("Windows denied access to an item while making changes: {path}")]
+    AccessDenied { path: String },
+
+    // ---- Undo family (v0.5.0 Phase 5: F-604 rollback as an inverse plan) ----
+    //
+    // Preparing an undo builds, validates, and persists the INVERSE of an applied
+    // tidy-up as an ordinary plan (D-09: rollback is not a special code path). These
+    // are the ways preparing that inverse plan can be refused. User-facing copy says
+    // "undo" (never "rollback", "undo file", or "journal"); the machine codes keep
+    // the engineering term, and the copy-map (errorCopy.ts) speaks the family register.
+    /// The tidy-up being undone was a REHEARSAL (a dry run), which moved nothing, so
+    /// there is nothing to put back. Surfacing this (rather than panicking or failing
+    /// generically) is the plain-language form of the P2 safety semantic that a
+    /// dry-run manifest refuses to reverse. Also raised when a tidy-up recorded a
+    /// change kind that cannot be reversed (honest rather than a false undo offer).
+    #[error("this tidy-up was a rehearsal, so there is nothing to undo")]
+    RollbackNotReversible,
+
+    /// A partial undo selected changes that are not a single unbroken run of the most
+    /// recent ones (AC-16). An undo can only peel changes off the end in order: a gap
+    /// in the middle would leave the library in a state no forward plan describes, so
+    /// a non-contiguous selection is refused rather than applied.
+    #[error("an undo must cover the most recent changes in one unbroken run")]
+    RollbackSelectionNotContiguous,
+
+    /// The undo could not be prepared: the undo file could not be read, the tidy-up
+    /// it refers to is gone, or a change's original location could no longer be found
+    /// to reverse. `detail` is the developer-facing cause. Distinct from
+    /// [`RollbackNotReversible`](AppError::RollbackNotReversible) (a rehearsal or an
+    /// unreversible kind) and [`RollbackSelectionNotContiguous`](AppError::RollbackSelectionNotContiguous)
+    /// (a bad partial selection): this is the catch-all for a read/reconstruction failure.
+    #[error("the undo could not be prepared: {detail}")]
+    RollbackPrepareFailed { detail: String },
+
+    // ---- Post-apply check family (v0.5.0 Phase 6: F-604 after-the-fact check) ----
+    /// A previous tidy-up's after-the-fact check found a difference between what
+    /// was planned and what is on disk, and that difference has not been
+    /// acknowledged yet. Forward tidying is paused until a human acknowledges it
+    /// (AC-20). This gate is FORWARD-only: preparing or running an UNDO is never
+    /// refused this way, because undo is the remedy for such a difference.
+    #[error("further tidy-ups are paused until the after-the-fact check is acknowledged")]
+    TidyingBlocked,
+
+    // ---- Apply control family (v0.5.0 Phase 7: F-608 pause/resume) ----
+    //
+    // The plain refusals for the pause/resume controls (AC-24). Pausing needs a
+    // tidy-up actually in progress; resuming needs one that is currently paused.
+    // A Stop of a not-running tidy-up is a harmless no-op (the `job_stop` command
+    // returns a boolean, like the scan Stop), so it has no error variant here.
+    /// `job_pause` was asked to pause, but no tidy-up is in progress to pause
+    /// (it already finished, was never started, or the id is unknown).
+    #[error("there is no tidy-up in progress to pause")]
+    NothingToPause,
+
+    /// `job_resume` was asked to resume, but the tidy-up is not paused (it is
+    /// running normally, already finished, or the id is unknown), so there is
+    /// nothing to resume.
+    #[error("there is no paused tidy-up to resume")]
+    NothingToResume,
 }
 
 impl AppError {
@@ -255,6 +379,25 @@ impl AppError {
             // Plan review family
             AppError::PlanGenerationFailed { .. } => "plan-generation-failed",
             AppError::PlanNotFound { .. } => "plan-not-found",
+            // Apply family
+            AppError::ApplyNotSupported => "apply-not-supported",
+            AppError::ApplyFailed { .. } => "apply-failed",
+            AppError::JournalWriteFailed { .. } => "journal-write-failed",
+            // Apply execution family
+            AppError::JobAlreadyRunning => "job-already-running",
+            AppError::CopyVerifyMismatch { .. } => "copy-verify-mismatch",
+            AppError::SourceVanished { .. } => "source-vanished",
+            AppError::TargetAppeared { .. } => "target-appeared",
+            AppError::AccessDenied { .. } => "access-denied",
+            // Undo family
+            AppError::RollbackNotReversible => "rollback-not-reversible",
+            AppError::RollbackSelectionNotContiguous => "rollback-selection-not-contiguous",
+            AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
+            // Post-apply check family
+            AppError::TidyingBlocked => "tidying-blocked",
+            // Apply control family
+            AppError::NothingToPause => "nothing-to-pause",
+            AppError::NothingToResume => "nothing-to-resume",
         }
     }
 
@@ -378,6 +521,76 @@ impl AppError {
                 "This tidy-up plan could not be found; it may have been built in an earlier \
                  session. Build a new plan from the current scan and review that instead."
             }
+            // Apply family
+            AppError::ApplyNotSupported => {
+                "Making changes for real is not available in this version yet. You can preview \
+                 what a tidy-up would do; making changes for real arrives in a later version."
+            }
+            AppError::ApplyFailed { .. } => {
+                "The app could not record this tidy-up run. Try again. If this keeps happening, \
+                 the disk may be full or the app data folder may be on a synced location \
+                 (OneDrive); free space or move the app data out of the synced folder."
+            }
+            AppError::JournalWriteFailed { .. } => {
+                "The app stopped before making any change because it could not first record what \
+                 it was about to do. Nothing was moved. Try again. If this keeps happening, the \
+                 disk may be full or the app data folder may be on a synced location (OneDrive); \
+                 free space or move the app data out of the synced folder."
+            }
+            // Apply execution family
+            AppError::JobAlreadyRunning => {
+                "A tidy-up is already in progress. Wait for it to finish, then start the next one. \
+                 Only one tidy-up runs at a time so your library is never changed twice at once."
+            }
+            AppError::CopyVerifyMismatch { .. } => {
+                "A file had to be copied to another drive, but the copy did not match the \
+                 original, so the change was stopped and your original file was left exactly where \
+                 it was. Check the target drive for errors, then try the tidy-up again."
+            }
+            AppError::SourceVanished { .. } => {
+                "A file or folder this tidy-up was going to change is no longer where it was, so \
+                 the tidy-up stopped safely. Scan your library again to refresh it, then review \
+                 and run the tidy-up once more."
+            }
+            AppError::TargetAppeared { .. } => {
+                "Something already exists where a change was going to land, so it was left alone \
+                 and the tidy-up stopped without overwriting anything. Scan your library again to \
+                 refresh it, then review and run the tidy-up once more."
+            }
+            AppError::AccessDenied { .. } => {
+                "Windows would not let the app change an item, even after a second try, so the \
+                 tidy-up stopped there. Close any program that may be using that file or folder, \
+                 or grant the app permission to it, then try the tidy-up again."
+            }
+            // Undo family
+            AppError::RollbackNotReversible => {
+                "That tidy-up was a rehearsal, so nothing was actually moved and there is nothing \
+                 to undo. Run a real tidy-up first if you want changes you can undo."
+            }
+            AppError::RollbackSelectionNotContiguous => {
+                "An undo can only take back the most recent changes, in order. Choose an unbroken \
+                 run of the latest changes to undo, without skipping any in the middle."
+            }
+            AppError::RollbackPrepareFailed { .. } => {
+                "The undo could not be prepared. The undo file may be missing or the tidy-up it \
+                 refers to may be gone. Scan your library again, then build and review a fresh \
+                 plan instead."
+            }
+            // Post-apply check family
+            AppError::TidyingBlocked => {
+                "The last tidy-up's after-the-fact check found a difference that needs a look \
+                 before more changes are made. Review the after-the-fact check and acknowledge it; \
+                 undoing the last tidy-up is still available. Once acknowledged, tidy-ups resume."
+            }
+            // Apply control family
+            AppError::NothingToPause => {
+                "There is no tidy-up in progress to pause. Start a tidy-up first; you can pause it \
+                 between books while it runs."
+            }
+            AppError::NothingToResume => {
+                "This tidy-up is not paused, so there is nothing to resume. If a tidy-up is \
+                 paused, use Resume to continue it between books."
+            }
         }
     }
 }
@@ -458,6 +671,34 @@ mod tests {
                 detail: "database is locked".into(),
             },
             AppError::PlanNotFound { plan_id: 42 },
+            AppError::ApplyNotSupported,
+            AppError::ApplyFailed {
+                detail: "database is locked".into(),
+            },
+            AppError::JournalWriteFailed {
+                detail: "database is locked".into(),
+            },
+            AppError::JobAlreadyRunning,
+            AppError::CopyVerifyMismatch {
+                path: r"F:\Books\Author\Title\book.m4b".into(),
+            },
+            AppError::SourceVanished {
+                path: r"E:\Books\Gone.m4b".into(),
+            },
+            AppError::TargetAppeared {
+                path: r"E:\Books\Author\Title".into(),
+            },
+            AppError::AccessDenied {
+                path: r"E:\Books\locked\book.m4b".into(),
+            },
+            AppError::RollbackNotReversible,
+            AppError::RollbackSelectionNotContiguous,
+            AppError::RollbackPrepareFailed {
+                detail: "undo file could not be read".into(),
+            },
+            AppError::TidyingBlocked,
+            AppError::NothingToPause,
+            AppError::NothingToResume,
         ]
     }
 
