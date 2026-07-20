@@ -15,10 +15,13 @@
 //! re-plan preview `commands::plan::plan_preview` and the scan Stop control
 //! (`scan_cancel`, already wired since v0.2.0; this phase gives it a real
 //! frontend affordance, AC-36).
-//! v0.5.0 (acting) Phase 1 adds the F-607 executor seam command
-//! (`commands::apply::apply_start`): a dry-run walk of an approved plan against an
-//! in-memory `MemFs`. A Real apply is refused with `apply-not-supported` this
-//! phase (D-09); the operation logic and the F-904 apply surface land later.
+//! v0.5.0 (acting) lands the full executor: `commands::apply::apply_start`
+//! runs an approved plan as a spawned job (DryRun against `MemFs`, Real against
+//! `RealFs`), with journal-before-act, single-writer locking, pause/resume and
+//! Stop (`job_pause`/`job_resume`), post-apply verification with the
+//! block-further-tidying gate, rollback preparation (`rollback_prepare`), and
+//! the F-904 apply surface. The v1 UI pins mode to dry-run; a Real apply
+//! against the actual library remains a human-only action (D-10).
 //!   - commands -> IPC command handlers (payload contract lives in abo-core::ipc)
 //!   - events   -> backend -> frontend typed event emission
 //!
@@ -42,6 +45,12 @@ mod events;
 // just this helper (and its terminal-outcome type) keeps the rest of the command
 // layer module-private.
 pub use commands::{run_job_to_terminal, JobEnd};
+
+// Re-exported for the apply panic-safety integration test (`tests/apply_terminal.rs`):
+// the apply terminal-state wrapper, its pause/Stop control type, and the control
+// registry, so the test can drive a spawned apply's terminal path (including a
+// panic inside the walk releasing the single-writer in-process flag) directly.
+pub use commands::apply::{run_apply_to_terminal, ApplyControl, ApplyControlRegistry};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -85,8 +94,16 @@ pub struct AppState {
     /// with `job-already-running` before any database work. An `AtomicBool` (not a
     /// lock guard) so it is safe to read across the apply's `.await` points; the
     /// durable `running` apply `jobs` row is the cross-restart backstop. Reset on
-    /// every exit path by an RAII guard in `apply_start`.
+    /// every exit path (including a panic) by an RAII guard living in the SPAWNED
+    /// apply task, so the flag frees when the walk ends, not when `apply_start`
+    /// returns (which is now immediate).
     pub apply_in_flight: Arc<AtomicBool>,
+    /// Live pause/resume/Stop controls for in-flight apply jobs (F-608, F-104),
+    /// keyed by `jobs.id`. `apply_start` inserts one when it spawns the walk and it
+    /// is removed when the job reaches a terminal state; `job_pause`/`job_resume`/
+    /// `job_stop` look one up to control a running apply. A paused apply keeps its
+    /// entry here AND its single-writer lock (a paused apply is still THE apply).
+    pub apply_controls: commands::apply::ApplyControlRegistry,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -132,12 +149,20 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::rollback::rollback_prepare_partial,
             commands::job::job_status,
             commands::job::acknowledge_check,
+            commands::job::job_pause,
+            commands::job::job_resume,
+            commands::job::job_stop,
         ])
         .events(collect_events![
             events::JobCompleted,
             events::JobFailed,
+            // P8 IMPORTANT 3: apply's DISTINCT cooperative-Stop terminal event, so
+            // the activity surface transitions to "stopped between books" reliably.
+            events::JobStopped,
             // Frozen but never emitted in the spine (see events::JobProgress).
             events::JobProgress,
+            // P8 prelude 0b: per-operation progress event for the apply surface.
+            events::JobOpExecuted,
         ])
         .dangerously_cast_bigints_to_number()
 }
@@ -269,6 +294,7 @@ pub fn run() {
                 jobs: Arc::new(Mutex::new(HashMap::new())),
                 library_root: Arc::new(Mutex::new(library_root)),
                 apply_in_flight: Arc::new(AtomicBool::new(false)),
+                apply_controls: Arc::new(Mutex::new(HashMap::new())),
             });
             Ok(())
         })

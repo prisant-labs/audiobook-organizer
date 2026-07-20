@@ -257,18 +257,28 @@ export const commands = {
 	 */
 	rulesetPresetExamples: (seriesIndexWidth: number) => __TAURI_INVOKE<PresetExampleView[]>("ruleset_preset_examples", { seriesIndexWidth }),
 	/**
-	 *  Start applying an approved plan (F-601/F-607).
+	 *  Start applying an approved plan as a background job (F-601/F-607/F-904),
+	 *  returning immediately with the new apply `jobs.id`.
 	 * 
 	 *  Loads the plan, acquires the single-writer lock (AC-8), records the apply
-	 *  `jobs` row carrying `mode`, and walks the plan's APPROVED operations through the
-	 *  executor: a `DryRun` against a snapshot-seeded `MemFs` (AC-2), a `Real` apply
-	 *  against `RealFs` (the actual disk). Journal-before-act (F-602, AC-10): each op's
-	 *  intent row is flushed and committed BEFORE the filesystem call, a terminal
-	 *  `done`/`failed` row after. An operation that fails halts the group and surfaces
-	 *  the matching error (AC-5/6/7/9); a clean run exports the self-contained undo
-	 *  file and re-emits the F-507 provenance report (AC-11, AC-12).
+	 *  `jobs` row carrying `mode`, registers an [`ApplyControl`] so the pause/resume/
+	 *  stop commands can reach the running job (F-608, F-104), then SPAWNS the walk on
+	 *  the async runtime and returns [`JobStarted`] straight away - like `scan_start`,
+	 *  so the IPC call never blocks on the walk and the caller learns `job_id` while
+	 *  the apply is still running (which is what makes `job_pause(job_id)` usable).
+	 * 
+	 *  The spawned walk runs the plan's APPROVED operations through the executor: a
+	 *  `DryRun` against a snapshot-seeded `MemFs` (AC-2), a `Real` apply against
+	 *  `RealFs` (the actual disk). Journal-before-act (F-602, AC-10): each op's intent
+	 *  row is flushed and committed BEFORE the filesystem call, a terminal `done`/
+	 *  `failed` row after. It drives the `jobs` row to a terminal state -
+	 *  `completed`, `failed` (a halted op, AC-5/6/7/9), or `stopped` (a cooperative
+	 *  Stop, AC-26) - releasing both the durable lock (the terminal row) and the
+	 *  in-process flag (on the spawned task's exit) on EVERY path, including a panic.
+	 *  The per-job outcome (verified ops, discrepancy block) is read back via
+	 *  [`job_status`](super::job::job_status).
 	 */
-	applyStart: (planId: number, mode: ApplyMode) => typedError<ApplyReport, AppError>(__TAURI_INVOKE("apply_start", { planId, mode })),
+	applyStart: (planId: number, mode: ApplyMode) => typedError<JobStarted, AppError>(__TAURI_INVOKE("apply_start", { planId, mode })),
 	/**
 	 *  Prepare an undo of a completed tidy-up (F-604, AC-14): produce a validated,
 	 *  previewable inverse plan from its undo file and return the new plan id.
@@ -285,7 +295,8 @@ export const commands = {
 	/**
 	 *  The status of one apply job and its after-the-fact check (F-604): lifecycle
 	 *  state, whether it raised an unacknowledged discrepancy blocking further
-	 *  FORWARD tidy-ups (AC-20), and how many differences the check found.
+	 *  FORWARD tidy-ups (AC-20), how many differences the check found, and whether
+	 *  the job is currently paused at an operation boundary (P8 prelude 0a).
 	 */
 	jobStatus: (jobId: number) => typedError<JobStatus, AppError>(__TAURI_INVOKE("job_status", { jobId })),
 	/**
@@ -295,13 +306,51 @@ export const commands = {
 	 *  never blocked, so this only ever re-opens forward tidying.
 	 */
 	acknowledgeCheck: (jobId: number) => typedError<JobStatus, AppError>(__TAURI_INVOKE("acknowledge_check", { jobId })),
+	/**
+	 *  Pause a running apply job between books (F-608, FD-02, AC-24).
+	 * 
+	 *  Sets the job's pause flag; the executor stops BEFORE its next operation and
+	 *  parks there (never mid-operation). Pausing is metadata-only in-memory state -
+	 *  NEVER a journal event (AC-25) - and the paused apply keeps holding the
+	 *  single-writer lock (it is still THE apply). Errors plainly with
+	 *  [`AppError::NothingToPause`] if no tidy-up is in progress to pause (already
+	 *  finished, never started, or an unknown id).
+	 * 
+	 *  Synchronous: it only flips an in-memory flag in managed state, so it needs no
+	 *  async runtime and returns instantly without waiting for the walk to park.
+	 */
+	jobPause: (jobId: number) => typedError<null, AppError>(__TAURI_INVOKE("job_pause", { jobId })),
+	/**
+	 *  Resume a paused apply job (F-608, FD-02, AC-24): continue from the next
+	 *  operation. Errors plainly with [`AppError::NothingToResume`] if the tidy-up is
+	 *  not currently paused (running normally, already finished, or an unknown id).
+	 * 
+	 *  Synchronous, like [`job_pause`].
+	 */
+	jobResume: (jobId: number) => typedError<null, AppError>(__TAURI_INVOKE("job_resume", { jobId })),
+	/**
+	 *  Request a cooperative Stop of a running apply job (F-104, FD-02, AC-26).
+	 * 
+	 *  Flips the job's Stop flag; the executor cancels at its next safe operation
+	 *  boundary, leaving a consistent journal and a coherent partial state (the job
+	 *  ends in the distinct `stopped` terminal state, with no undo file for the
+	 *  partial forward job). Returns `true` if a running apply was found and
+	 *  signalled, `false` if none exists (already finished, never started, or unknown
+	 *  id) - a clear no-op status, not an error, exactly like the scan Stop
+	 *  (`scan_cancel`).
+	 * 
+	 *  Synchronous: it only flips an in-memory flag and wakes any parked walk.
+	 */
+	jobStop: (jobId: number) => __TAURI_INVOKE<boolean>("job_stop", { jobId }),
 };
 
 /** Events */
 export const events = {
+	applyOpExecuted: makeEvent<JobOpExecuted>("apply:op-executed"),
 	jobCompleted: makeEvent<JobCompleted>("job:completed"),
 	jobFailed: makeEvent<JobFailed>("job:failed"),
 	jobProgress: makeEvent<JobProgress>("job:progress"),
+	jobStopped: makeEvent<JobStopped>("job:stopped"),
 };
 
 /* Types */
@@ -629,7 +678,18 @@ export type AppError =
  *  (AC-20). This gate is FORWARD-only: preparing or running an UNDO is never
  *  refused this way, because undo is the remedy for such a difference.
  */
-"tidying-blocked";
+"tidying-blocked" | 
+/**
+ *  `job_pause` was asked to pause, but no tidy-up is in progress to pause
+ *  (it already finished, was never started, or the id is unknown).
+ */
+"nothing-to-pause" | 
+/**
+ *  `job_resume` was asked to resume, but the tidy-up is not paused (it is
+ *  running normally, already finished, or the id is unknown), so there is
+ *  nothing to resume.
+ */
+"nothing-to-resume";
 
 /**
  *  The singleton application settings (F-803), the wire form of the one
@@ -688,42 +748,36 @@ export type ApplyMode =
 "real";
 
 /**
- *  The result of an `apply_start` run (v0.5.0 Phase 1 dry-run seam), returned by
- *  the `apply_start` command. Reports the plan and apply-job the run belongs to,
- *  whether it was a dry run, and how many approved operations the executor
- *  walked.
+ *  Payload of the `apply:op-executed` event (P8 prelude, 0b), emitted after each
+ *  operation's `done` journal row is committed in a running apply job. The event is
+ *  fire-and-forget: it never perturbs the walk, the journal, or the AC-3/AC-25
+ *  equality invariants.
  * 
- *  This is the SKELETON return for the seam phase: it proves the dry-run walk ran
- *  against a `MemFs` seeded from the plan's snapshot without touching disk (AC-2).
- *  The F-904 apply + activity surface (a later phase) grows the real event-driven
- *  progress contract on top of the same command; `dry_run` is always `true` here
- *  because a Real apply is refused with `apply-not-supported` this phase (D-09).
+ *  The shell emits this from the [`crate::exec::OpObserver`] seam; the core never
+ *  imports Tauri. The UI uses the `kind` and `label` to compose a plain sentence
+ *  from the frontend strings module (FD-23). Raw paths are deliberately excluded
+ *  (design-system FD-13, R-12): the `label` is the last path component only.
  */
-export type ApplyReport = {
-	/**  The `plans.id` this run applied. */
-	plan_id: number,
-	/**  The apply `jobs.id` recorded for this run. */
+export type ApplyOpExecutedPayload = {
+	/**  The `jobs.id` this event belongs to (for frontend filtering). */
 	job_id: number,
-	/**  Whether this was a dry run (always `true` this phase). */
-	dry_run: boolean,
-	/**  How many approved operations the executor walked. */
-	ops_walked: number,
+	/**  The `plan_ops.id` of the just-executed operation. */
+	op_id: number,
 	/**
-	 *  How many of the walked operations the after-the-fact check (F-604, AC-18)
-	 *  confirmed: target exists, size matches the snapshot, source gone.
+	 *  The operation kind: `"move"`, `"rename"`, `"quarantine"`, `"mkdir"`,
+	 *  `"rmdir-empty"`, or `"no-op"`.
 	 */
-	verified_ops: number,
+	kind: string,
 	/**
-	 *  How many walked operations the after-the-fact check found a difference on
-	 *  (a move journaled as done that reality contradicts). Zero on a clean apply.
+	 *  A plain-language display label for the book or folder - the last path
+	 *  component of `source_path` (extension stripped for audio-file moves), or
+	 *  the last component of `target_path` for `mkdir`. Never a full raw path.
 	 */
-	discrepancy_count: number,
-	/**
-	 *  Whether this apply raised an unacknowledged discrepancy block (AC-20). When
-	 *  true, further FORWARD tidy-ups are paused until it is acknowledged; undo is
-	 *  never blocked.
-	 */
-	blocked: boolean,
+	label: string,
+	/**  How many operations have completed so far (the done count, including this one). */
+	done_count: number,
+	/**  The total number of approved operations in this walk. */
+	total: number,
 };
 
 /**
@@ -987,7 +1041,11 @@ export type HealthMetrics = {
 	total_bytes: number,
 };
 
-/**  Typed `job:completed` event, emitted when a spawned scan finishes cleanly. */
+/**
+ *  Typed `job:completed` event, emitted when a spawned scan OR apply finishes
+ *  cleanly. Listeners filter by `job_id` (a job id is unique across scan and
+ *  apply), so an apply completion never disturbs a scan listener and vice versa.
+ */
 export type JobCompleted = JobCompletedPayload;
 
 /**
@@ -1002,7 +1060,10 @@ export type JobCompletedPayload = {
 	scan_id: number,
 };
 
-/**  Typed `job:failed` event, emitted when a spawned scan errors. */
+/**
+ *  Typed `job:failed` event, emitted when a spawned scan OR apply errors. Carries
+ *  the stable machine `code`; listeners filter by `job_id`.
+ */
 export type JobFailed = JobFailedPayload;
 
 /**
@@ -1017,6 +1078,17 @@ export type JobFailedPayload = {
 	/**  The stable kebab-case error code (equals [`AppError::code`]). */
 	code: string,
 };
+
+/**
+ *  Typed `apply:op-executed` event (P8 prelude 0b), emitted after each operation's
+ *  `done` journal row is committed in a running apply job. The event is
+ *  fire-and-forget: a dropped event never fails the apply.
+ * 
+ *  Wire name pinned explicitly so a rename of the Rust struct does not silently
+ *  break the frontend listener. The frontend listens via the generated
+ *  `events.applyOpExecuted` binding, never a raw string.
+ */
+export type JobOpExecuted = ApplyOpExecutedPayload;
 
 /**
  *  Typed `job:progress` event.
@@ -1101,6 +1173,51 @@ export type JobStatus = {
 	 *  the block detail). Zero when there is no outstanding block.
 	 */
 	discrepancy_count: number,
+	/**
+	 *  Whether the job is currently paused at an operation boundary (P8 prelude,
+	 *  0a). Sourced from the in-memory [`ApplyControlRegistry`] in the shell; always
+	 *  `false` for jobs that have already reached a terminal state (they have left
+	 *  the registry). `jobs.state` stays `"running"` while paused so the
+	 *  single-writer lock query remains correct.
+	 */
+	paused: boolean,
+	/**
+	 *  How many operations have finished so far, read from the DURABLE journal
+	 *  (`done` rows). This is the backfill source for the activity surface's
+	 *  progress line: a fast dry-run that finished before the UI attached its
+	 *  `apply:op-executed` listeners still shows the true count, not "0 of 0".
+	 *  The live event carries the same number for the low-latency in-flight case.
+	 */
+	done_count: number,
+	/**
+	 *  The total number of approved operations in this job's walk, found from the
+	 *  plan the job is applying. The backfill partner of `done_count`; `0` only for
+	 *  a job that has not journaled its first operation yet, which the live events
+	 *  then fill in.
+	 */
+	total: number,
+};
+
+/**
+ *  Typed `job:stopped` event (P8, IMPORTANT 3), emitted after an apply job's
+ *  DISTINCT `stopped` terminal state is durably marked. Mirrors the completed /
+ *  failed terminal events so the activity surface transitions reliably rather than
+ *  racing the walk's final state write. Fire-and-forget, post-durable-state.
+ */
+export type JobStopped = JobStoppedPayload;
+
+/**
+ *  Payload of the `job:stopped` event (P8, IMPORTANT 3), emitted after an apply
+ *  job's DISTINCT `stopped` terminal state is durably marked in the `jobs` row
+ *  (a cooperative Stop, AC-26). It mirrors the `job:completed`/`job:failed`
+ *  terminal events so the activity surface transitions to "stopped between books"
+ *  reliably instead of racing the walk's final state write with a single status
+ *  poll. Fire-and-forget and post-durable-state: a dropped event never perturbs
+ *  the walk, and the status poll remains the fallback.
+ */
+export type JobStoppedPayload = {
+	/**  The `jobs.id` of the apply job that stopped cooperatively. */
+	job_id: number,
 };
 
 /**

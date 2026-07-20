@@ -3,14 +3,19 @@ import { STRINGS } from "@/lib/strings";
 
 export interface ConfirmInlineProps {
   disabled: boolean;
+  /**
+   * Called when the user confirms the tidy-up (second "Go ahead" press).
+   * When provided, replaces the v0.5.0-not-yet stub with the real apply flow.
+   * When omitted, the original stub message is shown (backward-compatible).
+   */
+  onConfirm?: () => Promise<void>;
 }
 
 // The two-step inline confirm strip (F-502/AC-12, design-system Section 4.14):
 // the first press swaps the primary button for an inline confirm, never a
-// modal (Section 7); the second press is a stub this release (AC-12 exists
-// as the affordance, but applying is v0.5.0 (acting)) - it shows the honest
-// "not yet" message rather than pretending to schedule anything.
-export function ConfirmInline({ disabled }: ConfirmInlineProps) {
+// modal (Section 7); the second press calls `onConfirm` when provided (v0.5.0
+// apply flow) or shows the honest "not yet" message otherwise (pre-v0.5.0 stub).
+export function ConfirmInline({ disabled, onConfirm }: ConfirmInlineProps) {
   const [step, setStep] = useState<"idle" | "confirming" | "not-yet">("idle");
 
   if (step === "not-yet") {
@@ -23,7 +28,13 @@ export function ConfirmInline({ disabled }: ConfirmInlineProps) {
         <span className="text-[12.5px] text-ink-2">{STRINGS.review.confirmPrompt}</span>
         <button
           type="button"
-          onClick={() => setStep("not-yet")}
+          onClick={() => {
+            if (onConfirm) {
+              void onConfirm(); // triggers real apply via parent; shell navigates away
+            } else {
+              setStep("not-yet"); // pre-v0.5.0 stub: honest "not available yet" message
+            }
+          }}
           className="rounded bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover"
         >
           {STRINGS.review.confirmGoAhead}

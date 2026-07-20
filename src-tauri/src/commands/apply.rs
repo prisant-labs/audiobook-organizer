@@ -1,26 +1,43 @@
-//! F-607 / F-601 apply command handler - v0.5.0 (acting) Phase 3 (executor core).
+//! F-607 / F-601 / F-904 apply command handler - v0.5.0 (acting) Phase 7 adds the
+//! cooperative pause/resume/Stop controls and makes the apply a SPAWNED background
+//! job (F-608, F-104, FD-02).
 //!
 //! [`apply_start`] is the executor's IPC entry point. It loads the approved plan,
-//! acquires the single-writer lock (AC-8), records the apply `jobs` row, and walks
-//! the plan's APPROVED operations through the [`Executor`](abo_core::exec::Executor):
+//! acquires the single-writer lock (AC-8), records the apply `jobs` row, registers
+//! an [`ApplyControl`], then SPAWNS the walk on the async runtime and returns the
+//! new `jobs.id` straight away (a [`JobStarted`], like `scan_start`) - so the caller
+//! learns the job id WHILE the apply runs, which is what makes `job_pause(job_id)`
+//! and Stop usable mid-walk. The spawned walk runs the plan's APPROVED operations
+//! through the [`Executor`](abo_core::exec::Executor):
 //! - [`ApplyMode::DryRun`] walks a [`MemFs`](abo_core::exec::MemFs) seeded from the
 //!   plan's snapshot, touching no real path (AC-2);
-//! - [`ApplyMode::Real`] walks [`RealFs`](abo_core::exec::RealFs), the actual disk
-//!   (this phase flips Real mode on; the operation logic - rename-first, cross-
-//!   volume copy+verify+delete, TOCTOU, never-overwrite, access-denied - lives in
-//!   `abo_core::exec`).
+//! - [`ApplyMode::Real`] walks [`RealFs`](abo_core::exec::RealFs), the actual disk.
+//!
+//! The executor consults the [`ApplyControl`] at operation BOUNDARIES only (F-608
+//! pause parks the walk there; F-104 Stop ends it there), never mid-op, and neither
+//! writes a journal row of its own (AC-24, AC-25). A cooperative Stop ends the walk
+//! in the DISTINCT `stopped` terminal state (not `failed`), with no undo file for
+//! the partial forward job (AC-26).
 //!
 //! Thin-adapter rule (same as [`super::plan`]): the product logic lives in
-//! `abo-core`; this command orchestrates lock -> job row -> executor -> undo file,
-//! and maps an [`ExecHalt`](abo_core::exec::ExecHalt) onto the typed error surface.
+//! `abo-core`; this command orchestrates lock -> job row -> control -> executor ->
+//! undo file, and maps an [`ExecHalt`](abo_core::exec::ExecHalt) onto the typed
+//! error surface. The per-job outcome (verified ops, discrepancy block) is read back
+//! via [`job_status`](super::job::job_status).
 //!
 //! Single-writer (AC-8): a fast in-process guard (`AppState::apply_in_flight`)
 //! refuses a second concurrent apply in this process instantly; the durable
 //! `running` apply `jobs` row (via [`acquire_apply_job`]) is the cross-restart
-//! backstop, released by marking the job terminal here and by the startup reclaim.
+//! backstop. Both are released - on completion, failure, a Stop, OR a panic in the
+//! walk - inside the SPAWNED task (via [`run_apply_to_terminal`] and its RAII
+//! guards), plus the startup reclaim for a crash. A paused apply is still THE apply:
+//! it keeps both, so a second apply is refused while one is paused.
 
+use std::collections::HashMap;
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use abo_core::db::plans::{get_plan, get_plan_ops};
 use abo_core::exec::lock::acquire_apply_job;
@@ -28,46 +45,210 @@ use abo_core::exec::manifest::export_after_apply;
 use abo_core::exec::verify::{affected_roots, write_check_report};
 use abo_core::exec::{
     delta_health_metrics, ensure_forward_tidying_allowed, record_block, verify_job, ApplyMode,
-    ApplyScope, CheckReport, ExecHalt, Executor, MemFs, RealFs, SeedEntry, SqliteJournal, Vfs,
+    ApplyScope, CheckReport, ExecControl, ExecHalt, Executor, MemFs, OpObserver, RealFs, SeedEntry,
+    SqliteJournal, Vfs,
 };
-use abo_core::ipc::{AppError, ApplyReport, EntryRow};
+use abo_core::ipc::{AppError, ApplyOpExecutedPayload, ApplyReport, EntryRow, JobStarted};
 use abo_core::plan::builder::default_set_aside_root;
 use abo_core::scan::walk::now_iso8601_utc;
+use futures::FutureExt;
 use sqlx::SqlitePool;
+use tokio::sync::Notify;
 
 use crate::AppState;
 
-/// RAII guard for the in-process apply flag: clears `apply_in_flight` on every
-/// exit path (success, error, or a panic that unwinds the command), so a refused
-/// or crashed apply never leaves the fast guard stuck set.
-struct ApplyInFlightGuard(Arc<AtomicBool>);
+/// Cooperative pause/resume/Stop state for one running apply job (F-608 pause,
+/// F-104 Stop, FD-02). Held in [`AppState::apply_controls`](crate::AppState) keyed
+/// by `jobs.id` while the apply runs on its spawned task, so the `job_pause` /
+/// `job_resume` / `job_stop` commands can reach a job that is mid-walk.
+///
+/// It implements [`ExecControl`] so the executor consults it at operation
+/// BOUNDARIES only: `stop_requested` ends the walk at the next boundary, and
+/// `pause_barrier` parks the walk there until it is resumed or stopped. Pause and
+/// Stop are metadata-only in-memory state - NEVER a journal event (FD-02, AC-25).
+///
+/// A paused apply is STILL the apply: it keeps holding the single-writer lock (the
+/// `running` `jobs` row and the in-process flag are untouched by a pause), so a
+/// second apply is still refused while one is paused (AC-8).
+pub struct ApplyControl {
+    /// Set once a Stop is requested; the walk ends at the next operation boundary.
+    cancel: AtomicBool,
+    /// Set while paused; the walk parks at the next boundary until resumed/stopped.
+    paused: AtomicBool,
+    /// Wakes a parked walk on resume or Stop. `notify_one` buffers a permit if the
+    /// walk has not parked yet, so a resume/Stop that races ahead of the park is
+    /// never lost (the walk is the single waiter).
+    wake: Notify,
+}
 
-impl Drop for ApplyInFlightGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+impl ApplyControl {
+    /// A fresh, not-paused, not-stopped control.
+    pub fn new() -> Self {
+        Self {
+            cancel: AtomicBool::new(false),
+            paused: AtomicBool::new(false),
+            wake: Notify::new(),
+        }
+    }
+
+    /// Request a pause; it takes effect at the next operation boundary.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+    }
+
+    /// Resume a paused apply, waking the parked walk.
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+        self.wake.notify_one();
+    }
+
+    /// Whether a pause is currently in effect.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    /// Whether a cooperative Stop has been requested (the executor observes this at
+    /// its next operation boundary via [`ExecControl::stop_requested`]).
+    pub fn is_stopping(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+
+    /// Request a cooperative Stop, waking a parked walk so it observes the Stop and
+    /// ends at the next boundary.
+    pub fn stop(&self) {
+        self.cancel.store(true, Ordering::SeqCst);
+        self.wake.notify_one();
     }
 }
 
-/// Start applying an approved plan (F-601/F-607).
+impl Default for ApplyControl {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ExecControl for ApplyControl {
+    fn stop_requested(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+
+    async fn pause_barrier(&self) {
+        // Park while paused. A Stop wakes and unblocks this too (the `!cancel`
+        // guard), so the executor's post-park Stop re-check ends the walk cleanly.
+        while self.paused.load(Ordering::SeqCst) && !self.cancel.load(Ordering::SeqCst) {
+            self.wake.notified().await;
+        }
+    }
+}
+
+/// The registry of live apply controls, keyed by `jobs.id`. `apply_start` inserts
+/// one when it spawns the walk and removes it when the job reaches a terminal
+/// state; the pause/resume/stop commands look one up to control a running apply.
+/// A plain `std::sync::Mutex`: every access is a brief, non-async insert/remove/
+/// lookup, never held across an `.await`.
+pub type ApplyControlRegistry = Arc<Mutex<HashMap<i64, Arc<ApplyControl>>>>;
+
+/// RAII guard for the in-process apply flag: clears `apply_in_flight` on every
+/// exit path (success, error, or a panic that unwinds), so a refused or crashed
+/// apply never leaves the fast guard stuck set.
+///
+/// It is used in two places for two disjoint windows, and MUST fire in exactly one:
+/// - a `preflight` guard in `apply_start` covers the pre-spawn window, so a `?`
+///   early-return there clears the flag; on the happy path it is [`disarm`]ed once
+///   the spawned task owns the flag, so it does NOT clear it;
+/// - the spawned task's guard covers the walk, clearing the flag when the walk ends
+///   (any path, including a panic-unwind), which is when `apply_start` has long
+///   since returned.
+///
+/// [`disarm`]: ApplyInFlightGuard::disarm
+struct ApplyInFlightGuard {
+    flag: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl ApplyInFlightGuard {
+    fn new(flag: Arc<AtomicBool>) -> Self {
+        Self { flag, armed: true }
+    }
+    /// Stop this guard from clearing the flag on drop (the flag's release has been
+    /// handed to another guard - the spawned task's).
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ApplyInFlightGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.flag.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+/// RAII guard that deregisters a job's [`ApplyControl`] from the registry when the
+/// spawned apply task ends (any path, including a panic-unwind), so the registry
+/// never leaks a control for a job that is no longer running.
+struct ApplyControlGuard {
+    registry: ApplyControlRegistry,
+    job_id: i64,
+}
+
+impl Drop for ApplyControlGuard {
+    fn drop(&mut self) {
+        // Best-effort: a poisoned registry mutex during unwind must not double-panic.
+        if let Ok(mut reg) = self.registry.lock() {
+            reg.remove(&self.job_id);
+        }
+    }
+}
+
+/// Shell-side [`OpObserver`] that emits one `apply:op-executed` Tauri event per
+/// completed operation (P8 prelude 0b). Fire-and-forget: an emit failure (for
+/// example no webview yet) is swallowed so the apply is never failed by a missed
+/// progress event. The AC-3/AC-25 journal-equality invariants are unaffected because
+/// this observer writes NOTHING to the journal.
+struct ShellObserver {
+    app: tauri::AppHandle,
+}
+
+impl OpObserver for ShellObserver {
+    async fn on_op_executed(&self, payload: &ApplyOpExecutedPayload) {
+        crate::events::emit_apply_op_executed(&self.app, payload.clone());
+    }
+}
+
+/// Start applying an approved plan as a background job (F-601/F-607/F-904),
+/// returning immediately with the new apply `jobs.id`.
 ///
 /// Loads the plan, acquires the single-writer lock (AC-8), records the apply
-/// `jobs` row carrying `mode`, and walks the plan's APPROVED operations through the
-/// executor: a `DryRun` against a snapshot-seeded `MemFs` (AC-2), a `Real` apply
-/// against `RealFs` (the actual disk). Journal-before-act (F-602, AC-10): each op's
-/// intent row is flushed and committed BEFORE the filesystem call, a terminal
-/// `done`/`failed` row after. An operation that fails halts the group and surfaces
-/// the matching error (AC-5/6/7/9); a clean run exports the self-contained undo
-/// file and re-emits the F-507 provenance report (AC-11, AC-12).
+/// `jobs` row carrying `mode`, registers an [`ApplyControl`] so the pause/resume/
+/// stop commands can reach the running job (F-608, F-104), then SPAWNS the walk on
+/// the async runtime and returns [`JobStarted`] straight away - like `scan_start`,
+/// so the IPC call never blocks on the walk and the caller learns `job_id` while
+/// the apply is still running (which is what makes `job_pause(job_id)` usable).
+///
+/// The spawned walk runs the plan's APPROVED operations through the executor: a
+/// `DryRun` against a snapshot-seeded `MemFs` (AC-2), a `Real` apply against
+/// `RealFs` (the actual disk). Journal-before-act (F-602, AC-10): each op's intent
+/// row is flushed and committed BEFORE the filesystem call, a terminal `done`/
+/// `failed` row after. It drives the `jobs` row to a terminal state -
+/// `completed`, `failed` (a halted op, AC-5/6/7/9), or `stopped` (a cooperative
+/// Stop, AC-26) - releasing both the durable lock (the terminal row) and the
+/// in-process flag (on the spawned task's exit) on EVERY path, including a panic.
+/// The per-job outcome (verified ops, discrepancy block) is read back via
+/// [`job_status`](super::job::job_status).
 #[tauri::command]
 #[specta::specta]
 pub async fn apply_start(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     plan_id: i64,
     mode: ApplyMode,
-) -> Result<ApplyReport, AppError> {
+) -> Result<JobStarted, AppError> {
     // In-process single-writer guard (AC-8): refuse a second concurrent apply in
-    // THIS process instantly, before any DB work. The guard clears the flag on
-    // every exit path (including the `?` early returns below) via Drop.
+    // THIS process instantly, before any DB work. Ownership of the flag is handed
+    // to the SPAWNED task below (which clears it when the walk ends); a `preflight`
+    // guard clears it on the `?` early-return paths BEFORE the spawn.
     let flag = state.apply_in_flight.clone();
     if flag
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -75,7 +256,7 @@ pub async fn apply_start(
     {
         return Err(AppError::JobAlreadyRunning);
     }
-    let _in_flight = ApplyInFlightGuard(flag);
+    let mut preflight = ApplyInFlightGuard::new(flag.clone());
 
     let pool = &state.pool;
 
@@ -115,72 +296,236 @@ pub async fn apply_start(
 
     // Durable single-writer lock (AC-8): refuse if an apply is already `running`,
     // else insert the `running` apply job (the lock) carrying `mode`. Released by
-    // marking the job terminal below (and by the startup reclaim after a crash).
+    // marking the job terminal in the spawned task (and by the startup reclaim
+    // after a crash).
     let started_at = now_iso8601_utc();
     let job_id = acquire_apply_job(pool, mode, &started_at).await?;
 
+    // Register the pause/resume/Stop control BEFORE spawning, so a pause/stop that
+    // arrives the instant the walk starts already finds it. Deregistered when the
+    // spawned task ends (any path) via `ApplyControlGuard`.
+    let control = Arc::new(ApplyControl::new());
+    state
+        .apply_controls
+        .lock()
+        .expect("apply control registry poisoned")
+        .insert(job_id, control.clone());
+
+    // The preflight window is over and the walk is about to own the lock: disarm
+    // the preflight guard so it does NOT clear the flag on this happy path (the
+    // spawned task's own guard takes over releasing it).
+    preflight.disarm();
+    drop(preflight);
+
     let app_data_dir = abo_core::paths::app_data_dir();
     let reports_dir = abo_core::reports::plan_export_dir(&app_data_dir, plan_id, &plan.created_at);
-    let journal = SqliteJournal::new(pool.clone());
+    let scan_id = plan.scan_id;
 
-    // The walk is identical code over either backend (the Vfs seam is what makes a
-    // dry run a first-class product): seed a MemFs for a dry run, use RealFs for a
-    // Real apply, then run+finalize through the shared generic helper.
-    match mode {
-        ApplyMode::DryRun => {
-            // Seed a MemFs from the plan's snapshot so the dry run walks a memory
-            // tree identical to what the plan was built over, resolving nothing to a
-            // real path (AC-2). MemFs is disk-inert by construction.
-            let entries = abo_core::scan::get_scan_entries(pool, plan.scan_id)
-                .await
-                .map_err(|e| AppError::ApplyFailed {
-                    detail: e.to_string(),
-                })?;
-            let memfs = MemFs::from_seed(&seed_from_entries(&entries));
-            let executor = Executor::with_scope(memfs, job_id, ops, scope);
-            walk_and_finalize(
-                pool,
-                executor,
-                &journal,
-                &reports_dir,
-                plan_id,
-                mode,
-                job_id,
-                &started_at,
-                before_scan_id,
-                &library_root,
-            )
+    // Everything the task needs is owned (`'static`): the pool clones cheaply, the
+    // ops/scope/paths are owned, and the control is an Arc. AppHandle is clonable.
+    // The task outlives this command, so nothing borrows State.
+    let pool_owned = pool.clone();
+    let registry = state.apply_controls.clone();
+
+    tauri::async_runtime::spawn(async move {
+        let journal = SqliteJournal::new(pool_owned.clone());
+        let pool_for_wrapper = pool_owned.clone();
+        // Held back for the terminal-event emit below (P8 IMPORTANT 3): both are
+        // cloned BEFORE `app` and `pool_owned` are moved into the observer / walk.
+        let app_terminal = app.clone();
+        let pool_terminal = pool_owned.clone();
+        // The per-op observer emits `apply:op-executed` events to the frontend (P8
+        // prelude 0b). One AppHandle clone per task (clonable, cheap handle wrapper).
+        let observer = ShellObserver { app };
+
+        // The walk is identical code over either backend (the Vfs seam is what
+        // makes a dry run a first-class product); building the executor and running
+        // it are done INSIDE the task so even a snapshot-read failure marks the job
+        // terminal here rather than stranding the lock. `walk_and_finalize` marks
+        // the `jobs` row terminal on all its own paths; `run_apply_to_terminal`
+        // adds the panic backstop AND releases the single-writer in-process flag +
+        // the control registry on every path (including a panic).
+        let work = async move {
+            match mode {
+                ApplyMode::DryRun => {
+                    // Seed a MemFs from the plan's snapshot so the dry run walks a
+                    // memory tree identical to what the plan was built over,
+                    // resolving nothing to a real path (AC-2).
+                    let entries = abo_core::scan::get_scan_entries(&pool_owned, scan_id)
+                        .await
+                        .map_err(|e| AppError::ApplyFailed {
+                            detail: e.to_string(),
+                        })?;
+                    let memfs = MemFs::from_seed(&seed_from_entries(&entries));
+                    let executor = Executor::with_scope(memfs, job_id, ops, scope);
+                    walk_and_finalize(
+                        &pool_owned,
+                        executor,
+                        &journal,
+                        &reports_dir,
+                        plan_id,
+                        mode,
+                        job_id,
+                        &started_at,
+                        before_scan_id,
+                        &library_root,
+                        &*control,
+                        &observer,
+                    )
+                    .await
+                    .map(|_| ())
+                }
+                ApplyMode::Real => {
+                    // Real apply against the actual filesystem. The human-only gate
+                    // to run a Real apply against a real library is procedural
+                    // (EXECUTION.md); this is the RealFs executor that gate authorizes.
+                    let executor = Executor::with_scope(RealFs::new(), job_id, ops, scope);
+                    walk_and_finalize(
+                        &pool_owned,
+                        executor,
+                        &journal,
+                        &reports_dir,
+                        plan_id,
+                        mode,
+                        job_id,
+                        &started_at,
+                        before_scan_id,
+                        &library_root,
+                        &*control,
+                        &observer,
+                    )
+                    .await
+                    .map(|_| ())
+                }
+            }
+        };
+
+        run_apply_to_terminal(pool_for_wrapper, job_id, flag, registry, work).await;
+
+        // P8 IMPORTANT 3: the walk is now durably terminal (the `jobs` row is
+        // `completed`, `failed`, or `stopped`, and the control has left the
+        // registry). Emit the matching terminal event so the activity surface
+        // transitions reliably instead of racing the last `apply:op-executed` event
+        // with a single status poll. Fire-and-forget and post-durable-state: a
+        // dropped event is harmless because the mount/op-executed status refresh is
+        // the fallback. `scan_id` is the plan's scan (the value already captured for
+        // the dry-run seed); a scan listener filters it out by `job_id`.
+        emit_apply_terminal(&app_terminal, &pool_terminal, job_id, scan_id).await;
+    });
+
+    Ok(JobStarted { job_id })
+}
+
+/// Emit the terminal event that matches an apply job's DURABLE final state (P8
+/// IMPORTANT 3), read straight back from the `jobs` row after the walk finished:
+/// `job:completed` for a clean or blocked completion, `job:stopped` for a
+/// cooperative Stop (AC-26), `job:failed` (carrying the stable error code) for a
+/// halt/panic. Fire-and-forget: it runs AFTER the state is durably marked, so a
+/// missed event never perturbs the walk, and the activity surface's status refresh
+/// remains the fallback. A read error is swallowed (the durable row is the truth;
+/// the fallback poll still resolves the phase).
+async fn emit_apply_terminal(app: &tauri::AppHandle, pool: &SqlitePool, job_id: i64, scan_id: i64) {
+    let row: Option<(String, Option<String>)> =
+        match sqlx::query_as("SELECT state, error_code FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_optional(pool)
             .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                log::warn!("could not read terminal state to emit an event for job {job_id}: {e}");
+                return;
+            }
+        };
+    let Some((state, error_code)) = row else {
+        return;
+    };
+    match state.as_str() {
+        "completed" => crate::events::emit_job_completed(app, job_id, scan_id),
+        "stopped" => crate::events::emit_job_stopped(app, job_id),
+        "failed" => crate::events::emit_job_failed(
+            app,
+            job_id,
+            error_code.as_deref().unwrap_or("apply-failed"),
+        ),
+        // Any non-terminal state here would be a bug (the walk always marks the row
+        // terminal); stay silent rather than emit a misleading event.
+        _ => {}
+    }
+}
+
+/// Drive a spawned apply's `work` future to a terminal `jobs`-row state,
+/// panic-safely, releasing the single-writer lock on every exit.
+///
+/// This is the single wrapper the spawned apply task funnels through (there is no
+/// parallel copy of the terminal logic), the apply analogue of
+/// [`run_job_to_terminal`](crate::run_job_to_terminal). It holds two RAII guards
+/// for the WHOLE walk, so the in-process single-writer flag is cleared and the
+/// job's [`ApplyControl`] is deregistered on EVERY exit - completion, a journaled
+/// failure, a cooperative Stop, or a panic that unwinds the walk (AC-8).
+///
+/// `work` (the executor walk + finalize) marks the `jobs` row terminal on every one
+/// of its OWN paths - `completed`, `stopped`, or `failed`; this wrapper's remaining
+/// job is the panic backstop: it awaits `work` under [`FutureExt::catch_unwind`] so
+/// that a panic inside the walk (a simulated process kill, or any bug) still lands
+/// the `jobs` row `failed` with error_code `"internal-panic"` rather than leaving
+/// it stuck `running` forever (the same hole `run_job_to_terminal` closes for
+/// scans). A non-panic `Err` is marked `failed` idempotently here too, covering the
+/// one pre-`walk_and_finalize` failure (the DryRun snapshot read) that would
+/// otherwise leave the durable lock held; `walk_and_finalize`'s own error paths
+/// already marked it, so the second mark is a harmless no-op.
+///
+/// (Under the release profile's `panic = "abort"` a panic aborts the process
+/// before it can be caught; `catch_unwind`'s guarantee therefore holds for the
+/// unwinding builds used by tests and `cargo run`, which is where a stuck
+/// `running` row would otherwise be observable.)
+pub async fn run_apply_to_terminal<Fut>(
+    pool: SqlitePool,
+    job_id: i64,
+    flag: Arc<AtomicBool>,
+    registry: ApplyControlRegistry,
+    work: Fut,
+) where
+    Fut: Future<Output = Result<(), AppError>>,
+{
+    // These release the single-writer in-process flag and deregister the control
+    // when this wrapper ends - after the terminal marking below, or on a panic that
+    // unwinds this wrapper itself. The walk's OWN panic is contained by the
+    // `catch_unwind` below, so on that path the guards drop at the normal block end,
+    // AFTER the `jobs` row is marked failed.
+    let _in_flight = ApplyInFlightGuard::new(flag);
+    let _control_guard = ApplyControlGuard { registry, job_id };
+
+    match AssertUnwindSafe(work).catch_unwind().await {
+        // The walk finished (completed or stopped): `walk_and_finalize` already
+        // drove the `jobs` row to its terminal state.
+        Ok(Ok(())) => {}
+        // A journaled/handled failure: ensure the row is terminal (idempotent).
+        Ok(Err(err)) => {
+            mark_apply_job_failed(&pool, job_id, err.code()).await;
         }
-        ApplyMode::Real => {
-            // Real apply against the actual filesystem. The human-only gate to run a
-            // Real apply against a real library is procedural (EXECUTION.md); this is
-            // the RealFs executor that gate authorizes.
-            let executor = Executor::with_scope(RealFs::new(), job_id, ops, scope);
-            walk_and_finalize(
-                pool,
-                executor,
-                &journal,
-                &reports_dir,
-                plan_id,
-                mode,
-                job_id,
-                &started_at,
-                before_scan_id,
-                &library_root,
-            )
-            .await
+        // A panic unwound past all marking: land the row failed so the lock frees.
+        Err(_panic) => {
+            mark_apply_job_failed(&pool, job_id, "internal-panic").await;
         }
     }
+    // `_in_flight` and `_control_guard` drop here, releasing the lock.
 }
 
 /// Run the executor walk over `executor` and finalize the apply job: mark it
 /// terminal, export the undo file on a clean run, or surface the halt on a failure.
 /// Generic over the `Vfs` backend so the DryRun (`MemFs`) and Real (`RealFs`) paths
-/// share one implementation. Awaited inline (never spawned over a generic journal),
-/// so no `Send` bound over a generic `Journal` is needed.
+/// share one implementation, and over the [`ExecControl`] `C` so the SAME code runs
+/// with the live pause/Stop control on the production path and with the inert
+/// [`NoControl`](abo_core::exec::NoControl) in tests.
+///
+/// It is now driven from a SPAWNED task (via [`run_apply_to_terminal`]), so it is
+/// monomorphized to concrete `Send` types at the call site (`SqliteJournal` +
+/// `RealFs`/`MemFs` + `ApplyControl`); no `Send` bound is asked of the generic
+/// `Journal`/`ExecControl` traits themselves, which is what keeps those traits'
+/// `async fn`s expressible (the documented P2 landmine).
 #[allow(clippy::too_many_arguments)]
-async fn walk_and_finalize<V: Vfs>(
+async fn walk_and_finalize<V: Vfs, C: ExecControl, O: OpObserver>(
     pool: &SqlitePool,
     executor: Executor<V>,
     journal: &SqliteJournal,
@@ -191,10 +536,18 @@ async fn walk_and_finalize<V: Vfs>(
     started_at: &str,
     before_scan_id: i64,
     library_root: &str,
+    control: &C,
+    observer: &O,
 ) -> Result<ApplyReport, AppError> {
     // journal-before-act: intent flushed and committed before each filesystem call
     // (F-602, AC-10). A failed intent flush is a hard stop (journal-write-failed).
-    let outcome = match executor.run(journal, started_at).await {
+    // The control is consulted at operation boundaries only (F-608 pause, F-104
+    // Stop), never mid-op, and never writes a journal row of its own (AC-24, AC-25).
+    // The observer is called AFTER each done row (P8 prelude 0b, fire-and-forget).
+    let outcome = match executor
+        .run_with_observer(journal, started_at, control, observer)
+        .await
+    {
         Ok(outcome) => outcome,
         Err(e) => {
             mark_apply_job_failed(pool, job_id, e.code()).await;
@@ -202,9 +555,13 @@ async fn walk_and_finalize<V: Vfs>(
         }
     };
 
-    // Did every approved op walk without an operation-level halt? A halt (AC-5/6/7/9)
-    // means a move failed and stopped the group.
-    let walk_completed = outcome.halt.is_none();
+    // Did every approved op walk without an operation-level halt AND without a
+    // cooperative Stop? A halt (AC-5/6/7/9) means a move failed and stopped the
+    // group; a Stop (AC-26) means the human stopped it at a safe boundary. Either
+    // way the walk did NOT run every approved op, so it does not export an undo file
+    // (an undo over all approved ops would claim moves that never happened; the
+    // journal is the record of the partial forward job).
+    let walk_completed = outcome.halt.is_none() && !outcome.stopped;
 
     // Guard #2 (STRUCTURAL, by ordering): a walk that COMPLETED exports its
     // self-contained undo file (manifest) and re-emits the F-507 provenance report
@@ -283,6 +640,24 @@ async fn walk_and_finalize<V: Vfs>(
         let err = halt_to_error(halt);
         mark_apply_job_failed(pool, job_id, err.code()).await;
         return Err(err);
+    }
+
+    // Cooperative Stop (F-104/FD-02, AC-26): a DISTINCT terminal state, NOT failed.
+    // The executed prefix is journaled and was just verified over the ops that DID
+    // run; NO undo file was exported (guard #2 above). The stopped state's
+    // remediation story is undo-via-journal-tail or resume-forward-later, both owned
+    // by v0.6.0 (F-606); this release leaves the state honest and durable.
+    if outcome.stopped {
+        mark_apply_job_stopped(pool, job_id).await;
+        return Ok(ApplyReport {
+            plan_id,
+            job_id,
+            dry_run: mode == ApplyMode::DryRun,
+            ops_walked: outcome.ops_walked as i64,
+            verified_ops: verify_report.verified_count() as i64,
+            discrepancy_count: verify_report.discrepancy_count() as i64,
+            blocked,
+        });
     }
 
     mark_apply_job_completed(pool, job_id).await;
@@ -375,6 +750,24 @@ async fn mark_apply_job_completed(pool: &SqlitePool, job_id: i64) {
         .await;
     if let Err(e) = result {
         log::warn!("failed to mark apply job {job_id} completed: {e}");
+    }
+}
+
+/// Best-effort: mark the apply `jobs` row `stopped` (F-104/FD-02 cooperative
+/// Stop, AC-26) - a terminal state DISTINCT from `failed` and `completed`. Carries
+/// no error_code (a Stop is not a failure); the durable single-writer lock is
+/// released by this row no longer being `running`. A secondary DB error here is
+/// logged and swallowed (the walk already stopped cleanly; the row-state write is
+/// the only durable signal and its failure defers reclaim to the startup sweep).
+async fn mark_apply_job_stopped(pool: &SqlitePool, job_id: i64) {
+    let finished_at = now_iso8601_utc();
+    let result = sqlx::query("UPDATE jobs SET state = 'stopped', finished_at = ? WHERE id = ?")
+        .bind(&finished_at)
+        .bind(job_id)
+        .execute(pool)
+        .await;
+    if let Err(e) = result {
+        log::warn!("failed to mark apply job {job_id} stopped: {e}");
     }
 }
 
@@ -512,6 +905,8 @@ mod tests {
             // are inert here.
             0,
             "",
+            &abo_core::exec::NoControl,
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect_err("a halted walk surfaces the halt as an error");
@@ -648,6 +1043,8 @@ mod tests {
             P6_NOW,
             0,
             "",
+            &abo_core::exec::NoControl,
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect("a clean walk completes");
@@ -754,6 +1151,8 @@ mod tests {
             P6_NOW,
             0,
             "",
+            &abo_core::exec::NoControl,
+            &abo_core::exec::NoObserver,
         )
         .await
         .expect("the walk completed (the discrepancy is post-facto, not a halt)");
@@ -779,5 +1178,142 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(raised, 1);
+    }
+
+    // ---- F-104/FD-02 cooperative Stop wiring (v0.5.0 Phase 7) ----
+
+    use std::sync::atomic::AtomicUsize;
+
+    /// A test [`ExecControl`] that requests a Stop once `stop_requested` has been
+    /// polled `after` times. The executor polls it TWICE per completed op boundary
+    /// (before and after the pause barrier), so `after = 2` stops the walk after
+    /// exactly ONE op has run - a real, journaled prefix, not a degenerate
+    /// zero-op stop. Never pauses.
+    struct StopAfter {
+        checks: AtomicUsize,
+        after: usize,
+    }
+    impl StopAfter {
+        fn new(after: usize) -> Self {
+            Self {
+                checks: AtomicUsize::new(0),
+                after,
+            }
+        }
+    }
+    impl ExecControl for StopAfter {
+        fn stop_requested(&self) -> bool {
+            self.checks.fetch_add(1, Ordering::SeqCst) >= self.after
+        }
+        async fn pause_barrier(&self) {}
+    }
+
+    /// AC-26: a cooperative Stop mid-walk drives `walk_and_finalize` down its
+    /// STOPPED branch: the executed prefix is journaled and verified, the `jobs` row
+    /// is marked with the DISTINCT `stopped` state (not `failed`, not `completed`),
+    /// NO undo file is exported for the partial forward job, and the single-writer
+    /// lock is released so a fresh apply can acquire.
+    #[tokio::test]
+    async fn a_stopped_walk_marks_the_job_stopped_and_writes_no_undo_file() {
+        use abo_core::db::open_db;
+        use abo_core::exec::MANIFEST_JSON_BASENAME;
+
+        let db = tempfile::TempDir::new().expect("db tempdir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let plan_id = seed_plan(&pool).await;
+        let job_id = acquire_apply_job(&pool, ApplyMode::DryRun, P6_NOW)
+            .await
+            .expect("acquire apply job");
+
+        // Two approved moves; the Stop lands after the first one runs.
+        let seed = vec![
+            SeedEntry {
+                path: "E:/lib".into(),
+                size: 0,
+                is_dir: true,
+            },
+            SeedEntry {
+                path: "E:/lib/one.m4b".into(),
+                size: 10,
+                is_dir: false,
+            },
+            SeedEntry {
+                path: "E:/lib/two.m4b".into(),
+                size: 20,
+                is_dir: false,
+            },
+        ];
+        let mut op_two = move_op("E:/lib/two.m4b", "E:/lib/Author/two.m4b", 20);
+        op_two.id = 2;
+        op_two.seq = 1;
+        let ops = vec![
+            move_op("E:/lib/one.m4b", "E:/lib/Author/one.m4b", 10),
+            op_two,
+        ];
+        let executor = Executor::new(MemFs::from_seed(&seed), job_id, ops);
+        let journal = SqliteJournal::new(pool.clone());
+        let reports = tempfile::TempDir::new().expect("reports tempdir");
+
+        let report = walk_and_finalize(
+            &pool,
+            executor,
+            &journal,
+            reports.path(),
+            plan_id,
+            ApplyMode::DryRun,
+            job_id,
+            P6_NOW,
+            0,
+            "",
+            &StopAfter::new(2),
+            &abo_core::exec::NoObserver,
+        )
+        .await
+        .expect("a stopped walk is not an error");
+
+        // Only the pre-Stop prefix ran, and it verified.
+        assert_eq!(report.ops_walked, 1, "one op ran before the Stop");
+        assert_eq!(report.verified_ops, 1, "the executed prefix was verified");
+
+        // 0c rider (P8 prelude): a cooperative Stop NEVER raises a block
+        // (AC-26 - stopped is coherent partial, not a discrepancy). The after-the-fact
+        // check runs over the executed prefix and finds it consistent (no moves claimed
+        // that did not happen), so neither `blocked` nor any `discrepancy_count` > 0
+        // should be set here.
+        assert!(!report.blocked, "a stopped walk does not raise a block");
+        assert_eq!(
+            report.discrepancy_count, 0,
+            "a stopped walk has no discrepancy"
+        );
+
+        // The DISTINCT terminal state: stopped, not failed and not completed.
+        let state: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("job state");
+        assert_eq!(state, "stopped");
+
+        // No undo file for the partial forward job (the journal is the record).
+        assert!(
+            !reports.path().join(MANIFEST_JSON_BASENAME).exists(),
+            "a stopped forward job exports no undo file"
+        );
+
+        // The journal is consistent over the executed prefix: the one op has an
+        // intent and a done, and there is no failed row.
+        let phases: Vec<String> =
+            sqlx::query_scalar("SELECT phase FROM journal WHERE job_id = ? ORDER BY id")
+                .bind(job_id)
+                .fetch_all(&pool)
+                .await
+                .expect("journal rows");
+        assert_eq!(phases, vec!["intent".to_string(), "done".to_string()]);
+
+        // The single-writer lock was released (the row is no longer `running`), so a
+        // fresh apply acquires cleanly.
+        acquire_apply_job(&pool, ApplyMode::DryRun, "2026-07-18T02:00:00Z")
+            .await
+            .expect("a fresh apply acquires after a stopped job releases the lock");
     }
 }

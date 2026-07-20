@@ -674,6 +674,51 @@ pub struct JobStatus {
     /// How many operations the after-the-fact check found a difference on (from
     /// the block detail). Zero when there is no outstanding block.
     pub discrepancy_count: i64,
+    /// Whether the job is currently paused at an operation boundary (P8 prelude,
+    /// 0a). Sourced from the in-memory [`ApplyControlRegistry`] in the shell; always
+    /// `false` for jobs that have already reached a terminal state (they have left
+    /// the registry). `jobs.state` stays `"running"` while paused so the
+    /// single-writer lock query remains correct.
+    pub paused: bool,
+    /// How many operations have finished so far, read from the DURABLE journal
+    /// (`done` rows). This is the backfill source for the activity surface's
+    /// progress line: a fast dry-run that finished before the UI attached its
+    /// `apply:op-executed` listeners still shows the true count, not "0 of 0".
+    /// The live event carries the same number for the low-latency in-flight case.
+    pub done_count: i64,
+    /// The total number of approved operations in this job's walk, found from the
+    /// plan the job is applying. The backfill partner of `done_count`; `0` only for
+    /// a job that has not journaled its first operation yet, which the live events
+    /// then fill in.
+    pub total: i64,
+}
+
+/// Payload of the `apply:op-executed` event (P8 prelude, 0b), emitted after each
+/// operation's `done` journal row is committed in a running apply job. The event is
+/// fire-and-forget: it never perturbs the walk, the journal, or the AC-3/AC-25
+/// equality invariants.
+///
+/// The shell emits this from the [`crate::exec::OpObserver`] seam; the core never
+/// imports Tauri. The UI uses the `kind` and `label` to compose a plain sentence
+/// from the frontend strings module (FD-23). Raw paths are deliberately excluded
+/// (design-system FD-13, R-12): the `label` is the last path component only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ApplyOpExecutedPayload {
+    /// The `jobs.id` this event belongs to (for frontend filtering).
+    pub job_id: i64,
+    /// The `plan_ops.id` of the just-executed operation.
+    pub op_id: i64,
+    /// The operation kind: `"move"`, `"rename"`, `"quarantine"`, `"mkdir"`,
+    /// `"rmdir-empty"`, or `"no-op"`.
+    pub kind: String,
+    /// A plain-language display label for the book or folder - the last path
+    /// component of `source_path` (extension stripped for audio-file moves), or
+    /// the last component of `target_path` for `mkdir`. Never a full raw path.
+    pub label: String,
+    /// How many operations have completed so far (the done count, including this one).
+    pub done_count: i64,
+    /// The total number of approved operations in this walk.
+    pub total: i64,
 }
 
 // ---- Phase 5 shell payloads (tauri-specta seam) ----
@@ -730,6 +775,19 @@ pub struct JobFailedPayload {
     pub job_id: i64,
     /// The stable kebab-case error code (equals [`AppError::code`]).
     pub code: String,
+}
+
+/// Payload of the `job:stopped` event (P8, IMPORTANT 3), emitted after an apply
+/// job's DISTINCT `stopped` terminal state is durably marked in the `jobs` row
+/// (a cooperative Stop, AC-26). It mirrors the `job:completed`/`job:failed`
+/// terminal events so the activity surface transitions to "stopped between books"
+/// reliably instead of racing the walk's final state write with a single status
+/// poll. Fire-and-forget and post-durable-state: a dropped event never perturbs
+/// the walk, and the status poll remains the fallback.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct JobStoppedPayload {
+    /// The `jobs.id` of the apply job that stopped cooperatively.
+    pub job_id: i64,
 }
 
 /// Payload of the `job:progress` event.
