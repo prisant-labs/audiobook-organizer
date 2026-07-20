@@ -6,7 +6,7 @@ owner: jprisant
 produced-by: "orchestrator (Fable)"
 sources:
   - 2026-07-03 jp question rounds
-  - _agent-context/session-log/2026-07-03_20-45_claude_planning-prototypes-product-decisions.md
+  - _local/_agent-context/session-log/2026-07-03_20-45_claude_planning-prototypes-product-decisions.md (gitignored local reference)
   - docs/internal/planning-audit-2026-07-03.md
 ---
 
