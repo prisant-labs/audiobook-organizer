@@ -19,9 +19,27 @@
 //! Never-overwrite is built into the seam (R-3, AC-7): [`Vfs::rename`] and
 //! [`Vfs::copy_file`] refuse a destination that already exists, in BOTH
 //! implementations, rather than relying on the caller to check first. The
-//! executor's TOCTOU re-checks (a later phase) are the primary gate; this is
-//! defense in depth at the lowest level, so no code path can silently clobber a
-//! target even by mistake.
+//! executor's TOCTOU re-checks are the primary gate; this is defense in depth at
+//! the lowest level, so no code path can silently clobber a target even by mistake.
+//!
+//! On [`RealFs`] the refusal is ATOMIC at the primitive, not just a pre-check, so a
+//! target that RACES in between the check and the OS call is still never
+//! overwritten (D-09: the write path never opens a target with truncate/overwrite
+//! semantics):
+//! - `rename` on Windows uses `MoveFileExW` WITHOUT `MOVEFILE_REPLACE_EXISTING`,
+//!   which fails with `ERROR_ALREADY_EXISTS` (files and directories alike) rather
+//!   than replacing - unlike `std::fs::rename`, which replaces on both Windows and
+//!   Unix. (On non-Windows the pre-check plus `std::fs::rename` is kept for the
+//!   structured error contract, with a documented residual race - this product is
+//!   Windows-first; macOS/Linux are compiles-only honesty.)
+//! - `copy_file` opens the destination with `create_new(true)` on every platform,
+//!   which fails with `AlreadyExists` rather than truncating - unlike
+//!   `std::fs::copy`. Because a successful `create_new` means the dest is OURS, a
+//!   copy error mid-stream removes our own partial dest before returning, leaving
+//!   no stray partial; a foreign file at the target is never touched.
+//!
+//! The pre-checks are kept on all platforms so the structured [`VfsError`] variants
+//! stay uniform with [`MemFs`]; the atomic primitive is what closes the race.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -173,6 +191,97 @@ fn map_io(path: &Path, err: std::io::Error) -> VfsError {
     }
 }
 
+/// Move `from` to `to` WITHOUT replacing an existing target, at the primitive.
+///
+/// Windows: `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`, so an existing
+/// target (file or directory) makes the move fail with `ERROR_ALREADY_EXISTS`
+/// rather than being overwritten - the atomic never-overwrite the seam promises
+/// (D-09). Both paths are already `\\?\`-prefixed by the caller.
+#[cfg(windows)]
+fn real_rename_no_replace(from: &Path, to: &Path) -> Result<(), VfsError> {
+    move_file_no_replace(
+        &to_extended_length_prefixed(from),
+        &to_extended_length_prefixed(to),
+    )
+    .map_err(|e| map_move_error(from, to, e))
+}
+
+/// Non-Windows counterpart (compiles-only honesty): pre-check plus
+/// `std::fs::rename`. RESIDUAL RACE: `std::fs::rename` REPLACES an existing target
+/// on Unix, so a target that appears between the caller's pre-check and this call
+/// would be replaced. This product is Windows-first; the Windows path closes the
+/// window with `MoveFileExW`'s no-replace semantics, and macOS/Linux carry no
+/// behavioral apply claim in v0.5.0. The pre-check is still the structured-contract
+/// gate on every platform.
+#[cfg(not(windows))]
+fn real_rename_no_replace(from: &Path, to: &Path) -> Result<(), VfsError> {
+    std::fs::rename(
+        to_extended_length_prefixed(from),
+        to_extended_length_prefixed(to),
+    )
+    .map_err(|e| map_io(from, e))
+}
+
+/// Call `MoveFileExW(from, to, 0)`: move with NO `MOVEFILE_REPLACE_EXISTING` (never
+/// clobber) and NO `MOVEFILE_COPY_ALLOWED` (same-volume only; the executor routes
+/// cross-volume to copy+verify+delete before this is ever reached). Returns the OS
+/// error on failure. Follows the crate's existing raw-FFI convention (see
+/// [`crate::paths::available_bytes`]'s `GetDiskFreeSpaceExW`), so it adds NO
+/// windows-sys/winapi dependency: `kernel32` is already linked by the standard
+/// library on the Windows target.
+#[cfg(windows)]
+fn move_file_no_replace(from: &Path, to: &Path) -> Result<(), std::io::Error> {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn MoveFileExW(
+            lpExistingFileName: *const u16,
+            lpNewFileName: *const u16,
+            dwFlags: u32,
+        ) -> i32;
+    }
+
+    let wide_from: Vec<u16> = from
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let wide_to: Vec<u16> = to
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // SAFETY: both buffers are valid NUL-terminated UTF-16 that outlive the call;
+    // MoveFileExW reads only the two string pointers and the flags word.
+    let ok = unsafe { MoveFileExW(wide_from.as_ptr(), wide_to.as_ptr(), 0) };
+    if ok != 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Map a `MoveFileExW` OS error onto the structured contract: a present target
+/// (`ERROR_ALREADY_EXISTS`) is `AlreadyExists` (never-overwrite), a missing
+/// source/path is `NotFound`, everything else is the platform passthrough.
+#[cfg(windows)]
+fn map_move_error(from: &Path, to: &Path, err: std::io::Error) -> VfsError {
+    // Win32 error codes (winerror.h); hardcoded like the crate's other raw-FFI
+    // sites so no windows-sys dependency is added.
+    const ERROR_FILE_NOT_FOUND: i32 = 2;
+    const ERROR_PATH_NOT_FOUND: i32 = 3;
+    const ERROR_ALREADY_EXISTS: i32 = 183;
+    match err.raw_os_error() {
+        Some(ERROR_ALREADY_EXISTS) => VfsError::AlreadyExists(to.to_path_buf()),
+        Some(ERROR_FILE_NOT_FOUND) | Some(ERROR_PATH_NOT_FOUND) => {
+            VfsError::NotFound(from.to_path_buf())
+        }
+        _ => map_io(from, err),
+    }
+}
+
 impl Vfs for RealFs {
     fn exists(&self, path: &Path) -> bool {
         std::fs::metadata(to_extended_length_prefixed(path)).is_ok()
@@ -195,42 +304,68 @@ impl Vfs for RealFs {
 
     fn rename(&self, from: &Path, to: &Path) -> Result<(), VfsError> {
         // Uniform contract (matching MemFs): missing source -> NotFound, present
-        // target -> AlreadyExists (never-overwrite, R-3: std::fs::rename replaces
-        // an existing file on Unix, so the seam refuses a present target itself).
+        // target -> AlreadyExists. The pre-checks give the structured contract; the
+        // ATOMIC no-clobber primitive below is what actually closes the race (a
+        // target that appears after this check is still never overwritten).
         if !self.exists(from) {
             return Err(VfsError::NotFound(from.to_path_buf()));
         }
         if self.exists(to) {
             return Err(VfsError::AlreadyExists(to.to_path_buf()));
         }
-        // A residual NotFound here (a source that vanished after the check) still
-        // maps to NotFound, keeping the contract uniform even under a race.
-        std::fs::rename(
-            to_extended_length_prefixed(from),
-            to_extended_length_prefixed(to),
-        )
-        .map_err(|e| map_io(from, e))?;
-        Ok(())
+        // No-replace move at the primitive (Windows: MoveFileExW without
+        // MOVEFILE_REPLACE_EXISTING; non-Windows: std::fs::rename, documented race).
+        // A residual NotFound (source vanished after the check) still maps to
+        // NotFound, and a raced-in target maps to AlreadyExists, keeping the
+        // contract uniform even under a race.
+        real_rename_no_replace(from, to)
     }
 
     fn copy_file(&self, from: &Path, to: &Path) -> Result<u64, VfsError> {
+        use std::io::Write;
+
         // Uniform contract (matching MemFs): missing source -> NotFound, a source
-        // that is a directory -> NotAFile, present target -> AlreadyExists
-        // (never-overwrite, R-3: std::fs::copy truncates an existing destination).
+        // that is a directory -> NotAFile.
         match std::fs::metadata(to_extended_length_prefixed(from)) {
             Ok(m) if m.is_dir() => return Err(VfsError::NotAFile(from.to_path_buf())),
             Ok(_) => {}
             Err(e) => return Err(map_io(from, e)),
         }
-        if self.exists(to) {
-            return Err(VfsError::AlreadyExists(to.to_path_buf()));
+        let mut src =
+            std::fs::File::open(to_extended_length_prefixed(from)).map_err(|e| map_io(from, e))?;
+
+        // ATOMIC no-clobber: create_new(true) fails with AlreadyExists if the target
+        // exists, so a raced-in target is NEVER truncated (unlike std::fs::copy,
+        // R-3). A successful open means the dest is OURS, so a later failure can
+        // safely remove it.
+        let mut dst = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(to_extended_length_prefixed(to))
+        {
+            Ok(f) => f,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(VfsError::AlreadyExists(to.to_path_buf()));
+            }
+            Err(e) => return Err(map_io(to, e)),
+        };
+
+        // Copy the bytes, then flush + fsync so the executor's post-copy verify reads
+        // durable data. On ANY failure remove our own partial dest before returning,
+        // so no stray partial is left behind (the dest is ours - create_new made it).
+        let result = std::io::copy(&mut src, &mut dst).and_then(|n| {
+            dst.flush()?;
+            dst.sync_all()?;
+            Ok(n)
+        });
+        match result {
+            Ok(copied) => Ok(copied),
+            Err(e) => {
+                drop(dst);
+                let _ = std::fs::remove_file(to_extended_length_prefixed(to));
+                Err(map_io(to, e))
+            }
         }
-        let copied = std::fs::copy(
-            to_extended_length_prefixed(from),
-            to_extended_length_prefixed(to),
-        )
-        .map_err(|e| map_io(from, e))?;
-        Ok(copied)
     }
 
     fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
@@ -713,6 +848,61 @@ mod tests {
             Err(VfsError::AlreadyExists(_))
         ));
         assert_eq!(std::fs::read(&b).unwrap(), b"bb", "the target is untouched");
+    }
+
+    /// copy_file opens the destination with `create_new(true)`, so a present dest is
+    /// refused with AlreadyExists and its bytes are left EXACTLY as they were - never
+    /// truncated (unlike `std::fs::copy`). Portable (create_new is atomic no-clobber
+    /// on every platform).
+    #[test]
+    fn realfs_copy_create_new_refuses_and_leaves_dest_unmodified() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let fs = RealFs::new();
+        let src = tmp.path().join("src.bin");
+        let dst = tmp.path().join("dst.bin");
+        std::fs::write(&src, b"NEW-SOURCE-BYTES").unwrap();
+        std::fs::write(&dst, b"ORIGINAL-DEST").unwrap();
+
+        let err = fs.copy_file(&src, &dst).unwrap_err();
+        assert!(
+            matches!(err, VfsError::AlreadyExists(_)),
+            "create_new must refuse a present dest, not truncate it"
+        );
+        assert_eq!(
+            std::fs::read(&dst).unwrap(),
+            b"ORIGINAL-DEST",
+            "the dest is byte-identical after a refused copy (never opened for truncate)"
+        );
+    }
+
+    /// Windows: drive the no-replace rename PRIMITIVE directly (bypassing the Vfs
+    /// pre-check) onto a pre-existing target, proving the refusal is atomic at
+    /// `MoveFileExW` - not just the pre-check. The target is NEVER replaced and BOTH
+    /// files survive intact, which is the race the pre-check alone cannot close.
+    #[cfg(windows)]
+    #[test]
+    fn realfs_no_replace_rename_primitive_refuses_a_present_target() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let from = tmp.path().join("from.txt");
+        let to = tmp.path().join("to.txt");
+        std::fs::write(&from, b"SOURCE").unwrap();
+        std::fs::write(&to, b"TARGET").unwrap();
+
+        let err = real_rename_no_replace(&from, &to).unwrap_err();
+        assert!(
+            matches!(err, VfsError::AlreadyExists(_)),
+            "MoveFileExW without MOVEFILE_REPLACE_EXISTING must refuse a present target"
+        );
+        assert_eq!(
+            std::fs::read(&from).unwrap(),
+            b"SOURCE",
+            "the source survives the refused move"
+        );
+        assert_eq!(
+            std::fs::read(&to).unwrap(),
+            b"TARGET",
+            "the target is NEVER overwritten"
+        );
     }
 
     #[test]

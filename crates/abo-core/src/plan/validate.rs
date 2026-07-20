@@ -108,6 +108,12 @@ pub enum ValidationReason {
     /// the shell would strand an un-extracted book (AC-5 guard, folded to
     /// validation time). Validation-specific (not a Section 8 code).
     PackMemberBlocked,
+    /// A target lands OUTSIDE both the library root and the resolved set-aside
+    /// root (FD-34). The builder never produces such a target, so this fires only
+    /// on a corrupted/tampered plan; blocking it at validation is defense in depth
+    /// ahead of the executor's structural scope guard. Validation-specific (not a
+    /// Section 8 code).
+    OutOfScopeTarget,
     // ---- warning only ----
     /// The target is near/over 260 chars: still openable via `\\?\`, but other
     /// Windows tools may mishandle it. Validation-specific.
@@ -133,6 +139,7 @@ impl ValidationReason {
             ValidationReason::PathTooLong => "path-too-long",
             ValidationReason::CrossVolumeSpaceInsufficient => "cross-volume-space-insufficient",
             ValidationReason::PackMemberBlocked => "pack-member-blocked",
+            ValidationReason::OutOfScopeTarget => "out-of-scope-target",
             ValidationReason::PathLengthNear260 => "path-length-near-260",
             ValidationReason::LongPathsDisabled => "long-paths-disabled",
             ValidationReason::CrossVolumeCopy => "cross-volume-copy",
@@ -152,6 +159,7 @@ impl ValidationReason {
                 | ValidationReason::PathTooLong
                 | ValidationReason::CrossVolumeSpaceInsufficient
                 | ValidationReason::PackMemberBlocked
+                | ValidationReason::OutOfScopeTarget
         )
     }
 }
@@ -278,10 +286,20 @@ pub struct ValidationEnv<'a> {
     pub long_paths_enabled: bool,
     /// The free-space source for cross-volume sizing.
     pub free_space: &'a dyn FreeSpace,
+    /// The library root and resolved set-aside root (FD-34), set via
+    /// [`ValidationEnv::with_scope`]. When BOTH are present, a creating op whose
+    /// target lands outside both roots is `blocked(out-of-scope-target)` (defense
+    /// in depth ahead of the executor's structural scope guard). `None` (the
+    /// default from [`ValidationEnv::new`]) disables the check, so a preview or a
+    /// scope-agnostic unit test never fabricates a scope verdict.
+    pub library_root: Option<&'a str>,
+    pub set_aside_root: Option<&'a str>,
 }
 
 impl<'a> ValidationEnv<'a> {
-    /// Convenience constructor.
+    /// Convenience constructor. The FD-34 scope roots default to `None` (no scope
+    /// check); a caller that wants the out-of-scope-target guard adds them via
+    /// [`ValidationEnv::with_scope`].
     pub fn new(
         existing_paths: &'a HashSet<String>,
         long_paths_enabled: bool,
@@ -291,7 +309,19 @@ impl<'a> ValidationEnv<'a> {
             existing_paths,
             long_paths_enabled,
             free_space,
+            library_root: None,
+            set_aside_root: None,
         }
+    }
+
+    /// Enable the FD-34 target-scope check: a creating op whose target sits
+    /// outside BOTH `library_root` and `set_aside_root` is blocked. The one
+    /// production caller ([`crate::plan::report::build_and_persist_plan`]) sets
+    /// this so a persisted plan's scope is checked before it can ever be applied.
+    pub fn with_scope(mut self, library_root: &'a str, set_aside_root: &'a str) -> Self {
+        self.library_root = Some(library_root);
+        self.set_aside_root = Some(set_aside_root);
+        self
     }
 }
 
@@ -309,6 +339,17 @@ fn is_descendant(child: &str, parent: &str) -> bool {
     prefix.push_str(parent);
     prefix.push('/');
     child.starts_with(&prefix)
+}
+
+/// Whether a normalized target sits at or under one of the scope roots (FD-34):
+/// inside the library root, or at/under the resolved set-aside root. `lib` and
+/// `aside` are raw (un-normalized) roots; they are normalized here so the
+/// comparison matches `tnorm`'s case- and separator-insensitive form. A target
+/// equal to a root, or a descendant of it, is in scope.
+fn is_within_scope(tnorm: &str, lib: &str, aside: &str) -> bool {
+    let lib = norm(lib);
+    let aside = norm(aside);
+    tnorm == lib || is_descendant(tnorm, &lib) || tnorm == aside || is_descendant(tnorm, &aside)
 }
 
 /// The volume a path belongs to: an uppercased drive root (`"E:"`) or a UNC
@@ -512,6 +553,17 @@ fn verdict_for_op(
 
     if creates_target(&op.kind) && !op.target_path.is_empty() {
         let tnorm = norm(&op.target_path);
+
+        // 2.5. FD-34 target scope: a creating op must land INSIDE the library root
+        // or UNDER the resolved set-aside root; anything else is out of scope. Only
+        // checked when both roots are configured (build_and_persist_plan sets them);
+        // the builder never produces an out-of-scope target, so this blocks only a
+        // corrupted/tampered plan, ahead of the executor's structural scope guard.
+        if let (Some(lib), Some(aside)) = (env.library_root, env.set_aside_root) {
+            if !is_within_scope(&tnorm, lib, aside) {
+                return OpVerdict::blocked(ValidationReason::OutOfScopeTarget);
+            }
+        }
 
         // 3. In-plan collision: another creating op produces the same target.
         if target_counts.get(&tnorm).copied().unwrap_or(0) > 1 {
@@ -1265,6 +1317,84 @@ mod tests {
             v[2].reason_code(),
             Some("pack-member-blocked"),
             "the shell must not quarantine over a stranded book"
+        );
+    }
+
+    /// FD-34 scope carve-out: with the scope roots configured, a quarantine
+    /// target UNDER the set-aside root (outside the library) passes, an ordinary
+    /// move INSIDE the library passes, and a target outside BOTH roots is blocked.
+    #[test]
+    fn out_of_scope_target_is_blocked_but_the_set_aside_root_is_carved_out() {
+        let lib = r"E:\Books - Audio";
+        let aside = r"E:\Set Aside";
+        let ex = existing(&[
+            r"E:\Books - Audio\Some Book\track01.mp3",
+            r"E:\Books - Audio\x.m4b",
+        ]);
+        let fs = FixedFreeSpace::new();
+
+        // A set-aside move OUTSIDE the library but UNDER the set-aside root (the
+        // FD-34 carve-out), carrying the {job-id} placeholder segment: in scope.
+        let quarantine = op(
+            "quarantine",
+            "dedupe-quarantine",
+            r"E:\Books - Audio\Some Book\track01.mp3",
+            r"E:\Set Aside\{job-id}\Some Book\track01.mp3",
+        );
+        // An ordinary move INSIDE the library: in scope.
+        let inside = op(
+            "move",
+            "loose-root-books",
+            r"E:\Books - Audio\x.m4b",
+            r"E:\Books - Audio\Author\x.m4b",
+        );
+        // A move to somewhere outside BOTH roots: out of scope.
+        let outside = op(
+            "move",
+            "loose-root-books",
+            r"E:\Books - Audio\x.m4b",
+            r"E:\Elsewhere\x.m4b",
+        );
+
+        let plan = plan_of(vec![quarantine, inside, outside]);
+        let env = env(&ex, true, &fs).with_scope(lib, aside);
+        let v = validate_plan(&plan, &env);
+        assert_eq!(
+            v[0].state,
+            ValidationState::Valid,
+            "a set-aside target under the set-aside root is in scope (FD-34 carve-out)"
+        );
+        assert_eq!(
+            v[1].state,
+            ValidationState::Valid,
+            "an ordinary move inside the library is in scope"
+        );
+        assert_eq!(
+            v[2].reason_code(),
+            Some("out-of-scope-target"),
+            "a target outside both roots is blocked"
+        );
+        assert!(v[2].is_blocked());
+    }
+
+    /// Without scope roots configured (the default env), the scope check never
+    /// fires: an out-of-library target is not blocked for scope (a preview or a
+    /// scope-agnostic validation must not fabricate a scope verdict).
+    #[test]
+    fn no_scope_configured_means_no_scope_verdict() {
+        let ex = existing(&[r"E:\Books\x.m4b"]);
+        let fs = FixedFreeSpace::new();
+        let plan = plan_of(vec![op(
+            "move",
+            "loose-root-books",
+            r"E:\Books\x.m4b",
+            r"E:\Elsewhere\x.m4b",
+        )]);
+        let v = validate_plan(&plan, &env(&ex, true, &fs));
+        assert_ne!(
+            v[0].reason_code(),
+            Some("out-of-scope-target"),
+            "no scope configured: the scope check is inert"
         );
     }
 

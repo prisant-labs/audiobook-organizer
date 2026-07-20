@@ -71,6 +71,15 @@ pub struct ManifestOp {
     /// records where an extracted book came from. `None` for non-pack ops.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance_json: Option<String>,
+    /// For a `quarantine` (set-aside) op, WHY the item was set aside (the op's
+    /// plain-language rationale, which encodes duplicate-of / non-preferred-format
+    /// / clutter). Together with `source_path` (the original location) and
+    /// `target_path` (the `<set-aside-root>\<job-id>\...` destination), this makes
+    /// the reason and the original path recoverable from the undo file alone
+    /// (AC-22). `None` for every non-set-aside op. Additive and optional, so an
+    /// older reader ignores it and an undo file without it still parses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_aside_reason: Option<String>,
 }
 
 /// The whole undo file: a schema version, the job/plan identity, whether every op
@@ -137,16 +146,23 @@ pub enum ManifestError {
 }
 
 /// The kinds an undo can reverse. A `move`/`rename` reverses by moving back; a
-/// `mkdir` reverses by removing the created (empty) directory; a `set-aside`
-/// (quarantine) reverses by moving the item back; an emptied-folder removal
-/// reverses by recreating it; a `no-op` did nothing to reverse. FD-10 guarantees
-/// no audiobook is ever deleted, so the current op set is fully reversible; an
-/// unknown future kind flips [`Manifest::reversible`] to `false` honestly rather
-/// than claiming an undo it cannot perform.
+/// `mkdir` reverses by removing the created (empty) directory; a `quarantine`
+/// (set-aside) reverses by moving the item back; an `rmdir-empty` reverses by
+/// recreating the folder; a `no-op` did nothing to reverse. FD-10 guarantees no
+/// audiobook is ever deleted, so the current op set is fully reversible; an unknown
+/// future kind flips [`Manifest::reversible`] to `false` honestly rather than
+/// claiming an undo it cannot perform.
+///
+/// The accepted list is EXACTLY [`crate::exec::DISPATCH_OP_KINDS`], the kinds the
+/// executor's dispatch understands (which is exactly what the plan builder emits).
+/// A test pins the two lists together so they can never drift. NOTE: `quarantine`
+/// is the STORED op kind; `set-aside` is only its plain-language DISPLAY term (the
+/// F-505 export scrub), never a value in `plan_ops.kind`, so it is deliberately not
+/// listed here - the manifest reads raw stored kinds.
 fn is_reversible_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "move" | "rename" | "mkdir" | "set-aside" | "quarantine" | "rmdir-empty" | "no-op"
+        "move" | "rename" | "mkdir" | "quarantine" | "rmdir-empty" | "no-op"
     )
 }
 
@@ -165,6 +181,9 @@ pub fn build_manifest(mode: ApplyMode, job_id: i64, plan_id: i64, ops: &[PlanOpR
             source_path: o.source_path.clone(),
             target_path: o.target_path.clone(),
             provenance_json: o.provenance_json.clone(),
+            // AC-22: the set-aside reason rides the undo file for a set-aside op
+            // (the reason is the op's plain-language rationale); `None` otherwise.
+            set_aside_reason: (o.kind == "quarantine").then(|| o.rationale.clone()),
         })
         .collect();
     let reversible = ops.iter().all(|o| is_reversible_kind(&o.kind));
@@ -459,6 +478,60 @@ mod tests {
         assert_eq!(manifest.ops[0].op_id, 1);
     }
 
+    /// AC-22: a set-aside (`quarantine`) op in the undo file carries the reason it
+    /// was set aside AND its original path (source_path), so the reason and the
+    /// original relative path are recoverable from the undo file alone. A rollback
+    /// of a real apply then restores it to `source_path` (its original location).
+    #[test]
+    fn set_aside_op_records_reason_and_original_path_in_the_undo_file() {
+        let mut set_aside = op(
+            5,
+            0,
+            "quarantine",
+            "E:\\Books - Audio\\Some Book\\track01.mp3",
+            "E:\\Set Aside\\42\\Some Book\\track01.mp3",
+            None,
+        );
+        set_aside.rationale =
+            "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted).".to_string();
+        // A non-set-aside op alongside carries no set-aside reason.
+        let move_op = op(
+            6,
+            1,
+            "move",
+            "E:\\Books - Audio\\A.m4b",
+            "E:\\Books - Audio\\Author\\A.m4b",
+            None,
+        );
+
+        let manifest = build_manifest(ApplyMode::Real, 42, 1, &[set_aside, move_op]);
+        // Round-trip through the JSON alone (the undo file is self-contained).
+        let reread = Manifest::from_json(&manifest.to_json()).expect("round-trip");
+        let sa = reread
+            .ops
+            .iter()
+            .find(|o| o.kind == "quarantine")
+            .expect("the set-aside op is in the undo file");
+        assert_eq!(
+            sa.set_aside_reason.as_deref(),
+            Some(
+                "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted)."
+            ),
+            "the reason is recoverable from the undo file"
+        );
+        assert_eq!(
+            sa.source_path, "E:\\Books - Audio\\Some Book\\track01.mp3",
+            "the original path is recoverable (relative path = source minus library root)"
+        );
+        assert!(
+            sa.target_path.starts_with("E:\\Set Aside\\42\\"),
+            "the set-aside location carries the job id (FD-34)"
+        );
+        // A non-set-aside op carries no set-aside reason.
+        let mv = reread.ops.iter().find(|o| o.kind == "move").unwrap();
+        assert_eq!(mv.set_aside_reason, None);
+    }
+
     /// A dry-run manifest records a rehearsal (no file moved), so `reverse_ops`
     /// REFUSES rather than offering to undo moves that never happened - the safe
     /// semantic. Its `mode` still round-trips through the JSON so a reader can see
@@ -503,6 +576,37 @@ mod tests {
             Err(ManifestError::DryRunNotReversible),
             "an unmarked legacy file fails safe: no reverse ops"
         );
+    }
+
+    /// P2 obligation: the manifest's reversible-kind list is pinned to the
+    /// executor's dispatch op-kind vocabulary ([`crate::exec::DISPATCH_OP_KINDS`]),
+    /// so the two can never drift. Every kind the executor dispatches is classified
+    /// reversible-or-not here (all six current kinds are reversible, FD-10), and
+    /// nothing outside that set is silently accepted as reversible - the display-only
+    /// `set-aside` term is proven NOT to be a stored kind.
+    #[test]
+    fn reversible_kinds_are_pinned_to_the_dispatch_op_kinds() {
+        // Every op kind the executor dispatches is classified here (all reversible).
+        for kind in crate::exec::DISPATCH_OP_KINDS {
+            assert!(
+                is_reversible_kind(kind),
+                "dispatch kind '{kind}' must be classified by is_reversible_kind"
+            );
+        }
+        // The reversible set is EXACTLY the dispatch set (no extras), so a kind the
+        // dispatch does not emit is never claimed reversible.
+        let extras = ["set-aside", "copy", "delete", "hardlink", ""];
+        for kind in extras {
+            assert!(
+                !crate::exec::DISPATCH_OP_KINDS.contains(&kind),
+                "'{kind}' is not a dispatch op kind"
+            );
+            assert!(
+                !is_reversible_kind(kind),
+                "'{kind}' is not a stored op kind and must not be reversible \
+                 (set-aside is display-only, never a plan_ops.kind)"
+            );
+        }
     }
 
     /// OQ-1: a reader rejects an undo file whose schema version is higher than it

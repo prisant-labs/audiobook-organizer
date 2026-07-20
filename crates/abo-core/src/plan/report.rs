@@ -963,12 +963,12 @@ fn push_complete_table(h: &mut String, input: &ReportInput) {
                 base_name(&op.source_path, sep)
             };
             let from = if op.source_path.is_empty() {
-                "&mdash;".to_string()
+                "-".to_string()
             } else {
                 esc(&op.source_path)
             };
             let to = if op.target_path.is_empty() {
-                "&mdash;".to_string()
+                "-".to_string()
             } else {
                 esc(&op.target_path)
             };
@@ -1193,7 +1193,8 @@ pub async fn build_and_persist_plan(
     use crate::classify::classify;
     use crate::parse::extract::{extract, EntryInput};
     use crate::plan::builder::{
-        build_plan, classify_inputs_from_plan_nodes, plan_nodes_from_snapshot,
+        build_plan_with_set_aside_root, classify_inputs_from_plan_nodes, default_set_aside_root,
+        plan_nodes_from_snapshot,
     };
     use crate::plan::validate::{
         persist_validated_plan, validate_plan, RealFreeSpace, ValidationEnv,
@@ -1232,16 +1233,36 @@ pub async fn build_and_persist_plan(
         .collect();
     let merged = extract(&entry_inputs);
 
+    // FD-34: resolve the set-aside root (F-803 `set_aside_root` when configured,
+    // else the default sibling `<library-parent>\Set Aside\`). The builder stamps
+    // set-aside targets under this root, and validation checks targets against it.
+    let set_aside_root = crate::db::settings::get_settings(pool)
+        .await
+        .ok()
+        .and_then(|s| s.set_aside_root)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_set_aside_root(&root_path));
+
     // 4. Build the plan and detect duplicate candidates.
-    let plan = build_plan(&nodes, &classifications, &merged, &ruleset, &root_path);
+    let plan = build_plan_with_set_aside_root(
+        &nodes,
+        &classifications,
+        &merged,
+        &ruleset,
+        &root_path,
+        &set_aside_root,
+    );
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
     let duplicate_groups = detect_duplicates(&dupe_entries);
 
-    // 5. Validate against a fresh view of the snapshot's own paths (all present).
+    // 5. Validate against a fresh view of the snapshot's own paths (all present),
+    // with the FD-34 target-scope check enabled (a persisted plan's targets must
+    // stay inside the library or under the set-aside root before it can apply).
     let existing: HashSet<String> = nodes.iter().map(|n| n.path.clone()).collect();
     let free_space = RealFreeSpace;
     let long_paths = crate::scan::longpath::long_paths_enabled();
-    let env = ValidationEnv::new(&existing, long_paths, &free_space);
+    let env = ValidationEnv::new(&existing, long_paths, &free_space)
+        .with_scope(&root_path, &set_aside_root);
     let verdicts = validate_plan(&plan, &env);
 
     // 6. Persist the validated plan (one insert; real verdicts).

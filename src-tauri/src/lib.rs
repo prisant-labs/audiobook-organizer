@@ -45,6 +45,7 @@ pub use commands::{run_job_to_terminal, JobEnd};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use abo_core::job::CancelFlag;
@@ -79,6 +80,13 @@ pub struct AppState {
     /// picks a library. A plain `std::sync::Mutex`: every access is a brief,
     /// non-async snapshot/replace, never held across an `.await`.
     pub library_root: Arc<Mutex<Option<PathBuf>>>,
+    /// The in-process single-writer apply guard (F-601, AC-8): set true while an
+    /// apply runs, so a second `apply_start` in THIS process is refused instantly
+    /// with `job-already-running` before any database work. An `AtomicBool` (not a
+    /// lock guard) so it is safe to read across the apply's `.await` points; the
+    /// durable `running` apply `jobs` row is the cross-restart backstop. Reset on
+    /// every exit path by an RAII guard in `apply_start`.
+    pub apply_in_flight: Arc<AtomicBool>,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -149,6 +157,19 @@ pub fn run() {
     export_bindings("../src/lib/bindings.ts").expect("failed to export typescript bindings");
 
     tauri::Builder::default()
+        // Single-instance (F-601, AC-8): registered FIRST per the plugin's contract.
+        // A SECOND launch runs this callback in the FIRST (existing) instance and
+        // then exits, so only ONE process ever holds the apply single-writer lock -
+        // this is what makes that lock process-wide and makes the startup reclaim of
+        // a stranded apply row sound (a fresh launch implies no other live instance).
+        // Focus and un-minimize the existing window so a relaunch brings the app
+        // forward. No event is emitted, so no new JS/IPC surface is added.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(build_log_plugin())
         // Folder selection ONLY (F-909, FD-29): the OS folder picker so the user
         // can choose the library root. This is the one capability the security
@@ -218,11 +239,32 @@ pub fn run() {
                 log::info!("swept {swept} stale cover cache file(s) at startup");
             }
 
+            // Crash-detected release of the single-writer apply lock (F-601, AC-8):
+            // a `running` apply `jobs` row a previous session left behind (killed
+            // mid-apply) is reclaimed here, so it never blocks a fresh apply. Only
+            // touches apply jobs; a stranded scan is left as-is. Best-effort: a DB
+            // error only defers the reclaim to the next launch.
+            let reclaimed = tauri::async_runtime::block_on(async {
+                abo_core::exec::lock::reclaim_stranded_apply_jobs(
+                    &pool,
+                    &abo_core::scan::walk::now_iso8601_utc(),
+                )
+                .await
+            });
+            match reclaimed {
+                Ok(n) if n > 0 => {
+                    log::warn!("reclaimed {n} stranded apply lock(s) left by a prior session");
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("could not reclaim stranded apply locks at startup: {e}"),
+            }
+
             app.manage(AppState {
                 pool,
                 db_outcome,
                 jobs: Arc::new(Mutex::new(HashMap::new())),
                 library_root: Arc::new(Mutex::new(library_root)),
+                apply_in_flight: Arc::new(AtomicBool::new(false)),
             });
             Ok(())
         })
