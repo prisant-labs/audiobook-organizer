@@ -8,7 +8,7 @@ decision-makers: [jprisant]
 
 ## Context and Problem Statement
 
-The tool has three plausible audiences: jp, household non-engineer family members (the strategy brief notes a non-technical member of the household's empty Audible profile folder as evidence family usage is at least contemplated), and eventual public users. These tiers have very different tolerance for technical vocabulary, raw paths, and exit-code-style feedback. The UI needed one bar to design to, not three competing ones.
+The tool has three plausible audiences: jp, household non-engineer family members (the strategy brief notes a household member's empty Audible profile folder as evidence family usage is at least contemplated), and eventual public users. These tiers have very different tolerance for technical vocabulary, raw paths, and exit-code-style feedback. The UI needed one bar to design to, not three competing ones.
 
 ## Considered Options
 
