@@ -42,6 +42,14 @@ pub const PROVENANCE_JSON_BASENAME: &str = "provenance-report.json";
 /// Stable base name for the Markdown provenance export.
 pub const PROVENANCE_MARKDOWN_BASENAME: &str = "provenance-report.md";
 
+/// Stable base name for the POST-APPLY JSON provenance re-emit (v0.5.0, AC-12):
+/// a distinct name from the plan-time [`PROVENANCE_JSON_BASENAME`] so the two sit
+/// side by side in the same folder and stay separately auditable.
+pub const PROVENANCE_AFTER_APPLY_JSON_BASENAME: &str = "provenance-report-after-apply.json";
+
+/// Stable base name for the post-apply Markdown provenance re-emit.
+pub const PROVENANCE_AFTER_APPLY_MARKDOWN_BASENAME: &str = "provenance-report-after-apply.md";
+
 /// One flattened pack member in the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ProvenanceMember {
@@ -73,6 +81,17 @@ pub struct ProvenanceReport {
     pub total_members: usize,
 }
 
+/// The minimal per-operation shape [`build_provenance_report`] needs: an op's
+/// source, target, and captured provenance JSON. Both the build-time path (over
+/// [`BuiltPlan`]'s [`crate::plan::builder::PlannedOp`]s) and the apply-time
+/// re-emit (over persisted [`crate::db::plans::PlanOpRow`]s, AC-12) fold into this
+/// one shape so the grouping logic lives in exactly one place.
+struct ProvOp<'a> {
+    source_path: &'a str,
+    target_path: &'a str,
+    provenance_json: Option<&'a str>,
+}
+
 /// Build the provenance report from a built plan. Reads every op that carries
 /// captured provenance (the `flatten-packs` member moves), groups them by source
 /// pack, and rolls up counts. Deterministic: packs sorted by pack path, members
@@ -80,11 +99,31 @@ pub struct ProvenanceReport {
 /// contributes nothing (only the builder writes this field, and it always writes
 /// valid JSON, so the unparseable case is defensive).
 pub fn build_provenance_report(plan: &BuiltPlan) -> ProvenanceReport {
+    build_from(plan.ops.iter().map(|op| ProvOp {
+        source_path: &op.source_path,
+        target_path: &op.target_path,
+        provenance_json: op.provenance_json.as_deref(),
+    }))
+}
+
+/// Build the provenance report from persisted plan-operation rows (the apply-time
+/// re-emit reflecting final locations, AC-12). Identical grouping to
+/// [`build_provenance_report`]; only the input type differs.
+pub fn build_provenance_report_from_rows(ops: &[crate::db::plans::PlanOpRow]) -> ProvenanceReport {
+    build_from(ops.iter().map(|op| ProvOp {
+        source_path: &op.source_path,
+        target_path: &op.target_path,
+        provenance_json: op.provenance_json.as_deref(),
+    }))
+}
+
+/// The shared grouping core (see [`build_provenance_report`]).
+fn build_from<'a>(ops: impl Iterator<Item = ProvOp<'a>>) -> ProvenanceReport {
     // pack_path -> (pack_name, members)
     let mut packs: BTreeMap<String, (String, Vec<ProvenanceMember>)> = BTreeMap::new();
 
-    for op in &plan.ops {
-        let Some(raw) = op.provenance_json.as_deref() else {
+    for op in ops {
+        let Some(raw) = op.provenance_json else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) else {
@@ -109,8 +148,8 @@ pub fn build_provenance_report(plan: &BuiltPlan) -> ProvenanceReport {
             .entry(pack_path)
             .or_insert_with(|| (pack_name.clone(), Vec::new()));
         entry.1.push(ProvenanceMember {
-            source_path: op.source_path.clone(),
-            target_path: op.target_path.clone(),
+            source_path: op.source_path.to_string(),
+            target_path: op.target_path.to_string(),
             award_marker,
         });
     }

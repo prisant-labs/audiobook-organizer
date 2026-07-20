@@ -195,6 +195,27 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: false,
     tone: "warn",
   },
+
+  // -- Applying changes (v0.5.0; making changes for real is not on yet) -------
+  "apply-not-supported": {
+    sentence: "Making changes for real isn't available in this version yet.",
+    nextStep:
+      "You can preview what a tidy-up would do. Making changes for real arrives in a later version.",
+    retryable: false,
+    tone: "warn",
+  },
+  "apply-failed": {
+    sentence: "The app couldn't record this tidy-up run.",
+    nextStep: "Try again. If it keeps happening, restart the app - your audiobooks are untouched.",
+    retryable: true,
+    tone: "danger",
+  },
+  "journal-write-failed": {
+    sentence: "The app stopped before making any change because it couldn't first note what it was about to do.",
+    nextStep: "Nothing was moved. Try again. If it keeps happening, restart the app - your audiobooks are untouched.",
+    retryable: true,
+    tone: "danger",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-
