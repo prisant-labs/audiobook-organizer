@@ -128,6 +128,10 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::ruleset::ruleset_count,
             commands::ruleset::ruleset_preset_examples,
             commands::apply::apply_start,
+            commands::rollback::rollback_prepare,
+            commands::rollback::rollback_prepare_partial,
+            commands::job::job_status,
+            commands::job::acknowledge_check,
         ])
         .events(collect_events![
             events::JobCompleted,

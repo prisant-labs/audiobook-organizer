@@ -49,6 +49,8 @@
 pub mod journal;
 pub mod lock;
 pub mod manifest;
+pub mod rollback;
+pub mod verify;
 pub mod vfs;
 
 use std::path::Path;
@@ -61,8 +63,16 @@ use crate::plan::builder::QUARANTINE_JOB_PLACEHOLDER;
 
 pub use journal::{Journal, MemJournal, SqliteJournal};
 pub use manifest::{
-    build_manifest, Manifest, ManifestError, ManifestOp, ReverseOp, MANIFEST_JSON_BASENAME,
-    MANIFEST_SCHEMA_VERSION,
+    build_manifest, get_manifest_row, Manifest, ManifestError, ManifestOp, ManifestRow, ReverseOp,
+    MANIFEST_JSON_BASENAME, MANIFEST_SCHEMA_VERSION,
+};
+pub use rollback::{
+    is_undo_plan_ops, rollback_prepare, rollback_prepare_partial, ROLLBACK_RULE_ID,
+};
+pub use verify::{
+    acknowledge_block, delta_health_metrics, ensure_forward_tidying_allowed,
+    forward_tidying_blocked, job_is_blocked, outstanding_block_detail, record_block, verify_job,
+    CheckReport, HealthDelta, OpVerification, OpVerifyStatus, ProblemDelta, VerifyReport,
 };
 pub use vfs::{MemFs, RealFs, SeedEntry, Vfs, VfsError, VfsMetadata};
 

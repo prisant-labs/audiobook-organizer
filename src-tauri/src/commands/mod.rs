@@ -13,7 +13,9 @@
 //! v0.4.0 Phase 2 adds the F-803 settings commands (see [`settings`]).
 
 pub mod apply;
+pub mod job;
 pub mod plan;
+pub mod rollback;
 pub mod ruleset;
 pub mod settings;
 

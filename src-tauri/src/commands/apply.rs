@@ -25,8 +25,10 @@ use std::sync::Arc;
 use abo_core::db::plans::{get_plan, get_plan_ops};
 use abo_core::exec::lock::acquire_apply_job;
 use abo_core::exec::manifest::export_after_apply;
+use abo_core::exec::verify::{affected_roots, write_check_report};
 use abo_core::exec::{
-    ApplyMode, ApplyScope, ExecHalt, Executor, MemFs, RealFs, SeedEntry, SqliteJournal, Vfs,
+    delta_health_metrics, ensure_forward_tidying_allowed, record_block, verify_job, ApplyMode,
+    ApplyScope, CheckReport, ExecHalt, Executor, MemFs, RealFs, SeedEntry, SqliteJournal, Vfs,
 };
 use abo_core::ipc::{AppError, ApplyReport, EntryRow};
 use abo_core::plan::builder::default_set_aside_root;
@@ -91,10 +93,25 @@ pub async fn apply_start(
             detail: e.to_string(),
         })?;
 
+    // Forward-tidying gate (F-604, AC-20): if a previous apply's after-the-fact
+    // check found an UNACKNOWLEDGED discrepancy, forward tidying is paused until a
+    // human acknowledges it. This gate is FORWARD-only and structural: an UNDO
+    // (inverse) plan is exempt (undo is the remedy for a discrepancy), so a blocked
+    // library can always be put back. `rollback_prepare` never routes through here,
+    // so preparing an undo is never gated either. Checked before the lock so a
+    // refused forward apply never even acquires it.
+    ensure_forward_tidying_allowed(pool, &ops).await?;
+
     // Resolve the FD-34 apply scope (library root + set-aside root): the ONLY two
     // areas the walk may write into, and the roots the executor uses to substitute
     // the real job id into set-aside targets and to refuse any out-of-scope target.
     let scope = resolve_apply_scope(pool, plan.scan_id).await?;
+
+    // Capture what the after-the-fact check needs before `scope` is moved into the
+    // executor: the snapshot the plan was built over (the delta "before"), and the
+    // library root the incremental rescan re-reads (AC-19).
+    let before_scan_id = plan.scan_id;
+    let library_root = scope.library_root.clone();
 
     // Durable single-writer lock (AC-8): refuse if an apply is already `running`,
     // else insert the `running` apply job (the lock) carrying `mode`. Released by
@@ -130,6 +147,8 @@ pub async fn apply_start(
                 mode,
                 job_id,
                 &started_at,
+                before_scan_id,
+                &library_root,
             )
             .await
         }
@@ -147,6 +166,8 @@ pub async fn apply_start(
                 mode,
                 job_id,
                 &started_at,
+                before_scan_id,
+                &library_root,
             )
             .await
         }
@@ -168,6 +189,8 @@ async fn walk_and_finalize<V: Vfs>(
     mode: ApplyMode,
     job_id: i64,
     started_at: &str,
+    before_scan_id: i64,
+    library_root: &str,
 ) -> Result<ApplyReport, AppError> {
     // journal-before-act: intent flushed and committed before each filesystem call
     // (F-602, AC-10). A failed intent flush is a hard stop (journal-write-failed).
@@ -179,24 +202,87 @@ async fn walk_and_finalize<V: Vfs>(
         }
     };
 
-    // An operation failed and halted the group (AC-5/6/7/9). The journal already
-    // carries a consistent `failed` row for it; mark the job failed with the halt
-    // code and surface it. No undo file is exported for a halted run: the journal is
-    // the durable record a v0.6.0 reconciliation reads, and an undo file over all
-    // approved ops would claim moves that never happened.
+    // Did every approved op walk without an operation-level halt? A halt (AC-5/6/7/9)
+    // means a move failed and stopped the group.
+    let walk_completed = outcome.halt.is_none();
+
+    // Guard #2 (STRUCTURAL, by ordering): a walk that COMPLETED exports its
+    // self-contained undo file (manifest) and re-emits the F-507 provenance report
+    // (AC-11, AC-12) HERE, BEFORE the after-the-fact check runs. So even if the
+    // check then finds a difference, the undo file is already written - a job whose
+    // walk completed always keeps its undo, because the moves DID happen and the
+    // user needs the undo. A HALTED walk exports no undo file (an undo over all
+    // approved ops would claim moves that never happened; the journal is the durable
+    // record a v0.6.0 reconciliation reads instead).
+    if walk_completed {
+        if let Err(e) =
+            export_after_apply(pool, reports_dir, mode, job_id, plan_id, executor.ops()).await
+        {
+            mark_apply_job_failed(pool, job_id, e.code()).await;
+            return Err(e);
+        }
+    }
+
+    // The after-the-fact check (F-604). Prove the moves happened as planned by
+    // re-checking the EXECUTOR'S OWN ops against the SAME Vfs the job ran on
+    // (AC-18): a dry run verifies its MemFs, a Real apply verifies RealFs. This runs
+    // on BOTH a clean and a halted walk, so a halt reports per-op truth (completed
+    // ops verified good, the halted op reported as halted) rather than a blanket
+    // failure - the P5 teardown-halt (fully restored, teardown op halted) reads
+    // fairly, and P8 frames it.
+    let verify_report = verify_job(executor.vfs(), executor.ops(), &outcome);
+
+    // AC-19: re-read reality through the EXISTING scanner and compute the delta
+    // health metrics, for a COMPLETED Real apply only (a dry run changed nothing on
+    // disk; a halted walk left a partial state we do not re-scan). Best-effort: a
+    // rescan failure is logged and never fails the apply.
+    let delta = if mode == ApplyMode::Real && walk_completed && !library_root.is_empty() {
+        match delta_health_metrics(pool, before_scan_id, std::path::Path::new(library_root)).await {
+            Ok(d) => Some(d),
+            Err(e) => {
+                log::warn!("post-apply rescan/delta for job {job_id} failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Export the after-the-fact check report artifact beside the undo file (F-1002).
+    // Best-effort: a report-write failure is logged, never fails the apply.
+    let roots = affected_roots(executor.ops());
+    let check = CheckReport::build(mode, &verify_report, roots, delta);
+    if let Err(e) = write_check_report(reports_dir, &check) {
+        log::warn!("could not write the after-the-fact check report for job {job_id}: {e}");
+    }
+
+    // AC-20: a difference the check found blocks further FORWARD tidy-ups until a
+    // human acknowledges it. The block is durable (survives a restart) and
+    // append-only. If recording it fails, mark the job failed (releasing the lock)
+    // and surface the error rather than leaving forward tidying silently open.
+    let blocked = verify_report.has_discrepancy();
+    if blocked {
+        let now = now_iso8601_utc();
+        if let Err(e) = record_block(
+            pool,
+            job_id,
+            &now,
+            &verify_report.discrepancy_summary_json(),
+        )
+        .await
+        {
+            mark_apply_job_failed(pool, job_id, e.code()).await;
+            return Err(e);
+        }
+    }
+
+    // Terminal state. A halted walk surfaces its halt exactly as before (the
+    // teardown-halt case included); the after-the-fact check above already recorded
+    // its per-op truth to the report.
     if let Some(halt) = &outcome.halt {
         let err = halt_to_error(halt);
         mark_apply_job_failed(pool, job_id, err.code()).await;
         return Err(err);
-    }
-
-    // Clean run: export the self-contained undo file (manifest) and re-emit the
-    // F-507 provenance report reflecting final locations (AC-11, AC-12).
-    if let Err(e) =
-        export_after_apply(pool, reports_dir, mode, job_id, plan_id, executor.ops()).await
-    {
-        mark_apply_job_failed(pool, job_id, e.code()).await;
-        return Err(e);
     }
 
     mark_apply_job_completed(pool, job_id).await;
@@ -206,6 +292,9 @@ async fn walk_and_finalize<V: Vfs>(
         job_id,
         dry_run: mode == ApplyMode::DryRun,
         ops_walked: outcome.ops_walked as i64,
+        verified_ops: verify_report.verified_count() as i64,
+        discrepancy_count: verify_report.discrepancy_count() as i64,
+        blocked,
     })
 }
 
@@ -419,6 +508,10 @@ mod tests {
             ApplyMode::DryRun,
             job_id,
             "2026-07-18T00:00:00Z",
+            // before_scan_id + library_root: a DryRun halt does no rescan, so these
+            // are inert here.
+            0,
+            "",
         )
         .await
         .expect_err("a halted walk surfaces the halt as an error");
@@ -446,5 +539,245 @@ mod tests {
                 .await
                 .expect("journal rows");
         assert_eq!(phases, vec!["intent".to_string(), "failed".to_string()]);
+    }
+
+    // ---- F-604 after-the-fact check wiring (v0.5.0 Phase 6) ----
+
+    use abo_core::db::plans::PlanOpRow;
+
+    const P6_NOW: &str = "2026-07-18T00:00:00Z";
+
+    /// Seed the minimal `scans`/`rulesets`/`plans` rows so `export_after_apply`'s
+    /// `manifests` FK (to `plans` and `jobs`) resolves, returning the new plan id.
+    /// The executor is driven with in-memory ops (below); this only needs a plan
+    /// row to exist for the undo-file export.
+    async fn seed_plan(pool: &SqlitePool) -> i64 {
+        let scan_id = sqlx::query(
+            "INSERT INTO scans (source, root_path, started_at, status) \
+             VALUES ('live', 'E:/lib', ?, 'completed')",
+        )
+        .bind(P6_NOW)
+        .execute(pool)
+        .await
+        .expect("scan")
+        .last_insert_rowid();
+        let ruleset_id = abo_core::db::rulesets::insert_ruleset(
+            pool,
+            &abo_core::db::rulesets::NewRuleset {
+                name: "d",
+                body_json: "{}",
+                schema_version: 1,
+            },
+            P6_NOW,
+        )
+        .await
+        .expect("ruleset");
+        sqlx::query(
+            "INSERT INTO plans (scan_id, ruleset_id, created_at, status) VALUES (?, ?, ?, 'draft')",
+        )
+        .bind(scan_id)
+        .bind(ruleset_id)
+        .bind(P6_NOW)
+        .execute(pool)
+        .await
+        .expect("plan")
+        .last_insert_rowid()
+    }
+
+    /// One approved move op, in memory (the executor walks these directly).
+    fn move_op(source: &str, target: &str, size: i64) -> PlanOpRow {
+        PlanOpRow {
+            id: 1,
+            plan_id: 1,
+            seq: 0,
+            op_group: "loose-root-books".to_string(),
+            kind: "move".to_string(),
+            kind_reason: None,
+            source_path: source.to_string(),
+            target_path: target.to_string(),
+            rationale: "test.".to_string(),
+            rule_id: "test-rule".to_string(),
+            confidence: "high".to_string(),
+            byte_size: size,
+            validation_state: "valid".to_string(),
+            validation_reason: None,
+            provenance_json: None,
+            approval: "approved".to_string(),
+            approval_updated_at: None,
+        }
+    }
+
+    /// AC-18/AC-20: a CLEAN completed walk verifies every op and records NO block;
+    /// forward tidying stays open. The undo file is exported (the walk completed).
+    #[tokio::test]
+    async fn a_clean_completed_walk_records_no_block() {
+        use abo_core::exec::{forward_tidying_blocked, MANIFEST_JSON_BASENAME};
+
+        let db = tempfile::TempDir::new().expect("db tempdir");
+        let (pool, _) = abo_core::db::open_db(db.path()).await.expect("open_db");
+        let plan_id = seed_plan(&pool).await;
+        let job_id = acquire_apply_job(&pool, ApplyMode::DryRun, P6_NOW)
+            .await
+            .expect("acquire apply job");
+
+        let seed = vec![
+            SeedEntry {
+                path: "E:/lib".into(),
+                size: 0,
+                is_dir: true,
+            },
+            SeedEntry {
+                path: "E:/lib/loose.m4b".into(),
+                size: 4096,
+                is_dir: false,
+            },
+        ];
+        let ops = vec![move_op("E:/lib/loose.m4b", "E:/lib/Author/loose.m4b", 4096)];
+        let executor = Executor::new(MemFs::from_seed(&seed), job_id, ops);
+        let journal = SqliteJournal::new(pool.clone());
+        let reports = tempfile::TempDir::new().expect("reports tempdir");
+
+        let report = walk_and_finalize(
+            &pool,
+            executor,
+            &journal,
+            reports.path(),
+            plan_id,
+            ApplyMode::DryRun,
+            job_id,
+            P6_NOW,
+            0,
+            "",
+        )
+        .await
+        .expect("a clean walk completes");
+
+        assert!(!report.blocked, "a clean apply does not block");
+        assert_eq!(report.discrepancy_count, 0);
+        assert_eq!(report.verified_ops, 1);
+        assert!(
+            !forward_tidying_blocked(&pool).await.unwrap(),
+            "forward tidying stays open after a clean apply"
+        );
+        assert!(
+            reports.path().join(MANIFEST_JSON_BASENAME).exists(),
+            "a completed walk exports its undo file"
+        );
+    }
+
+    /// AC-18/AC-20 + guard #2 (structural): a completed walk whose after-the-fact
+    /// check finds a difference (an injected fault: the target reports missing at
+    /// check time) records a durable block AND STILL exports its undo file - the
+    /// moves happened, so the user keeps the undo even though the check failed.
+    #[tokio::test]
+    async fn a_discrepancy_after_a_completed_walk_blocks_but_keeps_the_undo_file() {
+        use abo_core::exec::{
+            forward_tidying_blocked, VfsError, VfsMetadata, MANIFEST_JSON_BASENAME,
+        };
+
+        // A Vfs that hides ONE target from `exists`/`metadata` while delegating
+        // everything else (including the move itself) to an inner MemFs: the move
+        // succeeds, but the after-the-fact check sees the target as missing.
+        struct HauntedFs {
+            inner: MemFs,
+            haunted: std::path::PathBuf,
+        }
+        impl Vfs for HauntedFs {
+            fn exists(&self, p: &Path) -> bool {
+                if p == self.haunted {
+                    return false;
+                }
+                self.inner.exists(p)
+            }
+            fn is_dir(&self, p: &Path) -> bool {
+                self.inner.is_dir(p)
+            }
+            fn metadata(&self, p: &Path) -> Result<VfsMetadata, VfsError> {
+                if p == self.haunted {
+                    return Err(VfsError::NotFound(p.to_path_buf()));
+                }
+                self.inner.metadata(p)
+            }
+            fn rename(&self, a: &Path, b: &Path) -> Result<(), VfsError> {
+                self.inner.rename(a, b)
+            }
+            fn copy_file(&self, a: &Path, b: &Path) -> Result<u64, VfsError> {
+                self.inner.copy_file(a, b)
+            }
+            fn remove_file(&self, p: &Path) -> Result<(), VfsError> {
+                self.inner.remove_file(p)
+            }
+            fn remove_dir(&self, p: &Path) -> Result<(), VfsError> {
+                self.inner.remove_dir(p)
+            }
+            fn create_dir_all(&self, p: &Path) -> Result<(), VfsError> {
+                self.inner.create_dir_all(p)
+            }
+        }
+
+        let db = tempfile::TempDir::new().expect("db tempdir");
+        let (pool, _) = abo_core::db::open_db(db.path()).await.expect("open_db");
+        let plan_id = seed_plan(&pool).await;
+        let job_id = acquire_apply_job(&pool, ApplyMode::DryRun, P6_NOW)
+            .await
+            .expect("acquire apply job");
+
+        let seed = vec![
+            SeedEntry {
+                path: "E:/lib".into(),
+                size: 0,
+                is_dir: true,
+            },
+            SeedEntry {
+                path: "E:/lib/loose.m4b".into(),
+                size: 4096,
+                is_dir: false,
+            },
+        ];
+        let haunted = HauntedFs {
+            inner: MemFs::from_seed(&seed),
+            haunted: std::path::PathBuf::from("E:/lib/Author/loose.m4b"),
+        };
+        let ops = vec![move_op("E:/lib/loose.m4b", "E:/lib/Author/loose.m4b", 4096)];
+        let executor = Executor::new(haunted, job_id, ops);
+        let journal = SqliteJournal::new(pool.clone());
+        let reports = tempfile::TempDir::new().expect("reports tempdir");
+
+        let report = walk_and_finalize(
+            &pool,
+            executor,
+            &journal,
+            reports.path(),
+            plan_id,
+            ApplyMode::DryRun,
+            job_id,
+            P6_NOW,
+            0,
+            "",
+        )
+        .await
+        .expect("the walk completed (the discrepancy is post-facto, not a halt)");
+
+        // AC-20: the check found a difference, so a durable block was recorded.
+        assert!(report.blocked, "the discrepancy blocks further tidying");
+        assert_eq!(report.discrepancy_count, 1);
+        assert!(
+            forward_tidying_blocked(&pool).await.unwrap(),
+            "forward tidying is blocked until acknowledged"
+        );
+        // Guard #2: the undo file was STILL exported (the walk completed).
+        assert!(
+            reports.path().join(MANIFEST_JSON_BASENAME).exists(),
+            "a completed walk keeps its undo file even when the check fails"
+        );
+        // The block is durable: a `verification_blocks` raised row exists.
+        let raised: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM verification_blocks WHERE job_id = ? AND state = 'raised'",
+        )
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(raised, 1);
     }
 }

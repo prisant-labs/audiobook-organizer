@@ -251,6 +251,38 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     retryable: true,
     tone: "danger",
   },
+
+  // -- Undoing a tidy-up (v0.5.0: putting things back the way they were) -------
+  "rollback-not-reversible": {
+    sentence: "That tidy-up was a practice run, so nothing actually moved.",
+    nextStep:
+      "There's nothing to undo. Run a real tidy-up first if you want changes you can put back.",
+    retryable: false,
+    tone: "warn",
+  },
+  "rollback-selection-not-contiguous": {
+    sentence: "An undo can only take back the most recent changes, in order.",
+    nextStep:
+      "Choose an unbroken run of the latest changes to undo, without skipping any in the middle.",
+    retryable: false,
+    tone: "warn",
+  },
+  "rollback-prepare-failed": {
+    sentence: "The undo couldn't be prepared.",
+    nextStep:
+      "The undo file may be missing or the tidy-up it refers to may be gone. Scan your library again, then build and review a fresh plan instead.",
+    retryable: true,
+    tone: "danger",
+  },
+
+  // -- After-the-fact check (v0.5.0: paused until a difference is acknowledged) --
+  "tidying-blocked": {
+    sentence: "The last tidy-up's after-the-fact check found a difference that needs a look.",
+    nextStep:
+      "Review the after-the-fact check and acknowledge it to continue. Undoing the last tidy-up is still available.",
+    retryable: false,
+    tone: "warn",
+  },
 };
 
 // The runtime list of every code, mirroring the `AppError` union. A compile-

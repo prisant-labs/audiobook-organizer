@@ -120,6 +120,24 @@ pub async fn plan_set_group_approval(
     } else {
         ApprovalAction::Reject
     };
+
+    // Forward-tidying gate (F-604, AC-20): the spec blocks APPROVAL as well as
+    // execution of further campaign groups while a previous apply's after-the-fact
+    // check is unacknowledged. Only APPROVING (`included == true`) is gated -
+    // rejecting/skipping a group stays available, since de-selecting a group is a
+    // de-escalation, never a new forward change (AC-14 keeps "leave out" always
+    // reachable). An UNDO (inverse) plan is exempt via the gate's own
+    // `is_undo_plan_ops` check, so an undo's groups can always be approved (undo is
+    // the remedy for a discrepancy; trapping its approval would trap the fix).
+    if included {
+        let ops = abo_core::db::plans::get_plan_ops(&state.pool, plan_id)
+            .await
+            .map_err(|e| AppError::PlanGenerationFailed {
+                detail: e.to_string(),
+            })?;
+        abo_core::exec::ensure_forward_tidying_allowed(&state.pool, &ops).await?;
+    }
+
     let now = now_iso8601_utc();
     set_group_approval(&state.pool, plan_id, campaign_group, action, &now)
         .await
