@@ -11,7 +11,7 @@ This file follows the agents.md open standard: agent-neutral instructions for an
 - `docs/internal/`: tracked project documentation, including `product-requirements.md`, `architecture.md`, `program-roadmap.md`, `decisions/` (MADR v4 ADRs), and `releases/<version>-<codename>/` (one folder per release, each with `spec.md` and `implementation-plan.md`).
 - `crates/` and `src/` (planned, not yet created): the Rust engine (`abo-core`) and the React/TypeScript frontend, once the v0.1.0 spine release lands.
 - `_local/`: reference-only local scratch (prototypes, discovery notes, prior-work rescues). Gitignored, never committed, read-only input for planning.
-- `_agent-context/session-log/`: chronological session logs from all agents.
+- `_local/_agent-context/session-log/`: chronological session logs from all agents. Gitignored with the rest of `_local/` (session logs carry personal context and stay out of the repo; a root-level `_agent-context/` gitignore guard catches tooling that writes to the old path).
 
 ## Build and test commands
 

@@ -4,6 +4,12 @@
 _local/
 _LOCAL/
 
+# Session logs live at _local/_agent-context/ (moved 2026-07-20, operator
+# direction: session logs carry personal context and stay out of the repo).
+# The root entry is a guard: wrap tooling may still write here by habit,
+# and anything it writes must never be committed.
+_agent-context/
+
 # MemSearch memory index. Machine-local, regenerated, never shared.
 .memsearch/
 
