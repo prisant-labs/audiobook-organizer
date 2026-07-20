@@ -15,11 +15,11 @@ No. Zero third-party databases, by deliberate design. Every title, author, serie
 
 No Audible, Goodreads, or Open Library. No web search. No telemetry. This is enforced, not just promised: the CI build fails on any external reference (FD-11, the zero-network gate), and the tag-reading code sits behind an opt-in build flag absent from every shipped build. Online metadata lookup (F-1103) is a ratified non-goal from the original discovery consensus.
 
-## Where did the name a non-technical member of the household in the design documents come from?
+## Where did the household-member references in the design documents come from?
 
-From the library itself. The March 2026 discovery scan of `E:\Books - Audio` found an empty Audible profile folder, `_audible\[us]a non-technical member of the household`, and the discovery analysis inferred household usage from it. When the product decisions were ratified on 2026-07-03 (audience = all tiers, with the family tier setting the UI bar), PRODUCT.md encoded the design bar as: if a non-technical member of the household could not confidently review and confirm a tidy-up, the surface is wrong. The PRD quotes it as the tier-2 standard.
+From the library itself. The March 2026 discovery scan of `E:\Books - Audio` found an empty Audible profile folder belonging to another member of the household, and the discovery analysis inferred household usage from it. When the product decisions were ratified on 2026-07-03 (audience = all tiers, with the family tier setting the UI bar), PRODUCT.md encoded the design bar as: if a non-technical household member could not confidently review and confirm a tidy-up, the surface is wrong. The PRD quotes it as the tier-2 standard.
 
-The user guide deliberately does not use the name; it says "everyone in the house." Privacy note on record: PRODUCT.md and the PRD do carry the name, and the repo is written public-ready for a possible flip at v0.9.0 (D-13). If family names should stay out of a potentially public repo, the references generalize to "a household member" in a two-minute change; the decision is the operator's.
+The user guide says "everyone in the house." Privacy note on record: earlier revisions of these documents named the household member; the references were generalized on 2026-07-20 (the operator's recorded decision) so no family name appears in the repo.
 
 ## What would adding tag writing (labels inside the files) involve?
 
