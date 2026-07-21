@@ -28,20 +28,20 @@ executor_model_guidance: >
 
 ## Task Summary
 
-Status: review. This plan decomposes v0.2.0 into 7 phases: fixture harness first, then scanner + job model, CSV import, the parse stack, the classification engine, the activity log, and the real-library read-only gate with the FD-14 tag-quality probe. Every phase is test-first where practical: the golden and property tests are written before or alongside the code that satisfies them. No mutation of any real library occurs in this release (D-09, read-only).
+Status: complete (all 7 phases done; gate walked 2026-07-04; tag awaiting jp per D-10). This plan decomposes v0.2.0 into 7 phases: fixture harness first, then scanner + job model, CSV import, the parse stack, the classification engine, the activity log, and the real-library read-only gate with the FD-14 tag-quality probe. Every phase is test-first where practical: the golden and property tests are written before or alongside the code that satisfies them. No mutation of any real library occurs in this release (D-09, read-only).
 Last updated: 2026-07-03.
 
 ## Completion Status
 
 | Phase | Goal | Fulfills AC | Owner | Status |
 |---|---|---|---|---|
-| P1 | Fixture harness (built first) | AC-F1..AC-F5 | Sonnet (Opus reviews determinism) | Not started |
-| P2 | F-101 scanner hardening + F-104 job model | AC-101.1..101.6, AC-104.1..104.4 | Opus | Not started |
-| P3 | F-102 WizTree CSV import | AC-102.1..102.3 | Sonnet | Not started |
-| P4 | Parse stack (F-301, F-302, F-303, F-304) | AC-301.*, AC-302.*, AC-303.*, AC-304.* | Opus (F-303 merge) + Sonnet (tables) | Not started |
-| P5 | Classification engine (F-201, F-202, F-203) | AC-201.*, AC-202.*, AC-203.* | Opus | Not started |
-| P6 | F-1001 activity log | AC-1001.1, AC-1001.2 | Sonnet | Not started |
-| P7 | Real-library read-only gate + FD-14 probe + baselines | G-03, G-05, G-06, G-07, G-08, G-09 | Fable (verification) + Opus (probe) | Not started |
+| P1 | Fixture harness (built first) | AC-F1..AC-F5 | Sonnet (Opus reviews determinism) | Done |
+| P2 | F-101 scanner hardening + F-104 job model | AC-101.1..101.6, AC-104.1..104.4 | Opus | Done |
+| P3 | F-102 WizTree CSV import | AC-102.1..102.3 | Sonnet | Done |
+| P4 | Parse stack (F-301, F-302, F-303, F-304) | AC-301.*, AC-302.*, AC-303.*, AC-304.* | Opus (F-303 merge) + Sonnet (tables) | Done |
+| P5 | Classification engine (F-201, F-202, F-203) | AC-201.*, AC-202.*, AC-203.* | Opus | Done |
+| P6 | F-1001 activity log | AC-1001.1, AC-1001.2 | Sonnet | Done |
+| P7 | Real-library read-only gate + FD-14 probe + baselines | G-03, G-05, G-06, G-07, G-08, G-09 | Fable (verification) + Opus (probe) | Done |
 
 ## Phase 1: Fixture harness (built first)
 

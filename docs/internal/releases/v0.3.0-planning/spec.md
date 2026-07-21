@@ -23,7 +23,7 @@ decisions: [D-02, D-04, D-08, D-09, D-12, D-14, FD-01, FD-06, FD-08, FD-10, FD-1
 
 ## Task Summary
 
-- Status: review (pending jp approval of the planning suite).
+- Status: built; gate walked 2026-07-05; G-6 non-engineer read pending jp; tag awaiting jp per D-10.
 - Theme: the tool can say exactly what it would do, provably safely, and hand that to a human as files.
 - Features in scope: F-401, F-402, F-403, F-404, F-405, F-505, F-506, F-507, F-701, F-801, F-1002, F-204, F-205 (13).
 - Release gate: 8 composite checks (see Release Gate). Signature gate: deterministic validated plan over the real snapshot plus a self-contained HTML dry-run report a non-engineer can read.

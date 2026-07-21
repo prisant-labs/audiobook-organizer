@@ -1,7 +1,7 @@
 ---
-title: "Audiobook Organizer - Executive Summary (planning suite, pre-go review)"
+title: "Audiobook Organizer - Executive Summary (planning suite, historical)"
 date: 2026-07-03
-status: awaiting jp approval ("go")
+status: historical (jp "go" given 2026-07-03, D-10; build complete through v0.5.0 as of 2026-07-20)
 owner: jprisant
 produced-by: "orchestrator (Fable)"
 sources:
@@ -15,6 +15,8 @@ sources:
 **The ask:** review this summary and the PR it rides on. When you say **"go"**, execution starts at the pre-flight checklist and runs the full ladder (v0.1.0 spine through v0.6.0 hardening, then v0.9.0 packaged) under the EXECUTION.md contract, with a non-blocking report to you at every release boundary and hard stops only at human-only gates.
 
 ## 1. What this is
+
+> **[Historical note, 2026-07-20: jp gave "go" on 2026-07-03 (D-10). This planning suite merged and the build ran through v0.5.0 (acting), which shipped the executor, journal, undo, set-aside, and the full GUI over the real-library plan. The text below is preserved as a record of the pre-go state.]**
 
 The project moved from "decision-complete drafts in a gitignored folder" to a tracked, audited, adversarially verified planning suite on branch `planning/doc-suite`, pushed to the private repo `prisant-labs/audiobook-organizer`. Nothing has been merged; the PR is your review surface. No code exists yet, by design: the suite is the contract the build executes against.
 
@@ -75,6 +77,8 @@ Verification evidence: every artifact passed its brief-conformance check; the cr
 **Directional effort:** ~11-12 focused agent-weeks to GA per the roadmap, with genuinely useful artifacts far earlier: a reviewed reorganization plan and the shareable dry-run HTML report over your real library at v0.3.0. Trust the gates and descope triggers, not the numbers.
 
 ## 6. Open items that stay yours
+
+> **[Historical note, 2026-07-20: Item 1 below ("Go") was closed 2026-07-03 (D-10). Items 2-4 remain open or deferred as planned.]**
 
 1. **"Go"** - approves this suite, merges the PR, starts the pre-flight checklist and v0.1.0 (spine).
 2. **Backup posture** - decided at campaign time via the M-1 runbook decision table (D-17); blocks nothing until then.

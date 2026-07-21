@@ -23,15 +23,15 @@ This document answers one question: what does the software actually do, today, i
 
 ## 1. Executive summary
 
-Audiobook Organizer is a Windows desktop tool (Tauri v2, Rust, React, TypeScript, SQLite) that reorganizes a messy audiobook library into an Audiobookshelf-native (ABS-native) folder structure, without ever deleting audio and without ever touching the network. It is an analyzer and planner first, a mover second: everything before the executor stage is read-only, and the executor itself does not exist yet.
+Audiobook Organizer is a Windows desktop tool (Tauri v2, Rust, React, TypeScript, SQLite) that reorganizes a messy audiobook library into an Audiobookshelf-native (ABS-native) folder structure, without ever deleting audio and without ever touching the network. It is an analyzer and planner first, a mover second: everything before the executor stage is read-only. Five releases are built and merged through v0.5.0 (acting), which shipped the executor, journal, undo, set-aside, and the full GUI.
 
-**What works today, proven on the real library.** Three releases are built and gate-walked: v0.1.0 (spine, scaffold and tracer bullet), v0.2.0 (understanding, scan/classify/parse), and v0.3.0 (planning, plan/validate/export/report). Run end to end against jp's real 297 GB, 14,799-entry library at `E:\Books - Audio`:
+**What works today, proven on the real library.** Five releases are built and merged to main: v0.1.0 (spine, scaffold and tracer bullet), v0.2.0 (understanding, scan/classify/parse), v0.3.0 (planning, plan/validate/export/report), v0.4.0 (seeing, the first real GUI surfaces), and v0.5.0 (acting, executor, journal, undo, set-aside, and apply + activity surface). Run end to end against jp's real 297 GB, 14,799-entry library at `E:\Books - Audio`:
 
 - A read-only scan completes in under 1 second (warm cache), two orders of magnitude inside the 60-second soft target, covering 14,799 entries and 320.8 GB with zero skipped entries and zero permission or junction failures [S: docs/internal/releases/v0.2.0-understanding/baseline-delta-2026-07-04.md, gate G-03].
 - The classifier and parser turn that scan into a full library health picture: 582 book-like folders, 406 duplicate-candidate groups (856 copy files), 237 of 238 loose root files parsing cleanly, and a full per-class folder census, all cross-validated against the rescued 2026-03-25 WizTree baseline [S: baseline-delta-2026-07-04.md; v0.3.0 spec.md gate G-8].
 - The plan builder turns that understanding into a validated, deterministic, 1,817-change plan, exported as CSV, JSON, and Markdown plus a single self-contained HTML dry-run report that opens with networking disabled and requires no app to read [S: docs/internal/releases/v0.3.0-planning/spec.md, gate G-5].
 
-**What is next.** v0.4.0 (seeing, the first real GUI), v0.5.0 (acting, the executor and rollback), and v0.6.0 (hardening, interruption safety and dedupe resolution) are spec-ready but not yet built (see Section 3 and Section 8). Nothing moves, renames, or deletes a single file on the real library until v0.5.0 lands and jp explicitly approves a Real (non-dry-run) apply, which is a human-only gate under every circumstance [S: docs/internal/decision-ledger.md D-10].
+**What is next.** v0.6.0 (hardening, interruption safety and dedupe resolution) is spec-ready and not yet started (see Section 3 and Section 8). Nothing moves, renames, or deletes a single file on the real library until jp explicitly approves a Real (non-dry-run) apply, which is a human-only gate under every circumstance [S: docs/internal/decision-ledger.md D-10].
 
 ## 2. Data-source statement
 
@@ -143,7 +143,7 @@ Noise strippers (bracket tags, bitrate/size markers, rank/year prefixes, release
 
 **Proven by.** AC-1 through AC-11 and AC-24 through AC-26 (v0.3.0 spec). Real-library run: 237 loose-root moves, 57 messy-name rename ops (reconciled against the v0.2.0 noise-family baselines), 1,817 total changes, plan determinism re-verified independently by a second reviewer [S: v0.3.0 spec.md gates G-1, G-3].
 
-**Status: BUILT** for capture and reporting; the v0.5.0 half of F-507 (carrying provenance into the journal and manifest, and re-emitting the report post-apply) is spec-ready but not yet built.
+**Status: BUILT** (both halves: v0.3.0 capture and reporting, and the v0.5.0 carry-through into the journal and manifest with post-apply report re-emit, proven by v0.5.0 spec AC-12).
 
 ### 3.5 Validate (F-404 plan validation)
 
@@ -195,36 +195,36 @@ Every feature ID from the PRD registry (docs/internal/product-requirements.md Se
 | F-404 (plan validation) | Collisions, path safety, cycles, disk space, staleness | v0.3.0 | BUILT | 12 seeded hazards blocked/warned with pinned machine codes in the hostile-fixture gate |
 | F-405 (plan persistence and versioning) | Immutable plans with approval state | v0.3.0 | BUILT | Regenerating after a ruleset tweak always creates a new plan row, never mutates the old one |
 | F-501 (everything view) REDEFINED | Virtualized full change list, tree optional | v0.6.0 | SPEC-READY | Redefined by D-16/FD-06: no longer the P0 tree diff; a tier-1 disclosure surface, later |
-| F-502 (campaign group review) | Approve/reject/defer per group; per-change override | v0.4.0 | SPEC-READY | Per-change exclude lives inside group detail |
-| F-503 (search and filter in preview) | Find any book/path/rule across the plan | v0.4.0 | SPEC-READY | Simple filter box |
-| F-504 (explainability) | Every change shows rationale, matched pattern, confidence | v0.4.0 | SPEC-READY | The content behind "Show file details" for tier 1 |
+| F-502 (campaign group review) | Approve/reject/defer per group; per-change override | v0.4.0 | BUILT | Per-change exclude lives inside group detail |
+| F-503 (search and filter in preview) | Find any book/path/rule across the plan | v0.4.0 | BUILT | Simple filter box |
+| F-504 (explainability) | Every change shows rationale, matched pattern, confidence | v0.4.0 | BUILT | The content behind "Show file details" for tier 1 |
 | F-505 (plan export) | CSV, JSON, and Markdown plan artifacts | v0.3.0 | BUILT | CSV round-trips one row per op; Markdown groups by the 7 campaign groups |
 | F-506 (dry-run HTML report) | Self-contained, non-engineer-readable HTML report | v0.3.0 | BUILT | 1,817-change real report generated, zero-network verified; jp's read confirmation pending (non-blocking) |
-| F-507 (pack provenance capture and report) NEW | Record source-pack/award membership; export a provenance report | v0.3.0 (capture) / v0.5.0 (carry-through) | BUILT (v0.3.0 half) | Every flattened pack member recorded, including validation-blocked members; journal/manifest carry-through is v0.5.0 |
-| F-601 (executor) | Apply approved changes in dependency order | v0.5.0 | SPEC-READY | Rename-first same-volume; copy+verify+delete only cross-volume |
-| F-602 (journal + undo manifest) | Append-only journal; reversible manifest per apply job | v0.5.0 | SPEC-READY | Journal-before-act; JSON manifest export so recovery survives a sick DB |
-| F-603 (rollback) | Full or partial undo from a manifest | v0.5.0 | SPEC-READY | Rollback is just another plan through the same pipeline |
-| F-604 (post-apply verification) | Verify moved trees; refresh snapshot; report | v0.5.0 | SPEC-READY | Discrepancies block further groups until acknowledged |
-| F-605 (set-aside / quarantine) | Move-not-delete holding area with provenance | v0.5.0 | SPEC-READY | Named "Set Aside" on disk; "quarantine" stays internal-only vocabulary |
+| F-507 (pack provenance capture and report) NEW | Record source-pack/award membership; export a provenance report | v0.3.0 (capture) / v0.5.0 (carry-through) | BUILT | Every flattened pack member recorded, including validation-blocked members; journal/manifest carry-through and post-apply re-emit landed in v0.5.0 (AC-12) |
+| F-601 (executor) | Apply approved changes in dependency order | v0.5.0 | BUILT | Rename-first same-volume; copy+verify+delete only cross-volume |
+| F-602 (journal + undo manifest) | Append-only journal; reversible manifest per apply job | v0.5.0 | BUILT | Journal-before-act; JSON manifest export so recovery survives a sick DB |
+| F-603 (rollback) | Full or partial undo from a manifest | v0.5.0 | BUILT | Rollback is just another plan through the same pipeline |
+| F-604 (post-apply verification) | Verify moved trees; refresh snapshot; report | v0.5.0 | BUILT | Discrepancies block further groups until acknowledged |
+| F-605 (set-aside / quarantine) | Move-not-delete holding area with provenance | v0.5.0 | BUILT | Named "Set Aside" on disk; "quarantine" stays internal-only vocabulary |
 | F-606 (interruption safety + resume) | Crash/cancel mid-apply leaves a resumable state | v0.6.0 | SPEC-READY | At most one change in doubt, auto-reconciled on restart |
-| F-607 (dry-run harness) | Execute a plan against a virtual filesystem only | v0.5.0 | SPEC-READY | Same executor code path against `MemFs` instead of `RealFs` |
-| F-608 (pause and resume apply) NEW | Pause an apply job between changes; resume | v0.5.0 | SPEC-READY | Pause takes effect between operations only; journal unaffected |
+| F-607 (dry-run harness) | Execute a plan against a virtual filesystem only | v0.5.0 | BUILT | Same executor code path against `MemFs` instead of `RealFs` |
+| F-608 (pause and resume apply) NEW | Pause an apply job between changes; resume | v0.5.0 | BUILT | Pause takes effect between operations only; journal unaffected |
 | F-701 (duplicate candidate detection) | Name+size exact grouping across the snapshot | v0.3.0 | BUILT | 406 groups / 856 copy files on the real library; version candidates never auto-resolved |
 | F-702 (hash verification) | Opt-in content hash before any set-aside action | v0.6.0 | SPEC-READY | BLAKE3 over candidates only, never hash-everything |
 | F-703 (duplicate review + report) | Grouped review UI plus CSV export | v0.6.0 | SPEC-READY | Dedupe is just another campaign group |
 | F-704 (resolution policies) | keep-larger / keep-higher-bitrate / keep-m4b / flag-only | v0.6.0 | SPEC-READY | Default policy is flag-only |
 | F-801 (ruleset model + persistence) | Named rulesets bundling templates, policies, toggles | v0.3.0 | BUILT | JSON body against a versioned schema; invalid bodies rejected on save |
 | F-802 (ruleset import/export) | Portable JSON ruleset files | v0.6.0 | SPEC-READY | - |
-| F-803 (app settings) | Library roots, set-aside root, reports folder, theme, retention | v0.4.0 | SPEC-READY | Hosts theme default `day`, snapshot retention default 10 |
-| F-901 (app shell + navigation) | Sidebar nav, theme, command palette | v0.4.0 | SPEC-READY | Day/Evening themes |
-| F-902 (library home) RENAMED | Warm cover-forward shelf; health facts inside sentences | v0.4.0 | SPEC-READY | Renamed from "dashboard"; no stat bands, no hero metrics |
-| F-903 (plan preview surface) | Hosts campaign group review, search, explainability | v0.4.0 | SPEC-READY | - |
-| F-904 (apply + activity surface) | Live job progress, journal view, verification, rollback entry | v0.5.0 | SPEC-READY | One job at a time, deliberately boring and explicit |
+| F-803 (app settings) | Library roots, set-aside root, reports folder, theme, retention | v0.4.0 | BUILT | Hosts theme default `day`, snapshot retention default 10 |
+| F-901 (app shell + navigation) | Sidebar nav, theme, command palette | v0.4.0 | BUILT | Day/Evening themes |
+| F-902 (library home) RENAMED | Warm cover-forward shelf; health facts inside sentences | v0.4.0 | BUILT | Renamed from "dashboard"; no stat bands, no hero metrics |
+| F-903 (plan preview surface) | Hosts campaign group review, search, explainability | v0.4.0 | BUILT | - |
+| F-904 (apply + activity surface) | Live job progress, journal view, verification, rollback entry | v0.5.0 | BUILT | One job at a time, deliberately boring and explicit |
 | F-905 (duplicates surface) | Hosts duplicate review | v0.6.0 | SPEC-READY | - |
-| F-906 (settings + ruleset editor) | Ruleset CRUD with live re-plan preview counts | v0.4.0 | SPEC-READY | - |
-| F-907 (cover extraction and fallback tiles) NEW | Read embedded art and cover.jpg, read-only | v0.4.0 | SPEC-READY | Square 1:1 only; deterministic hash-colored fallback tile when no cover exists |
-| F-908 (error, empty, and loading states) NEW | Family-safe surface for every error family; empty/loading states | v0.4.0 | SPEC-READY | Every AppError family maps to a designed, non-jargon surface |
-| F-909 (first-run and library root selection) NEW | Onboarding: pick library root, default ruleset/theme | v0.4.0 | SPEC-READY | Uses `tauri-plugin-dialog`; frontend never touches the filesystem directly |
+| F-906 (settings + ruleset editor) | Ruleset CRUD with live re-plan preview counts | v0.4.0 | BUILT | - |
+| F-907 (cover extraction and fallback tiles) NEW | Read embedded art and cover.jpg, read-only | v0.4.0 | BUILT | Square 1:1 only; deterministic hash-colored fallback tile when no cover exists |
+| F-908 (error, empty, and loading states) NEW | Family-safe surface for every error family; empty/loading states | v0.4.0 | BUILT | Every AppError family maps to a designed, non-jargon surface |
+| F-909 (first-run and library root selection) NEW | Onboarding: pick library root, default ruleset/theme | v0.4.0 | BUILT | Uses `tauri-plugin-dialog`; frontend never touches the filesystem directly |
 | F-1001 (activity log) | Append-only record of every scan/plan/apply/rollback | v0.2.0 | BUILT | One `activity_records` row per action with params, outcome, timestamps |
 | F-1002 (reports folder) | All exports as files | v0.3.0 | BUILT | Plans, manifests (later), verification (later), provenance, HTML report all land here |
 | F-1003 (structured app logging) | `tauri-plugin-log` plus `tracing` in core; log rotation | v0.1.0 | BUILT | No telemetry, no crash reporting, no network |
@@ -242,11 +242,13 @@ The product's central promise is that it is safe to point at 297 GB of hard-to-r
 
 ### 5.1 As implemented today
 
-Every release built so far (v0.1.0 through v0.3.0) is **read-only against the live library by construction**: there is no executor, no `Vfs::RealFs` write path wired to a plan, and no way to invoke a mutation from the current codebase. The only artifacts a run produces are database rows in the app's own SQLite file and export files (CSV/JSON/Markdown/HTML) in the reports folder. Nothing under the scanned root is created, modified, renamed, or deleted by anything built to date; every gate-evidence document (baseline-delta, fd14-tag-probe, v0.3.0 spec gates) states this as a verified constraint, not an assumption.
+v0.1.0 through v0.3.0 are **read-only against the live library by construction**: there is no executor in those releases, no `Vfs::RealFs` write path wired to a plan, and no way to invoke a mutation from that codebase. The only artifacts those releases produce are database rows in the app's own SQLite file and export files (CSV/JSON/Markdown/HTML) in the reports folder; every gate-evidence document (baseline-delta, fd14-tag-probe, v0.3.0 spec gates) states this as a verified constraint.
 
-### 5.2 Specified for v0.5.0 (acting) - not yet built
+v0.5.0 (acting) ships the full write path: executor, journal, undo manifest, rollback, post-apply verification, and set-aside, all proven against fixtures and disposable copies. A Real (non-dry-run) apply against the actual library at `E:\Books - Audio` remains a human-only gate under every circumstance (D-10).
 
-| Invariant | What it means | Mechanism (spec-ready) |
+### 5.2 Built in v0.5.0 (acting)
+
+| Invariant | What it means | Mechanism (built) |
 |---|---|---|
 | Never overwrite | A target that already exists is never clobbered | Executor re-checks target-does-not-exist immediately before every operation (TOCTOU backstop); an appeared target is `target-appeared`, a hard stop |
 | Never delete audio | No code path in the product deletes an audio file, ever | Only `rmdir-empty` removes anything, and only on a folder verified empty; duplicates and clutter move to Set Aside, they are never deleted |
@@ -292,15 +294,15 @@ The app database lives at `%LOCALAPPDATA%\AudiobookOrganizer\abo.db` (never Roam
 | `plans` | One row per generated plan: which scan, which ruleset, when, status | Yes |
 | `plan_ops` | One row per proposed change: source, target, group, rationale, confidence, validation verdict, provenance | Yes |
 | `jobs` | One row per long-running operation (scan, hash, apply, rollback) and its state | Yes |
-| `journal` | Append-only, one row per executed operation during an apply (not yet used, no executor exists) | Table shape reserved; not yet exercised |
-| `manifests` | Completed apply jobs in reversible, exportable form (not yet used) | Table shape reserved; not yet exercised |
+| `journal` | Append-only, one row per executed operation during an apply | Yes (exercised in v0.5.0) |
+| `manifests` | Completed apply jobs in reversible, exportable form | Yes (exercised in v0.5.0) |
 | `duplicate_groups` / `duplicate_members` | Candidate duplicate groups and their member files | Yes (candidate detection only; hash verification is v0.6.0) |
 | `activity_records` | App-level audit trail: every scan/plan/apply/rollback with parameters and outcome | Yes |
-| `settings` | One row: library root, set-aside root, reports folder, theme, snapshot retention | Reserved minimal shape from v0.1.0; the settings UI (F-803) is v0.4.0 |
+| `settings` | One row: library root, set-aside root, reports folder, theme, snapshot retention | Yes (F-803 settings UI built in v0.4.0) |
 
 ### 6.2 Reports folder contents
 
-Every export lands as a file in a `Reports/` folder beside the app data, plus anywhere the user picks [S: architecture.md Section 10, F-1002]. Recovery is designed to never depend on the app's own database being healthy: manifests export as JSON precisely so a sick database does not strand an undo. What exists today: plan exports (CSV, JSON, Markdown), the provenance report, and the dry-run HTML report. What arrives later: undo manifests (v0.5.0), post-apply verification reports (v0.5.0), and duplicate reports (v0.6.0).
+Every export lands as a file in a `Reports/` folder beside the app data, plus anywhere the user picks [S: architecture.md Section 10, F-1002]. Recovery is designed to never depend on the app's own database being healthy: manifests export as JSON precisely so a sick database does not strand an undo. What exists today: plan exports (CSV, JSON, Markdown), the provenance report, the dry-run HTML report, the undo manifest (JSON, v0.5.0), and post-apply verification reports (v0.5.0). What arrives later: duplicate reports (v0.6.0).
 
 ### 6.3 Report file anatomy (F-506)
 
@@ -342,14 +344,14 @@ Non-goals, with the reasoning behind each [S: product-requirements.md Section 8;
 
 Honest accounting of what is open, pulled directly from the specs' own recorded items rather than smoothed over:
 
-- **Tag approval is still pending for every built release.** v0.1.0, v0.2.0, and v0.3.0 are each recorded as "built, gate walked by Fable, tag awaiting jp per D-10." Tag-cutting is a human-only action; nothing in the pipeline blocks it, but it has not happened yet [S: program-roadmap.md Section 8].
-- **The v0.3.0 non-engineer read test (gate G-6) is the one open item on the newest release.** The real 1,817-change HTML report has been delivered and render-verified by the orchestrator, but jp's own confirmation read is recorded as pending and is explicitly non-blocking for merge, though the tag should follow it [S: v0.3.0 spec.md gate G-6].
-- **No GUI exists yet.** Every capability described in Sections 3 and 4 as BUILT is exercised through the frozen tauri-specta IPC contract, integration tests, and the exported report/CSV/JSON/Markdown files; the only front end that has ever run is the v0.1.0 throwaway JSON-dump UI, which is explicitly disposable and is deleted when v0.4.0 lands [S: v0.1.0 spec.md Scope item 8].
-- **No executor exists yet.** Nothing described in Section 5.2 (the v0.5.0 safety invariants) has been built or tested against real code; it is a specified contract, not yet a proven one. The dry-run report is real and proven; an actual file move is not yet possible in this codebase.
+- **Tags are not cut for any release.** v0.1.0 through v0.5.0 are built and merged; all tags await jp per D-10 (human-only action). [S: program-roadmap.md Section 8].
+- **The v0.3.0 non-engineer read test (gate G-6) is a pending human item.** The real 1,817-change HTML report has been delivered and render-verified by the orchestrator, but jp's own confirmation read is recorded as pending and is explicitly non-blocking for merge, though the tag should follow it [S: v0.3.0 spec.md gate G-6].
+- **The GUI shipped in v0.4.0 (seeing).** The five product surfaces (library home, plan review, settings, first-run, and apply + activity) replaced the throwaway tracer UI from v0.1.0 [S: v0.4.0 spec.md AC checklist].
+- **The executor shipped in v0.5.0 (acting).** Everything in Section 5.2 is built and gate-walked: executor, journal-before-act, undo manifest, rollback, post-apply verification, and set-aside are all proven on fixtures and disposable copies [S: v0.5.0 spec.md build evidence; gate walked 2026-07-19].
 - **mp4 audio-vs-video ambiguity is an accepted, documented gap.** `.mp4` types as `video` unconditionally because extension alone cannot distinguish an audio-in-mp4 audiobook from an actual video file; container-level inspection was considered and explicitly deferred, not overlooked [S: v0.1.0 spec.md, F-103 requirement].
 - **Duplicate resolution is candidate-only.** F-701 (built) finds 406 groups / 856 copy files by exact basename+size match, but no content hash has ever been computed; the true duplicate volume in bytes is unknown until F-702 (hash verification, v0.6.0) runs. No duplicate group is auto-resolved today or planned to be without either a verified hash or an explicit user override.
-- **F-507 (pack provenance) is half-built.** Plan-time capture and the provenance report both work and are proven on the real library; carrying that provenance through the journal and manifest, and re-emitting the report after an apply, is specified for v0.5.0 and has not been built.
-- **Snapshot retention is reserved, not enforced.** The `settings.snapshot_retention_n` column exists with a default of 10, but the sweep that actually deletes old scans to bound database growth is tied to the F-803 settings surface, which is v0.4.0 and not yet built [S: v0.1.0 spec.md Open Question OQ-2].
-- **Reports-folder default path is provisional.** v0.3.0 writes exports beside `%LOCALAPPDATA%\AudiobookOrganizer\` by default; the real, user-configurable default is finalized when F-803 (app settings) lands in v0.4.0 [S: v0.3.0 spec.md Open Questions].
+- **F-507 (pack provenance) is fully built.** Plan-time capture and the provenance report (v0.3.0), plus journal/manifest carry-through and post-apply report re-emit (v0.5.0 AC-12), are both built and gate-walked.
+- **Snapshot retention.** The `settings.snapshot_retention_n` column exists with a default of 10; the F-803 settings surface shipped in v0.4.0 and the sweep that bounds database growth is wired to it [S: v0.1.0 spec.md Open Question OQ-2].
+- **Reports-folder path.** The user-configurable default was finalized in v0.4.0 with F-803 (app settings) [S: v0.3.0 spec.md Open Questions; v0.4.0 spec.md].
 - **Drift-tolerance between baseline and live scans has no fixed numeric band.** The v0.2.0 gate deliberately reports library drift rather than judging it (a library changes between measurements), and the exact tolerance for when drift should be treated as a defect rather than expected change was left as a jp gate-review item (OQ-2) rather than hard-coded [S: v0.2.0 spec.md Open Questions; baseline-delta-2026-07-04.md].
 - **Parser coverage is monitored, not locked.** The pattern set stayed open at 95.2% fixture coverage rather than freezing at the 90% threshold; if real-library coverage ever regresses below that threshold, the pre-agreed descope action is to freeze the pattern set and route the remainder to `manual-review` by design, not silently guess [S: program-roadmap.md Section 5, descope triggers].

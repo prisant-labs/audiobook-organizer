@@ -30,7 +30,7 @@ sources:
 
 ## Task Summary
 
-- Status: review (pending jp approval of the planning suite)
+- Status: built; gate walked; G-1 human review loop pending jp; tag awaiting jp per D-10.
 - Release theme: the first real screens. v0.4.0 (seeing) turns the headless engine of v0.3.0 (planning) into the five product surfaces a human touches, rendering data the engine already produces and adding zero new engine capability.
 - Load-bearing outcome: jp performs a full review-and-approve loop in the app against a real-library plan, then exports.
 - AC total: 41 across nine features. All unchecked at review time.

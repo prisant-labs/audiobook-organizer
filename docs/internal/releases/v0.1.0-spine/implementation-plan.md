@@ -31,7 +31,7 @@ sources:
 
 ## Task Summary
 
-- Status: review (pending jp approval).
+- Status: complete (all 8 phases done; gate walked 2026-07-04; tag awaiting jp per D-10).
 - Goal: scaffold the workspace, land the first migration, prove F-101/F-103/F-105/F-1003 through a tracer slice, and turn CI green on Windows.
 - Phases: 8 (Phase 0 pre-flight through Phase 7 release gate).
 - AC coverage: complete (every AC-1..AC-24 mapped to at least one phase).
@@ -41,14 +41,14 @@ sources:
 
 | Phase | Goal | Fulfills AC | Owner | Status |
 |---|---|---|---|---|
-| P0 | Pre-flight: OSS-landscape check + branch | AC-1 | LLM (Sonnet) + Fable review | Not started |
-| P1 | Workspace scaffold + core purity + hygiene | AC-2, AC-3, AC-22, AC-23, AC-24 | LLM (Sonnet) | Not started |
-| P2 | DB: migration, WAL, corrupt-DB recovery | AC-5, AC-6, AC-7, AC-8 | LLM (Opus) | Not started |
-| P3 | F-101 scanner + F-103 typing + F-105 persistence | AC-9, AC-10, AC-11, AC-12, AC-13 | LLM (Opus) | Not started |
-| P4 | Logging, IPC types, error taxonomy | AC-4, AC-14 | LLM (Opus) | Not started |
-| P5 | tauri-specta seam + capability baseline | AC-15, AC-16, AC-17, AC-18 | LLM (Opus) + Fable gate | Not started |
-| P6 | Tracer slice UI (disposable) | AC-19 | LLM (Sonnet) | Not started |
-| P7 | CI live + green + release gate | AC-20, AC-21, plus gate G-1..G-10 | LLM (Sonnet) + Fable review | Not started |
+| P0 | Pre-flight: OSS-landscape check + branch | AC-1 | LLM (Sonnet) + Fable review | Done |
+| P1 | Workspace scaffold + core purity + hygiene | AC-2, AC-3, AC-22, AC-23, AC-24 | LLM (Sonnet) | Done |
+| P2 | DB: migration, WAL, corrupt-DB recovery | AC-5, AC-6, AC-7, AC-8 | LLM (Opus) | Done |
+| P3 | F-101 scanner + F-103 typing + F-105 persistence | AC-9, AC-10, AC-11, AC-12, AC-13 | LLM (Opus) | Done |
+| P4 | Logging, IPC types, error taxonomy | AC-4, AC-14 | LLM (Opus) | Done |
+| P5 | tauri-specta seam + capability baseline | AC-15, AC-16, AC-17, AC-18 | LLM (Opus) + Fable gate | Done |
+| P6 | Tracer slice UI (disposable) | AC-19 | LLM (Sonnet) | Done |
+| P7 | CI live + green + release gate | AC-20, AC-21, plus gate G-1..G-10 | LLM (Sonnet) + Fable review | Done |
 
 ## Test-First Posture
 
@@ -186,13 +186,13 @@ Frontend Vitest component testing does not begin until v0.4.0 (seeing); at spine
 
 The spec's release gate, restated as the exit checklist:
 
-- [ ] All AC-1..AC-24 satisfied with evidence pointers (G-1).
-- [ ] Tracer slice works end to end on Windows (G-2).
-- [ ] CI matrix green; macOS green or recorded allow-fail (G-3, G-10).
-- [ ] Core-purity gate passes (G-4).
-- [ ] Bindings-drift gate passes; runner placement recorded per FD-24 (G-5).
-- [ ] Migration applies from empty and existing DB (G-6).
-- [ ] FD-15 OSS-landscape check recorded before scaffold started (G-7).
-- [ ] FD-19 extended-length path posture proven in the scanner (G-8).
-- [ ] FD-25 hygiene set present; FD-29 capability baseline in place (G-9).
-- [ ] Fable has reviewed and signed the release gate.
+- [x] All AC-1..AC-24 satisfied with evidence pointers (G-1).
+- [x] Tracer slice works end to end on Windows (G-2).
+- [x] CI matrix green; macOS green or recorded allow-fail (G-3, G-10).
+- [x] Core-purity gate passes (G-4).
+- [x] Bindings-drift gate passes; runner placement recorded per FD-24 (G-5).
+- [x] Migration applies from empty and existing DB (G-6).
+- [x] FD-15 OSS-landscape check recorded before scaffold started (G-7).
+- [x] FD-19 extended-length path posture proven in the scanner (G-8).
+- [x] FD-25 hygiene set present; FD-29 capability baseline in place (G-9).
+- [x] Fable has reviewed and signed the release gate.

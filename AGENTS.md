@@ -9,13 +9,13 @@ This file follows the agents.md open standard: agent-neutral instructions for an
 - `PRODUCT.md`: the design contract (users, purpose, brand personality, design principles).
 - `EXECUTION.md`: governance, branching, CI shape, human-only approval gates.
 - `docs/internal/`: tracked project documentation, including `product-requirements.md`, `architecture.md`, `program-roadmap.md`, `decisions/` (MADR v4 ADRs), and `releases/<version>-<codename>/` (one folder per release, each with `spec.md` and `implementation-plan.md`).
-- `crates/` and `src/` (planned, not yet created): the Rust engine (`abo-core`) and the React/TypeScript frontend, once the v0.1.0 spine release lands.
+- `crates/abo-core/`: the Rust engine crate (Tauri-free; zero tauri dependency in abo-core). `src-tauri/`: the Tauri v2 shell (commands, events, capability config). `src/`: the React/TypeScript frontend (Vite, shadcn/ui).
 - `_local/`: reference-only local scratch (prototypes, discovery notes, prior-work rescues). Gitignored, never committed, read-only input for planning.
 - `_local/_agent-context/session-log/`: chronological session logs from all agents. Gitignored with the rest of `_local/` (session logs carry personal context and stay out of the repo; a root-level `_agent-context/` gitignore guard catches tooling that writes to the old path).
 
 ## Build and test commands
 
-Pre-scaffold: no build, run, or test commands exist yet. The engine and app are built starting at v0.1.0; see `docs/internal/releases/v0.1.0-spine/` (once created) for the concrete toolchain and commands. Stack: Tauri v2, Rust, React, TypeScript, shadcn/ui, SQLite via sqlx, tauri-specta.
+Stack: Tauri v2, Rust, React, TypeScript, shadcn/ui, SQLite via sqlx, tauri-specta. Releases v0.1.0 through v0.5.0 are built and merged to main. Common commands: `cargo build --workspace` (build engine and shell), `cargo test --workspace` (run all tests), `pnpm tauri dev` (dev server + hot-reload on Windows), `pnpm tauri build` (release installer). See `docs/internal/releases/` for per-release details.
 
 ## Conventions
 

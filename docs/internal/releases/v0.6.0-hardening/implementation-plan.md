@@ -29,7 +29,7 @@ executor-model-guidance: >
 
 ## Task Summary
 
-- Status: review (pending jp approval of the planning suite).
+- Status: planned (suite approved 2026-07-03 per D-10; not yet started).
 - Implements: `docs/internal/releases/v0.6.0-hardening/spec.md` (41 AC).
 - Depends on: v0.5.0-acting (executor, journal, rollback, quarantine, dry-run harness, apply surface).
 - Phase count: 8. AC coverage: complete.
