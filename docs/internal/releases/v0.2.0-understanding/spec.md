@@ -22,7 +22,7 @@ sources:
 
 ## Task Summary
 
-Status: review (pending jp approval of the planning suite).
+Status: built; gate walked 2026-07-04; tag awaiting jp per D-10.
 Release theme: the tool can look at a real library and tell the truth about it, headlessly, on hardened fixtures first and the real 297 GB tree second.
 Scope: fixture harness (built first), F-101 (live tree scanner) hardening, F-102 (WizTree CSV import), F-104 (job progress + cancel), the classification engine (F-201, F-202, F-203), the full parse stack (F-301, F-302, F-303, F-304), and F-1001 (activity log).
 Open questions: 2 (see Open Questions).

@@ -25,7 +25,7 @@ sources:
 
 Package the hardened engine and GUI into something a person who has never seen the project can install and trust. This release produces an unsigned Windows installer from the release workflow, a plain-language README and user guide covering the whole pipeline and the safety model, first-run polish verified on a machine that never saw the app, and a proven end-to-end release ceremony. It also reaches the D-13 (license and public-flip) decision point, which this spec presents as a human-only gate and does not decide. Nothing here adds engine capability; v0.9.0 proves that everything already built survives contact with a clean machine and a non-engineer.
 
-Status: review (pending jp approval of the suite). AC checklist:
+Status: planned (suite approved 2026-07-03 per D-10; not yet started). AC checklist:
 
 - [ ] AC-1 installer artifact builds from release.yml (NSIS + MSI, unsigned)
 - [ ] AC-2 draft GitHub Release created with artifacts + SHA256SUMS; publish stays human-only

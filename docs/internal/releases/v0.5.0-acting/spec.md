@@ -23,7 +23,7 @@ sources:
 
 ## Task Summary
 
-Status: review (pending jp approval of the planning suite).
+Status: built and merged to main 2026-07-20 (PRs #23, #30, #27, #28, #29); AC-17 ratification + tag awaiting jp per D-10.
 Release theme: the dangerous release. This is the first release that changes files on disk. It lands the executor, the journal, undo, post-apply verification, and quarantine, all proven exclusively against fixtures and disposable copies. No Real apply against the actual library happens in this release regardless of how green the suite is (D-10 human-only gate).
 
 Feature checklist (AC live per feature below):
@@ -175,7 +175,7 @@ Quarantine provenance (AC-21, AC-22). A non-preferred m4b loser from a parallel-
 
 ## Build evidence (2026-07-17 to 2026-07-19)
 
-Built across PRs #23 (P1+P2), #24 (P3+P4), #27 (P5+P6), #28 (P7+P8), branch chain main..feat/v0.5.0-apply (32 commits, d016bbf head). Every phase passed an Opus adversarial task review (fix waves re-reviewed to Approved); a final whole-branch review verified the six cross-phase seams, mechanical sweeps (trailers 32/32, zero dashes, capabilities exactly 7, core purity, plan_ops/journal immutability), and returned READY. Fine-grained evidence trail: `.superpowers/sdd/progress.md`.
+Built across PRs #23 (P1+P2), #30 (P3+P4, recreated from auto-closed #24), #27 (P5+P6), #28 (P7+P8), branch chain main..feat/v0.5.0-apply (32 commits, d016bbf head). Every phase passed an Opus adversarial task review (fix waves re-reviewed to Approved); a final whole-branch review verified the six cross-phase seams, mechanical sweeps (trailers 32/32, zero dashes, capabilities exactly 7, core purity, plan_ops/journal immutability), and returned READY. Fine-grained evidence trail: `.superpowers/sdd/progress.md`.
 
 - F-607: Vfs seam with uniform cross-backend error contract; AC-3 equality proven RealFs-vs-MemFs with distinct job ids.
 - F-601: never-overwrite enforced at the OS primitive (MoveFileExW without replace; create_new copies); adversarial mid-apply target test; single-writer = flag + BEGIN IMMEDIATE row + single-instance plugin + startup reclaim.

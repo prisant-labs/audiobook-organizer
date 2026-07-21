@@ -28,7 +28,7 @@ phase-count: 8
 
 ## Task Summary
 
-- Status: review. Plan decomposes v0.3.0 spec (AC-1..AC-33) into 8 phases.
+- Status: complete (all 8 phases done; gate walked 2026-07-05; tag awaiting jp per D-10). Plan decomposes v0.3.0 spec (AC-1..AC-33) into 8 phases.
 - Test-first: each phase names the tests it adds (per docs/internal/test-strategy.md layers) before the implementation tasks that make them pass.
 - Signature deliverables: deterministic validated plan over the real snapshot; self-contained HTML dry-run report a non-engineer can read.
 - Model tiering per FD-30 in the frontmatter and per task below.
@@ -37,14 +37,14 @@ phase-count: 8
 
 | Phase | Goal | Fulfills AC | Owner | Status |
 |---|---|---|---|---|
-| P1 | Data model + migration (plans, plan_ops, rulesets, duplicate_*, reports) | AC-16, AC-29, AC-31 | LLM (Sonnet) | Not started |
-| P2 | Naming templates + presets | AC-1, AC-2, AC-3 | LLM (Sonnet) | Not started |
-| P3 | Structure policies + ruleset model | AC-4, AC-5, AC-6, AC-7, AC-29, AC-30 | LLM (Opus) | Not started |
-| P4 | Plan builder + campaign groups + determinism | AC-8, AC-9, AC-10, AC-11 | LLM (Opus) | Not started |
-| P5 | Plan validation + hostile fixture | AC-12, AC-13, AC-14, AC-15, AC-17 | LLM (Opus) | Not started |
-| P6 | Provenance capture, disc + parallel-format, duplicates | AC-7, AC-24, AC-27, AC-28, AC-32, AC-33 | LLM (Opus) | Not started |
-| P7 | Exports (CSV/JSON/Markdown) + reports folder | AC-18, AC-19, AC-31 | LLM (Sonnet) | Not started |
-| P8 | Dry-run HTML report + provenance section + gates | AC-20..AC-26 | LLM (Opus) + Fable review | Not started |
+| P1 | Data model + migration (plans, plan_ops, rulesets, duplicate_*, reports) | AC-16, AC-29, AC-31 | LLM (Sonnet) | Done |
+| P2 | Naming templates + presets | AC-1, AC-2, AC-3 | LLM (Sonnet) | Done |
+| P3 | Structure policies + ruleset model | AC-4, AC-5, AC-6, AC-7, AC-29, AC-30 | LLM (Opus) | Done |
+| P4 | Plan builder + campaign groups + determinism | AC-8, AC-9, AC-10, AC-11 | LLM (Opus) | Done |
+| P5 | Plan validation + hostile fixture | AC-12, AC-13, AC-14, AC-15, AC-17 | LLM (Opus) | Done |
+| P6 | Provenance capture, disc + parallel-format, duplicates | AC-7, AC-24, AC-27, AC-28, AC-32, AC-33 | LLM (Opus) | Done |
+| P7 | Exports (CSV/JSON/Markdown) + reports folder | AC-18, AC-19, AC-31 | LLM (Sonnet) | Done |
+| P8 | Dry-run HTML report + provenance section + gates | AC-20..AC-26 | LLM (Opus) + Fable review | Done |
 
 ## Phase 1: Data model and migration
 

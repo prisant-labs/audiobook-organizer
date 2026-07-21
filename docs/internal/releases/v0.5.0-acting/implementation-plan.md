@@ -29,7 +29,7 @@ sources:
 
 ## Task Summary
 
-Status: review (pending jp approval of the planning suite).
+Status: complete (all 8 phases done; gate walked 2026-07-19; merged to main 2026-07-20 via PRs #23, #30, #27, #28, #29; AC-17 ratification + tag awaiting jp per D-10).
 This plan decomposes v0.5.0 (acting) into eight phases. The order is deliberate and safety-first: the Vfs seam and MemFs land before any executor logic, so every executor behavior is written and tested against memory before it can ever touch a real disk. The rollback round-trip (the release's signature gate) and never-overwrite adversarial tests are written as failing tests before the code that makes them pass, where practical. The hard rule from D-10 (human-only Real apply) holds throughout: nothing in this plan runs a Real apply against the actual library at E:\Books - Audio; agent-safe execution is fixtures and disposable copies only.
 
 Phase status is tracked in the Completion Status table below. AC status lives in the spec.
@@ -220,7 +220,7 @@ Phase status is tracked in the Completion Status table below. AC status lives in
 The release gate, restated as the exit checklist (all must be green before v0.5.0 tags; tag cut is human-only):
 
 - [x] All eight phases show Done in the Completion Status table.
-- [ ] Rollback round-trip signature test green in CI on Windows and running on every merge (AC-15).
+- [x] Rollback round-trip signature test green in CI on Windows and running on every merge (AC-15). Evidence: green on the 2026-07-20 main-push merge run; the round-trip is part of cargo test --workspace, a required check per EXECUTION.md Sections 6-7.
 - [x] Never-overwrite adversarial suite green; journal consistent after every halt path (AC-7).
 - [x] Dry-run and Real produce identical journals modulo documented fields (AC-3).
 - [ ] Manual round-trip recorded on a COPY of Top 100 Sci-Fi subset and on a COPY of the gnarliest Hugo pack, each byte-identical after rollback (AC-17).

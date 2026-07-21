@@ -23,7 +23,7 @@ ac-count: 41
 
 ## Task Summary
 
-- Status: review (pending jp approval of the planning suite).
+- Status: planned (suite approved 2026-07-03 per D-10; not yet started).
 - Release theme: survive the real world - crashes, cancellations, duplicate resolution, ruleset portability, and the full-library review surface.
 - Depends on: v0.5.0-acting (executor, journal + undo manifest, rollback, quarantine, dry-run harness, apply + activity surface).
 - Features in scope: F-606, F-702, F-703, F-704, F-905, F-802, F-501 (redefined), plus long-path battle testing.

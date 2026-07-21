@@ -12,7 +12,9 @@ Every campaign follows the same three steps, in the same order, every time:
 
 ## Status
 
-Planning complete, pre-v0.1.0. This repository currently holds the product contract, the decision record, and the release-by-release plan. No engine or GUI code has landed yet; the build starts at the v0.1.0 spine release. See the doc map below for what exists today.
+Active build. Releases v0.1.0 (spine) through v0.5.0 (acting) are implemented and merged to `main`: the live scanner and classifier, field parsing and name normalization, the plan builder and validator, the dry-run HTML report, the GUI review app, and the executor with journaled undo and post-apply verification. No version is tagged yet; tagging is a human-only gate. The next release is v0.6.0 (hardening).
+
+To run the app locally, see [RUNNING.md](RUNNING.md). For what currently needs a human decision, see the release ladder in `docs/internal/program-roadmap.md`.
 
 ## The safety promise
 
@@ -44,13 +46,11 @@ Three tiers, all real: a technical owner who runs campaigns and wants full detai
 
 ## What exists today
 
-- `PRODUCT.md`, the design contract.
-- `EXECUTION.md`, governance and CI shape.
-- Ratified decision records in `docs/internal/decisions/`.
-- The PRD, architecture doc, and program roadmap in `docs/internal/`.
-- Per-release spec and implementation-plan folders in `docs/internal/releases/`, filled in as each release is planned in turn.
+- A working desktop app: scan, review (grouped cards plus the exportable HTML report), and a dry-run apply surface with journaled undo. Run it with [RUNNING.md](RUNNING.md).
+- The portable engine in `crates/abo-core` (classification, parsing, plan building and validation, the executor and journal), Tauri-free by contract.
+- The full planning suite: `PRODUCT.md` (design contract), `EXECUTION.md` (governance and CI), the PRD, architecture doc, and program roadmap in `docs/internal/`, ratified decision records in `docs/internal/decisions/`, and per-release spec and implementation-plan folders in `docs/internal/releases/`.
 
-Nothing here is a promise about a shipping date; it is the map the build follows once it starts.
+Releases v0.1.0 through v0.5.0 are merged to `main`; none is tagged yet. See `docs/internal/program-roadmap.md` for the release ladder and current status.
 
 ## Contributing
 

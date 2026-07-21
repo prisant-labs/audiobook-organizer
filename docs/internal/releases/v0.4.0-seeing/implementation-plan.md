@@ -34,7 +34,7 @@ sources:
 
 ## Task Summary
 
-- Status: review (pending jp approval of the planning suite).
+- Status: complete (all 8 phases done; gate walked; G-1 human review loop pending jp; tag awaiting jp per D-10).
 - Goal: build the five product surfaces on the frozen tauri-specta seam, delete the tracer-bullet UI, and pass the FD-21 accessibility and FD-11 zero-network gates.
 - Phase count: 8. AC coverage: complete (every spec AC mapped to at least one phase).
 - Test-first posture: the no-raw-invoke lint, token-contrast script, axe-core smoke, and Vitest approval-state tests are authored before or alongside the components they guard.
@@ -44,14 +44,14 @@ sources:
 
 | Phase | Goal | Fulfills AC | Tasks | Owner | Status |
 |---|---|---|---|---|---|
-| P1 | App shell, theme system, navigation | AC-1, AC-2, AC-3, AC-4, AC-5 | T-01..T-05 | LLM (Sonnet) | Not started |
-| P2 | First-run, root selection, capability re-allowance, settings | AC-28, AC-29, AC-30, AC-31, AC-34, AC-35 | T-06..T-10 | LLM (Opus for capability path) | Not started |
-| P3 | Cover extraction subset and fallback tiles | AC-21, AC-22, AC-23 | T-11..T-14 | LLM (Opus) | Not started |
-| P4 | Library home | AC-6, AC-7, AC-8, AC-9 | T-15..T-18 | LLM (Sonnet) | Not started |
-| P5 | Plan review surface (groups, filter, explainability) | AC-10..AC-20 | T-19..T-25 | LLM (Sonnet) | Not started |
-| P6 | Ruleset editor with live re-plan; scan Stop control | AC-32, AC-33, AC-36 | T-26..T-28 | LLM (either) | Not started |
-| P7 | Error, empty, loading states + error token pair | AC-15, AC-24, AC-25, AC-26, AC-27 | T-29..T-32 | LLM (Opus for AppError mapping) | Not started |
-| P8 | Copy/font/a11y gates; delete tracer UI; release gate | AC-37, AC-38, AC-39, AC-40, AC-41 | T-33..T-38 | Fable + LLM | Not started |
+| P1 | App shell, theme system, navigation | AC-1, AC-2, AC-3, AC-4, AC-5 | T-01..T-05 | LLM (Sonnet) | Done |
+| P2 | First-run, root selection, capability re-allowance, settings | AC-28, AC-29, AC-30, AC-31, AC-34, AC-35 | T-06..T-10 | LLM (Opus for capability path) | Done |
+| P3 | Cover extraction subset and fallback tiles | AC-21, AC-22, AC-23 | T-11..T-14 | LLM (Opus) | Done |
+| P4 | Library home | AC-6, AC-7, AC-8, AC-9 | T-15..T-18 | LLM (Sonnet) | Done |
+| P5 | Plan review surface (groups, filter, explainability) | AC-10..AC-20 | T-19..T-25 | LLM (Sonnet) | Done |
+| P6 | Ruleset editor with live re-plan; scan Stop control | AC-32, AC-33, AC-36 | T-26..T-28 | LLM (either) | Done |
+| P7 | Error, empty, loading states + error token pair | AC-15, AC-24, AC-25, AC-26, AC-27 | T-29..T-32 | LLM (Opus for AppError mapping) | Done |
+| P8 | Copy/font/a11y gates; delete tracer UI; release gate | AC-37, AC-38, AC-39, AC-40, AC-41 | T-33..T-38 | Fable + LLM | Done |
 
 ## Phase 1: App shell, theme system, navigation
 
