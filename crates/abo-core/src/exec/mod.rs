@@ -70,8 +70,8 @@ pub use manifest::{
     MANIFEST_JSON_BASENAME, MANIFEST_SCHEMA_VERSION,
 };
 pub use reconcile::{
-    classify_op_outcome, query_in_doubt, reconcile_interrupted_job, verify_outcome, OpOutcome,
-    ReconcileResult,
+    classify_op_outcome, query_in_doubt, reconcile_interrupted_job, reconcile_stranded_apply_jobs,
+    verify_outcome, OpOutcome, ReconcileResult,
 };
 pub use rollback::{
     is_undo_plan_ops, rollback_prepare, rollback_prepare_partial, ROLLBACK_RULE_ID,

@@ -39,6 +39,7 @@
 
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
 
 use crate::db::plans::PlanOpRow;
@@ -59,7 +60,8 @@ use super::{Journal, JournalEntry, JournalPhase, SqliteJournal};
 ///   say either way. Record a `failed` terminal row and offer rollback only - an
 ///   ambiguous op is NEVER auto-resumed, because resuming a half-applied op risks a
 ///   double move or a clobber.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
 pub enum OpOutcome {
     /// The operation provably completed on disk.
     Completed,
@@ -210,7 +212,7 @@ pub fn classify_op_outcome<V: Vfs>(vfs: &V, op: &PlanOpRow) -> OpOutcome {
 /// (F-606). The caller turns this into the resume-or-rollback choice the shell
 /// shows, or - when nothing was in doubt - marks the stranded job interrupted the
 /// ordinary way.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct ReconcileResult {
     /// The apply job this pass inspected.
     pub job_id: i64,
@@ -353,6 +355,41 @@ async fn count_done(pool: &SqlitePool, job_id: i64) -> Result<i64, AppError> {
 /// is always a fixed, quote-free literal from this module.
 fn reconcile_detail(reason: &str) -> String {
     format!(r#"{{"reconcile":"{reason}"}}"#)
+}
+
+/// Reconcile every stranded apply job at startup (F-606): a `running` apply
+/// `jobs` row a prior session left behind (killed mid-apply) has its single
+/// in-doubt op's real on-disk outcome verified and its journal repaired, and the
+/// first interruption worth surfacing is returned for the shell to offer
+/// resume-or-rollback. At most one apply is ever in flight (single-writer), so in
+/// practice this reconciles zero or one job. Reads the real filesystem through
+/// `vfs`; never mutates it.
+pub async fn reconcile_stranded_apply_jobs<V: Vfs>(
+    pool: &SqlitePool,
+    vfs: &V,
+    now: &str,
+) -> Result<Option<ReconcileResult>, AppError> {
+    let mut surfaced = None;
+    for job_id in stranded_apply_job_ids(pool).await? {
+        let result = reconcile_interrupted_job(pool, vfs, job_id, now).await?;
+        if result.interrupted && surfaced.is_none() {
+            surfaced = Some(result);
+        }
+    }
+    Ok(surfaced)
+}
+
+/// The ids of apply jobs still marked `running` - stranded by a prior session's
+/// kill (the single-writer invariant means there is normally zero or one).
+async fn stranded_apply_job_ids(pool: &SqlitePool) -> Result<Vec<i64>, AppError> {
+    let rows =
+        sqlx::query("SELECT id FROM jobs WHERE kind = 'apply' AND state = 'running' ORDER BY id")
+            .fetch_all(pool)
+            .await
+            .map_err(|e| AppError::ReconcileFailed {
+                detail: e.to_string(),
+            })?;
+    Ok(rows.into_iter().map(|r| r.get::<i64, _>("id")).collect())
 }
 
 #[cfg(test)]
@@ -887,5 +924,73 @@ mod tests {
         assert!(!result.resume_offered);
         assert_eq!(result.done_count, 1);
         pool.close().await;
+    }
+
+    // ---- reconcile_stranded_apply_jobs (startup sweep) ----
+
+    /// The startup sweep reconciles a stranded running apply job with an in-doubt
+    /// op and surfaces its interruption.
+    #[tokio::test]
+    async fn stranded_sweep_surfaces_an_interrupted_job() {
+        let (_dir, pool, job) = fresh_pool_and_job().await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        let j = SqliteJournal::new(pool.clone());
+        j.write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+        let fs = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
+
+        let surfaced = reconcile_stranded_apply_jobs(&pool, &fs, NOW)
+            .await
+            .unwrap();
+        let surfaced = surfaced.expect("an interrupted job is surfaced");
+        assert_eq!(surfaced.job_id, job);
+        assert_eq!(surfaced.outcome, Some(OpOutcome::Completed));
+        assert!(surfaced.resume_offered);
+        pool.close().await;
+    }
+
+    /// With no in-doubt op, the sweep surfaces nothing (a clean finish, or the
+    /// FD-33 lost tail left nothing to recover).
+    #[tokio::test]
+    async fn stranded_sweep_surfaces_nothing_when_no_op_is_in_doubt() {
+        let (_dir, pool, job) = fresh_pool_and_job().await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        let j = SqliteJournal::new(pool.clone());
+        j.write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+        j.write_done(&entry(job, 0, op_id, JournalPhase::Done))
+            .await
+            .unwrap();
+
+        let surfaced = reconcile_stranded_apply_jobs(&pool, &MemFs::new(), NOW)
+            .await
+            .unwrap();
+        assert!(surfaced.is_none());
+        pool.close().await;
+    }
+
+    /// `ReconcileResult` is an IPC type: it round-trips through serde and its nested
+    /// `OpOutcome` serializes kebab-case on the wire.
+    #[test]
+    fn reconcile_result_round_trips_through_serde() {
+        let r = ReconcileResult {
+            job_id: 7,
+            interrupted: true,
+            outcome: Some(OpOutcome::NotStarted),
+            in_doubt_op_id: Some(42),
+            resume_offered: true,
+            done_count: 3,
+        };
+        let json = serde_json::to_string(&r).expect("serialize");
+        assert!(
+            json.contains("not-started"),
+            "OpOutcome is kebab-case on the wire"
+        );
+        let back: ReconcileResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, r);
     }
 }

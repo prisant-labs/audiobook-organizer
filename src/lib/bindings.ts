@@ -142,6 +142,43 @@ export const commands = {
 	 */
 	dbStatus: () => __TAURI_INVOKE<DbStatus>("db_status"),
 	/**
+	 *  Report the interruption discovered at startup (F-606), if a prior session was
+	 *  killed mid-apply: the reconciled outcome of the single in-doubt operation and
+	 *  whether resume-or-rollback is offered. `None` on a clean start. Synchronous: it
+	 *  only reads the [`ReconcileResult`](abo_core::exec::ReconcileResult) captured
+	 *  once in [`crate::run`]'s setup, so it needs no async runtime. The shell polls
+	 *  this on mount to decide whether to show the resume-or-rollback surface.
+	 */
+	startupInterruption: () => __TAURI_INVOKE<{
+	/**  The apply job this pass inspected. */
+	job_id: number,
+	/**
+	 *  Whether an in-doubt op was found and its terminal row repaired. `false`
+	 *  means the job left nothing to recover: a clean finish, or the FD-33
+	 *  lost-WAL-tail case.
+	 */
+	interrupted: boolean,
+	/**
+	 *  The verified outcome of the single in-doubt op, when one was found. `None`
+	 *  when nothing was in doubt, or when more than one in-doubt row was present (a
+	 *  safety abort that never auto-repairs).
+	 */
+	outcome: OpOutcome | null,
+	/**  The in-doubt op's id, for the shell's "Show file details" disclosure. */
+	in_doubt_op_id: number | null,
+	/**
+	 *  Whether resume is a SAFE option to offer alongside rollback: `true` for a
+	 *  decisive `Completed`/`NotStarted`, `false` when the state is ambiguous or the
+	 *  journal held more than one in-doubt row (rollback only).
+	 */
+	resume_offered: boolean,
+	/**
+	 *  Count of ops with a committed `done` terminal row after reconciliation - the
+	 *  floor a resume continues from.
+	 */
+	done_count: number,
+} | null>("startup_interruption"),
+	/**
 	 *  Read the singleton application settings (F-803, AC-34).
 	 * 
 	 *  Thin wrapper over [`abo_core::db::settings::get_settings`]. The frontend calls
@@ -1327,6 +1364,28 @@ export type NamingPolicy = {
 };
 
 /**
+ *  The verified on-disk outcome of the single in-doubt operation, determined by
+ *  re-reading the filesystem after an interruption.
+ * 
+ *  The classification drives what the reconciler does next:
+ *  - [`Completed`](OpOutcome::Completed): the op provably took effect. Record a
+ *    `done` terminal row and resume from the NEXT op (AC-5).
+ *  - [`NotStarted`](OpOutcome::NotStarted): the op provably never took effect.
+ *    Record a `failed` terminal row and resume from THIS op (AC-4).
+ *  - [`Ambiguous`](OpOutcome::Ambiguous): the on-disk state does not decisively
+ *    say either way. Record a `failed` terminal row and offer rollback only - an
+ *    ambiguous op is NEVER auto-resumed, because resuming a half-applied op risks a
+ *    double move or a clobber.
+ */
+export type OpOutcome = 
+/**  The operation provably completed on disk. */
+"completed" | 
+/**  The operation provably never started. */
+"not-started" | 
+/**  The on-disk state is ambiguous; do not auto-resume. */
+"ambiguous";
+
+/**
  *  Where a pack/collection shell goes after its books are fully extracted
  *  (FD-01). The decision-gate default is [`PackShellDestination::Quarantine`].
  */
@@ -1566,6 +1625,42 @@ export type ProblemMetric = {
  *  the only signal (Section 8 accessibility).
  */
 export type ReasonKind = "warn" | "alert";
+
+/**
+ *  The result of the startup reconciliation pass over one interrupted apply job
+ *  (F-606). The caller turns this into the resume-or-rollback choice the shell
+ *  shows, or - when nothing was in doubt - marks the stranded job interrupted the
+ *  ordinary way.
+ */
+export type ReconcileResult = {
+	/**  The apply job this pass inspected. */
+	job_id: number,
+	/**
+	 *  Whether an in-doubt op was found and its terminal row repaired. `false`
+	 *  means the job left nothing to recover: a clean finish, or the FD-33
+	 *  lost-WAL-tail case.
+	 */
+	interrupted: boolean,
+	/**
+	 *  The verified outcome of the single in-doubt op, when one was found. `None`
+	 *  when nothing was in doubt, or when more than one in-doubt row was present (a
+	 *  safety abort that never auto-repairs).
+	 */
+	outcome: OpOutcome | null,
+	/**  The in-doubt op's id, for the shell's "Show file details" disclosure. */
+	in_doubt_op_id: number | null,
+	/**
+	 *  Whether resume is a SAFE option to offer alongside rollback: `true` for a
+	 *  decisive `Completed`/`NotStarted`, `false` when the state is ambiguous or the
+	 *  journal held more than one in-doubt row (rollback only).
+	 */
+	resume_offered: boolean,
+	/**
+	 *  Count of ops with a committed `done` terminal row after reconciliation - the
+	 *  floor a resume continues from.
+	 */
+	done_count: number,
+};
 
 /**
  *  The result of preparing an undo (v0.5.0 Phase 5, F-604), returned by the

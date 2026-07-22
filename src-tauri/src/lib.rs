@@ -104,6 +104,12 @@ pub struct AppState {
     /// `job_stop` look one up to control a running apply. A paused apply keeps its
     /// entry here AND its single-writer lock (a paused apply is still THE apply).
     pub apply_controls: commands::apply::ApplyControlRegistry,
+    /// The interruption discovered at startup (F-606), if a prior session was
+    /// killed mid-apply: the reconciled outcome of the single in-doubt operation
+    /// and whether resume or rollback is offered. `None` on a clean start. Captured
+    /// once in [`run`]'s setup (before `manage`), read by the `startup_interruption`
+    /// command the shell polls on mount.
+    pub startup_interruption: Option<abo_core::exec::ReconcileResult>,
 }
 
 /// Build the `tauri-specta` [`Builder`](tauri_specta::Builder) for the shell.
@@ -129,6 +135,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::cover_get,
             commands::classify_overview,
             commands::db_status,
+            commands::startup_interruption,
             commands::settings::settings_get,
             commands::settings::settings_set,
             commands::plan::plan_generate,
@@ -268,6 +275,32 @@ pub fn run() {
                 log::info!("swept {swept} stale cover cache file(s) at startup");
             }
 
+            // Interruption safety (F-606): before reclaiming a stranded apply lock,
+            // reconcile its journal - verify the real on-disk outcome of the single
+            // in-doubt operation and write the terminal row the kill prevented - and
+            // capture the interruption so the shell can offer resume-or-rollback
+            // (the `startup_interruption` command reads it on mount). Reads the real
+            // filesystem (RealFs) but never mutates it. Best-effort: a failure only
+            // means no resume offer this launch; the reclaim below still runs.
+            let startup_interruption = tauri::async_runtime::block_on(async {
+                abo_core::exec::reconcile_stranded_apply_jobs(
+                    &pool,
+                    &abo_core::exec::RealFs::new(),
+                    &abo_core::scan::walk::now_iso8601_utc(),
+                )
+                .await
+            })
+            .unwrap_or_else(|e| {
+                log::warn!("could not reconcile a stranded apply at startup: {e}");
+                None
+            });
+            if let Some(interruption) = &startup_interruption {
+                log::warn!(
+                    "a prior tidy-up (job {}) was interrupted; offering resume-or-rollback",
+                    interruption.job_id
+                );
+            }
+
             // Crash-detected release of the single-writer apply lock (F-601, AC-8):
             // a `running` apply `jobs` row a previous session left behind (killed
             // mid-apply) is reclaimed here, so it never blocks a fresh apply. Only
@@ -295,6 +328,7 @@ pub fn run() {
                 library_root: Arc::new(Mutex::new(library_root)),
                 apply_in_flight: Arc::new(AtomicBool::new(false)),
                 apply_controls: Arc::new(Mutex::new(HashMap::new())),
+                startup_interruption,
             });
             Ok(())
         })
