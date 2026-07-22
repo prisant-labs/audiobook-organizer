@@ -41,6 +41,7 @@ use std::path::Path;
 
 use sqlx::{Row, SqlitePool};
 
+use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
 
 use super::vfs::Vfs;
@@ -157,10 +158,59 @@ pub fn verify_outcome<V: Vfs>(
     }
 }
 
+/// Classify the on-disk outcome of an in-doubt op of ANY kind, dispatching on
+/// `op.kind` exactly as the executor's own dispatch does, so the reconciler asks
+/// precisely the question the executor would have answered next:
+/// - `no-op` changes nothing on disk, so it is trivially
+///   [`Completed`](OpOutcome::Completed);
+/// - `mkdir` creates `op.target_path` (idempotent `create_dir_all`): present is
+///   `Completed`, absent is `NotStarted` - never ambiguous, because a directory
+///   either exists or does not and re-running the create is safe either way;
+/// - `rmdir-empty` removes `op.source_path`: absent is `Completed`, present is
+///   `NotStarted`;
+/// - `move`/`rename`/`quarantine` is a source-to-target move, delegated to
+///   [`verify_outcome`] with `expected_size = None` for a same-volume rename or
+///   `Some(op.byte_size)` for a cross-volume copy - the same split
+///   [`crate::paths::same_volume`] drives inside the executor;
+/// - any other kind cannot be reconciled and is
+///   [`Ambiguous`](OpOutcome::Ambiguous): offer rollback, never auto-resume a kind
+///   the reconciler does not model.
+pub fn classify_op_outcome<V: Vfs>(vfs: &V, op: &PlanOpRow) -> OpOutcome {
+    match op.kind.as_str() {
+        "no-op" => OpOutcome::Completed,
+        "mkdir" => {
+            if vfs.exists(Path::new(&op.target_path)) {
+                OpOutcome::Completed
+            } else {
+                OpOutcome::NotStarted
+            }
+        }
+        "rmdir-empty" => {
+            if vfs.exists(Path::new(&op.source_path)) {
+                OpOutcome::NotStarted
+            } else {
+                OpOutcome::Completed
+            }
+        }
+        "move" | "rename" | "quarantine" => {
+            let source = Path::new(&op.source_path);
+            let target = Path::new(&op.target_path);
+            let expected_size = if crate::paths::same_volume(source, target) {
+                None
+            } else {
+                Some(op.byte_size as u64)
+            };
+            verify_outcome(vfs, source, target, expected_size)
+        }
+        _ => OpOutcome::Ambiguous,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::open_db;
+    use crate::db::plans::PlanOpRow;
     use crate::exec::{Journal, JournalEntry, JournalPhase, MemFs, SeedEntry, SqliteJournal};
     use std::path::Path;
     use tempfile::TempDir;
@@ -202,6 +252,93 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
         )
+    }
+
+    /// A minimal in-memory `PlanOpRow` for classifier tests: only the fields
+    /// `classify_op_outcome` reads (`kind`, `source_path`, `target_path`,
+    /// `byte_size`) vary; the rest take valid placeholder values.
+    fn plan_op(kind: &str, source: &str, target: &str, byte_size: i64) -> PlanOpRow {
+        PlanOpRow {
+            id: 1,
+            plan_id: 1,
+            seq: 0,
+            op_group: "loose".to_string(),
+            kind: kind.to_string(),
+            kind_reason: None,
+            source_path: source.to_string(),
+            target_path: target.to_string(),
+            rationale: String::new(),
+            rule_id: String::new(),
+            confidence: "high".to_string(),
+            byte_size,
+            validation_state: "valid".to_string(),
+            validation_reason: None,
+            provenance_json: None,
+            approval: "approved".to_string(),
+            approval_updated_at: None,
+        }
+    }
+
+    // ---- classify_op_outcome, per op kind ----
+
+    #[test]
+    fn classify_no_op_is_always_completed() {
+        let fs = MemFs::new();
+        assert_eq!(
+            classify_op_outcome(&fs, &plan_op("no-op", "", "", 0)),
+            OpOutcome::Completed
+        );
+    }
+
+    #[test]
+    fn classify_mkdir_present_is_completed_absent_is_not_started() {
+        let op = plan_op("mkdir", "", r"E:\lib\Author\Title", 0);
+        let present = mem(&[(r"E:\lib\Author\Title", 0, true)]);
+        assert_eq!(classify_op_outcome(&present, &op), OpOutcome::Completed);
+        assert_eq!(
+            classify_op_outcome(&MemFs::new(), &op),
+            OpOutcome::NotStarted
+        );
+    }
+
+    #[test]
+    fn classify_rmdir_empty_gone_is_completed_present_is_not_started() {
+        let op = plan_op("rmdir-empty", r"E:\lib\Empty", "", 0);
+        assert_eq!(
+            classify_op_outcome(&MemFs::new(), &op),
+            OpOutcome::Completed
+        );
+        let present = mem(&[(r"E:\lib\Empty", 0, true)]);
+        assert_eq!(classify_op_outcome(&present, &op), OpOutcome::NotStarted);
+    }
+
+    #[test]
+    fn classify_same_volume_move_uses_existence() {
+        // Same drive letter routes to rename semantics (existence is decisive).
+        let op = plan_op("move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100);
+        let landed = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
+        assert_eq!(classify_op_outcome(&landed, &op), OpOutcome::Completed);
+        let not_yet = mem(&[(r"E:\lib\Old\B.m4b", 100, false)]);
+        assert_eq!(classify_op_outcome(&not_yet, &op), OpOutcome::NotStarted);
+    }
+
+    #[test]
+    fn classify_cross_volume_move_uses_size() {
+        // Different drive letters route to copy semantics (target must be full size).
+        let op = plan_op("quarantine", r"E:\lib\B.m4b", r"F:\aside\B.m4b", 500);
+        let full = mem(&[(r"F:\aside\B.m4b", 500, false)]);
+        assert_eq!(classify_op_outcome(&full, &op), OpOutcome::Completed);
+        let short = mem(&[(r"F:\aside\B.m4b", 200, false)]);
+        assert_eq!(classify_op_outcome(&short, &op), OpOutcome::Ambiguous);
+    }
+
+    #[test]
+    fn classify_unknown_kind_is_ambiguous() {
+        let op = plan_op("teleport", r"E:\a", r"E:\b", 0);
+        assert_eq!(
+            classify_op_outcome(&MemFs::new(), &op),
+            OpOutcome::Ambiguous
+        );
     }
 
     // ---- query_in_doubt (AC-1) ----
