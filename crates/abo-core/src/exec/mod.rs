@@ -49,6 +49,7 @@
 pub mod journal;
 pub mod lock;
 pub mod manifest;
+pub mod reconcile;
 pub mod rollback;
 pub mod verify;
 pub mod vfs;
@@ -68,6 +69,7 @@ pub use manifest::{
     build_manifest, get_manifest_row, Manifest, ManifestError, ManifestOp, ManifestRow, ReverseOp,
     MANIFEST_JSON_BASENAME, MANIFEST_SCHEMA_VERSION,
 };
+pub use reconcile::{query_in_doubt, verify_outcome, OpOutcome};
 pub use rollback::{
     is_undo_plan_ops, rollback_prepare, rollback_prepare_partial, ROLLBACK_RULE_ID,
 };

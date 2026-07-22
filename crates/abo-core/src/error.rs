@@ -342,6 +342,16 @@ pub enum AppError {
     /// nothing to resume.
     #[error("there is no paused tidy-up to resume")]
     NothingToResume,
+
+    // ---- Interruption safety family (v0.6.0 Phase 1: F-606 reconcile) ----
+    /// The startup reconciliation pass (F-606) could not read the journal to
+    /// check whether the last tidy-up was interrupted mid-change (a SQLite error
+    /// on the journal read). `detail` is the developer-facing cause. Distinct
+    /// from [`JournalWriteFailed`](AppError::JournalWriteFailed), the write-side
+    /// journal-before-act hard stop: this is a read failure while recovering from
+    /// an interruption at startup.
+    #[error("could not check whether the last tidy-up was interrupted: {detail}")]
+    ReconcileFailed { detail: String },
 }
 
 impl AppError {
@@ -398,6 +408,8 @@ impl AppError {
             // Apply control family
             AppError::NothingToPause => "nothing-to-pause",
             AppError::NothingToResume => "nothing-to-resume",
+            // Interruption safety family
+            AppError::ReconcileFailed { .. } => "reconcile-failed",
         }
     }
 
@@ -591,6 +603,13 @@ impl AppError {
                 "This tidy-up is not paused, so there is nothing to resume. If a tidy-up is \
                  paused, use Resume to continue it between books."
             }
+            // Interruption safety family
+            AppError::ReconcileFailed { .. } => {
+                "The app could not check whether the last tidy-up was interrupted. Restart the \
+                 app and try again. If this keeps happening, the disk may be full or the app \
+                 data folder may be on a synced location (OneDrive); free space or move the app \
+                 data out of the synced folder."
+            }
         }
     }
 }
@@ -699,6 +718,9 @@ mod tests {
             AppError::TidyingBlocked,
             AppError::NothingToPause,
             AppError::NothingToResume,
+            AppError::ReconcileFailed {
+                detail: "database is locked".into(),
+            },
         ]
     }
 
