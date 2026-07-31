@@ -131,7 +131,7 @@ lofty = "=0.24.0"
 # limit. Windows-only (POSIX has no MAX_PATH), pulls only windows-sys, no tauri
 # and no network, so both gates stay green.
 [target.'cfg(windows)'.dependencies]
-winreg = "0.52"
+winreg = "0.55"
 
 [features]
 # v0.2.0 Phase 1: gates the `fixtures` module (see src/fixtures/mod.rs doc
@@ -201,7 +201,7 @@ sqlx = { workspace = true, features = ["runtime-tokio", "sqlite"] }
 # insta bump cannot churn the committed snapshots. `default-features = false`
 # drops insta's optional format features (yaml/json/ron) that would pull extra
 # crates; the goldens use the plain-string `assert_snapshot!` only.
-insta = { version = "=1.43.2", default-features = false }
+insta = { version = "=1.48.0", default-features = false }
 
 # v0.2.0 Phase 7 (real-library baseline-delta report, tests/real_library_scan.rs):
 # the ignored real-library test computes DISCOVERY-COMPARABLE per-type noise
