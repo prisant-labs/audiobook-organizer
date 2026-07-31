@@ -17,6 +17,14 @@ updates:
     groups:
       js-dependencies:
         patterns: ["*"]
+    # typescript-eslint 8.x refuses to run against TypeScript 7.x and errors out
+    # rather than degrading, so a TS 7 bump takes `pnpm lint` down entirely
+    # (upstream tracking: typescript-eslint issue 10940). Hold TypeScript on 6.x
+    # until typescript-eslint ships support; minor and patch updates still flow.
+    # REMOVE this ignore once typescript-eslint supports TS >= 7.1.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
