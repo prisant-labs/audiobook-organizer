@@ -13,6 +13,7 @@
 //! v0.4.0 Phase 2 adds the F-803 settings commands (see [`settings`]).
 
 pub mod apply;
+pub mod history;
 pub mod job;
 pub mod plan;
 pub mod rollback;
@@ -296,6 +297,20 @@ pub fn db_status(state: tauri::State<'_, AppState>) -> DbStatus {
             backup_path: Some(backup_path.display().to_string()),
         },
     }
+}
+
+/// Report the interruption discovered at startup (F-606), if a prior session was
+/// killed mid-apply: the reconciled outcome of the single in-doubt operation and
+/// whether resume-or-rollback is offered. `None` on a clean start. Synchronous: it
+/// only reads the [`ReconcileResult`](abo_core::exec::ReconcileResult) captured
+/// once in [`crate::run`]'s setup, so it needs no async runtime. The shell polls
+/// this on mount to decide whether to show the resume-or-rollback surface.
+#[tauri::command]
+#[specta::specta]
+pub fn startup_interruption(
+    state: tauri::State<'_, AppState>,
+) -> Option<abo_core::exec::ReconcileResult> {
+    state.startup_interruption.clone()
 }
 
 /// Drive a spawned job's `work` future to a terminal `jobs`-row state,

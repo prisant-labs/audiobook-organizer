@@ -26,6 +26,12 @@ export interface ReviewProps {
    * "not available yet" stub message rather than starting a real apply.
    */
   onStartApply?: (planId: number) => Promise<void>;
+  /**
+   * An already-prepared plan to review instead of generating one from `scanId`.
+   * Set when the History screen prepares an undo (v0.6.0): an undo IS a plan
+   * (D-09), so it reviews here rather than on a parallel surface.
+   */
+  openPlanId?: number | null;
 }
 
 // F-903 plan review surface (T-19..T-25, AC-10..AC-20): the two-pane review.
@@ -38,9 +44,9 @@ export interface ReviewProps {
 // (matching Library.tsx's precedent): the full F-908 states are Phase 7's
 // brief (T-29..T-32) and are meant to supersede these, not be duplicated by
 // them.
-export function Review({ scanId, onStartApply }: ReviewProps) {
+export function Review({ scanId, onStartApply, openPlanId = null }: ReviewProps) {
   const { status, review, ops, error, errorCode, regenerate, cancel, toggleGroup, excludeOp } =
-    usePlanReview(scanId);
+    usePlanReview(scanId, openPlanId);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [filter, setFilter] = useState<PlanFilterState>(DEFAULT_PLAN_FILTER);
 

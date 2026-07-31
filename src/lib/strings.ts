@@ -332,4 +332,45 @@ export const STRINGS = {
       action: "Build the plan again",
     },
   },
+
+  // History (v0.6.0): the record of past tidy-ups and the way back from each.
+  //
+  // Copy register notes. "Put these books back" rather than "roll back" or
+  // "prepare the inverse plan" (design-system Section 6; the vocabulary rule
+  // forbids the engineering terms on any surface a user reads). Practice runs
+  // are named "practice run", never "dry run", matching the rehearsal wording
+  // the tidy-up surface already uses.
+  history: {
+    heading: "History",
+    lede: "Every tidy-up you have run, and how to put things back.",
+    // Honest pre-first-run state: no tidy-up has ever been run.
+    emptyHeading: "No tidy-ups yet",
+    emptyBody:
+      "Once you tidy up your library, every run shows up here - with a way to put things back.",
+    // Row labels.
+    practiceRun: "Practice run",
+    realRun: "Tidy-up",
+    // A practice run changed nothing, so the count would be misleading.
+    practiceRunNote: "A practice run. Nothing was moved.",
+    changesMade: (n: number) => (n === 1 ? "1 book moved" : `${n} books moved`),
+    noChangesMade: "Nothing was moved.",
+    // The four undo offers, matching the engine's UndoOffer arms.
+    putEverythingBack: "Put these books back",
+    putRecentChangesBack: "Put the changes back",
+    nothingToPutBack: "Nothing to put back.",
+    needsALook: "This one needs a look before anything can be put back.",
+    needsALookDetail:
+      "The app could not tell for certain what happened to one of your books, so it will not move anything automatically. Open the tidy-up to see the details.",
+    // What pressing an undo does: it builds a plan you review first, exactly
+    // like a forward tidy-up. Nothing moves on the strength of this button.
+    undoIsReviewedFirst: "You will see exactly what moves back before anything happens.",
+    preparing: "Getting the undo ready...",
+    // States of a past run, in plain language.
+    state: {
+      done: "Finished",
+      failed: "Stopped early",
+      stopped: "Stopped by you",
+      running: "Interrupted",
+    },
+  },
 } as const;
