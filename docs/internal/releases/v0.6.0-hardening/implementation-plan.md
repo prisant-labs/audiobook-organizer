@@ -29,17 +29,32 @@ executor-model-guidance: >
 
 ## Task Summary
 
-- Status: planned (suite approved 2026-07-03 per D-10; not yet started).
+- Status: IN PROGRESS. P1 (interruption safety + resume) is substantially landed on
+  `feat/v0.6.0-p1-interruption-safety`; P1c (the resume-or-rollback surface) is parked
+  awaiting UI direction. P2-P8 not started.
 - Implements: `docs/internal/releases/v0.6.0-hardening/spec.md` (41 AC).
 - Depends on: v0.5.0-acting (executor, journal, rollback, quarantine, dry-run harness, apply surface).
-- Phase count: 8. AC coverage: complete.
-- Last updated: 2026-07-03.
+- Phase count: 9 (P0 added 2026-07-30, see below). AC coverage: complete.
+- Last updated: 2026-07-30.
+
+### Scope change 2026-07-30: History and undo pulled into this release
+
+A deep external audit (Codex 5.6, `_local/audit/2026-07-30_audit_codex-56.md`) found that
+v0.5.0's undo machinery was complete but UNREACHABLE: the History route was a placeholder
+and no surface called either rollback-preparation command. Recovering an interrupted
+journal correctly and then giving the user nowhere to act on it is not a finished safety
+story, so History and undo ship in this milestone rather than a later one. Tracked as P0
+below because it is a prerequisite for exposing real changes at all, not an extra feature.
+
+The same audit found two defects in the P1 work as first landed; both are fixed and
+recorded in the P1 status note.
 
 ## Completion Status
 
 | Phase | Goal | Fulfills AC | Owner | Status |
 |---|---|---|---|---|
-| P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | Not started |
+| P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | Landed, unmerged |
+| P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | P1a/P1b/P1d landed; P1c parked |
 | P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | Not started |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
@@ -48,7 +63,68 @@ executor-model-guidance: >
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
 | P8 | Long-path battle testing + release gate | AC-40, AC-41 | LLM (Opus) + Fable | Not started |
 
+**P1 status detail (2026-07-30).** P1a (reconcile primitives), P1b-1 (per-kind outcome
+classification), P1b-2 (orchestration + journal repair), and P1b-3 (startup hook + IPC)
+are landed and green. P1d verified AC-8 and AC-9 were already satisfied by v0.5.0 work.
+P1c (the resume-or-rollback surface) is deliberately parked: mockups exist at
+`_local/gui/2026-07-22/resume-rollback.html` and the maintainer wants to direct that
+design before it is built. Two audit-found defects were fixed on top:
+
+1. The new `reconcile-failed` error had no family-safe copy, which left the branch red on
+   `pnpm typecheck` and the error-copy exhaustiveness test.
+2. **Startup reconciliation was mode-blind.** It queried every `running` apply job without
+   reading `jobs.mode` while the shell always supplied `RealFs`. Because the frontend pins
+   dry-run, every stranded job in practice was a rehearsal, so a kill during a practice run
+   would probe the real library to classify an operation that had only touched memory.
+   Reconciliation is now gated on `jobs.mode`, fails closed on an unreadable mode (the
+   column is nullable), and fails closed rather than sweeping multiple stranded jobs.
+
+Still outstanding for P1: the true kill-process integration tests the spec calls for
+(current coverage simulates the in-doubt state rather than killing a process), and the
+AC-8 hand walkthrough.
+
 Phases P1-P3 are strictly ordered (safety foundation first). P4-P7 can proceed in parallel once P2/P3 land the dedupe data model. P8 is the closing gate.
+
+## Phase 0: History + undo reachable
+
+**Goal:** make the undo machinery v0.5.0 built actually usable by a person. **Addresses:**
+the scope change recorded above; no new AC (the underlying guarantees are v0.5.0's AC-11,
+AC-14, AC-16, which were implemented but unreachable).
+
+Steps:
+1. Add a History read model in `crates/abo-core/src/exec/history.rs`: list past apply jobs
+   newest-first, each with its undo offer already RESOLVED by the engine.
+2. Resolve the offer in the engine, not the shell. Which undo path applies depends on
+   engine invariants (was a manifest exported, are its ops reversible, did anything land,
+   did reconciliation leave an op ambiguous). Deriving that in TypeScript would put a
+   safety decision in the layer with the least context.
+3. Order the checks by safety, not convenience: an unreadable mode and an ambiguous
+   reconciliation both resolve to "needs a look" BEFORE any offer is considered, and a
+   rehearsal is excluded before a manifest is looked for, so neither can fall through into
+   an offer to move real files.
+4. List practice runs and label them; never offer them an undo. Hiding them would make the
+   record lie by omission.
+5. Add the `history_list` command with a clamped limit.
+6. Replace the `ComingSoon` History route with the real screen. Undo is a PLAN, not a
+   button: each action prepares an inverse plan and hands it to the same review surface a
+   forward tidy-up uses (D-09). Nothing moves on the strength of a click.
+7. Add `AppError::HistoryUnavailable` with family-safe copy stating that books and undo
+   files are untouched (an undo file is self-contained per AC-11, so it survives this read
+   failing).
+
+Verification:
+- Engine tests for every offer arm, including a rehearsal with completed journal rows
+  (must still be "practice run") and an ambiguous reconciliation (must be "needs a look"
+  even though the run has ops that would otherwise qualify).
+- A test that an ordinary walk-time failure is NOT mistaken for an unresolved ambiguity.
+- Frontend tests that a practice run offers no undo control at all, that an ambiguous run
+  offers no one-click reversal, and that the partial path forwards exactly the op ids the
+  engine supplied.
+
+**Status: landed** on `feat/v0.6.0-p1-interruption-safety` (10 engine tests, 9 screen
+tests). Deliberately NOT in scope: per-operation drill-down, verification-discrepancy
+display, and a contiguous-tail picker. The partial undo offers the whole recorded tail as
+one action; `rollback_prepare_partial` re-checks contiguity itself and refuses a gap.
 
 ## Phase 1: Interruption safety + resume
 

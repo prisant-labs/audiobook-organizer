@@ -5,6 +5,35 @@ All notable changes to Audiobook Organizer are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - unreleased
+
+### Added
+
+- F-606 (interruption safety): after a process kill mid-tidy-up, startup finds the
+  single in-doubt operation, verifies what actually happened on disk, repairs the
+  journal with the terminal record the kill prevented, and reports what can be done
+  next. Reads the filesystem; never mutates it.
+- History screen and its engine read model: every past tidy-up, what it changed, and
+  the one honest action available for it. Undo is prepared as a reviewable plan, not
+  executed by a button.
+- `history_list` command; `AppError::HistoryUnavailable` with family-safe copy.
+
+### Fixed
+
+- Startup reconciliation was mode-blind: it probed the real library to classify
+  interrupted jobs without checking whether the job was a real tidy-up or a practice
+  run. Since the UI pins practice runs, this affected every interruption in practice
+  and could offer a recovery with no connection to the run that was lost. Now gated on
+  the recorded mode, failing closed when the mode is unreadable or when more than one
+  run is stranded.
+- The `reconcile-failed` error reached the frontend with no plain-language copy,
+  breaking the type check and the error-copy exhaustiveness test.
+
+### Changed
+
+- README states plainly which parts of the app work today and which are aspiration.
+  Real changes remain unreachable from the UI by design.
+
 ## [0.5.0] - unreleased
 
 ### Added
