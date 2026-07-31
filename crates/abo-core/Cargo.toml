@@ -130,6 +130,14 @@ lofty = "=0.24.0"
 # whether a warning is warranted when a recorded path exceeds the legacy 260-char
 # limit. Windows-only (POSIX has no MAX_PATH), pulls only windows-sys, no tauri
 # and no network, so both gates stay green.
+# The F-606 kill-recovery harness (src/bin/kill_harness.rs) is an async binary, so
+# it needs a runtime of its own - the library itself stays runtime-agnostic and
+# runs on whatever the shell provides. OPTIONAL and off by default: only the
+# `kill-harness` feature turns it on, so the shipped build and the core-purity
+# gate are unaffected. tokio is already in the graph transitively via sqlx's
+# `runtime-tokio`, so this adds no new crate, only a direct name to `use`.
+tokio = { workspace = true, optional = true }
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
 
@@ -158,6 +166,19 @@ fixtures = []
 # lofty dependency became unconditional.
 probe = []
 
+# Gates the F-606 kill-recovery harness binary (src/bin/kill_harness.rs) and its
+# tokio dependency. Off by default so a normal `cargo build` never produces it;
+# the self dev-dependency below turns it on for `cargo test -p abo-core`, which is
+# what makes `CARGO_BIN_EXE_kill_harness` available to tests/kill_recovery.rs.
+kill-harness = ["dep:tokio"]
+
+# The harness is a real, killable process rather than a test function - see its
+# module docs for why an in-process test cannot stand in for it.
+[[bin]]
+name = "kill_harness"
+path = "src/bin/kill_harness.rs"
+required-features = ["kill-harness"]
+
 # tokio is a TEST-ONLY dependency: the library's async fns run on whatever
 # runtime the caller (the shell) provides, and sqlx's runtime integration is
 # pulled via its `runtime-tokio` feature. Tests need the `#[tokio::test]` macro
@@ -173,7 +194,7 @@ probe = []
 # without passing --features explicitly. Verified by
 # tests/fixtures_integration_smoke.rs.
 [dev-dependencies]
-abo-core = { path = ".", features = ["fixtures"] }
+abo-core = { path = ".", features = ["fixtures", "kill-harness"] }
 tokio = { workspace = true }
 tempfile = "3"
 # serde_json is now a NORMAL dependency (see above, F-801 ruleset JSON), so it

@@ -46,9 +46,11 @@
 //! skeleton walk produces the INTENT rows in memory so the shape is exercised and
 //! the later phase implements persistence against a fixed type.
 
+pub mod history;
 pub mod journal;
 pub mod lock;
 pub mod manifest;
+pub mod reconcile;
 pub mod rollback;
 pub mod verify;
 pub mod vfs;
@@ -61,12 +63,17 @@ use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
 use crate::plan::builder::QUARANTINE_JOB_PLACEHOLDER;
 
+pub use history::{list_history, HistoryEntry, UndoOffer};
 pub use journal::{Journal, MemJournal, SqliteJournal};
 // `ExecControl`/`NoControl` are defined in this module (below); no re-export
 // needed here, but keep them reachable under `abo_core::exec::*` for the shell.
 pub use manifest::{
     build_manifest, get_manifest_row, Manifest, ManifestError, ManifestOp, ManifestRow, ReverseOp,
     MANIFEST_JSON_BASENAME, MANIFEST_SCHEMA_VERSION,
+};
+pub use reconcile::{
+    classify_op_outcome, query_in_doubt, reconcile_interrupted_job, reconcile_stranded_apply_jobs,
+    verify_outcome, OpOutcome, ReconcileResult,
 };
 pub use rollback::{
     is_undo_plan_ops, rollback_prepare, rollback_prepare_partial, ROLLBACK_RULE_ID,
@@ -122,6 +129,26 @@ impl ApplyMode {
         match self {
             ApplyMode::DryRun => "dry-run",
             ApplyMode::Real => "real",
+        }
+    }
+
+    /// Parse the tag stored in `jobs.mode`, returning `None` for anything this
+    /// build does not recognise.
+    ///
+    /// `jobs.mode` is NULLABLE: migration 0005 adds it with a bare
+    /// `ALTER TABLE jobs ADD COLUMN mode TEXT`, because SQLite cannot add a
+    /// `NOT NULL` column to a populated table without a default. So rows written
+    /// before 0005, and any row inserted by a path that does not go through
+    /// [`super::lock`], carry `NULL` here. A `None` return is therefore a real
+    /// state, not an impossible one, and every caller that would touch the
+    /// filesystem on the strength of a mode MUST fail closed on it rather than
+    /// assuming [`Real`](ApplyMode::Real) - assuming Real is precisely how a
+    /// rehearsal ends up being reconciled against the actual library.
+    pub fn from_db_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "dry-run" => Some(ApplyMode::DryRun),
+            "real" => Some(ApplyMode::Real),
+            _ => None,
         }
     }
 }
