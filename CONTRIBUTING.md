@@ -1,7 +1,8 @@
 # Contributing to Audiobook Organizer
 
-Draft - pending (D-13, OSS posture decided at v0.9.0). This repository is
-private; this guide is written public-ready ahead of that decision, per D-13.
+This repository is public and MIT-licensed (FD-38). It is a single-maintainer
+build in progress: there is no formal contribution process and no expectation of
+outside changes, but if you send one, this is what it has to satisfy.
 
 Thanks for your interest in contributing. Audiobook Organizer is a
 Windows-first desktop utility built with Tauri v2 (Rust) and a

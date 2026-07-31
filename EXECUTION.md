@@ -46,7 +46,7 @@ Per D-10 (full-ladder go), the release plan Section 2, D-13 (OSS posture), D-17 
 1. Scaffold the Cargo workspace, `crates/abo-core`, `src-tauri` shell, and the React/TS/shadcn frontend.
 2. Write and refactor all Rust and TypeScript source and all unit, integration, UI, and property tests.
 3. Iterate CI locally and in GitHub Actions until the matrix is green.
-4. Create short-lived feature branches, commit, push, open pull requests, and self-merge green PRs while the repo is private (Section 6).
+4. Create short-lived feature branches, commit, push, and open pull requests (Section 6). Self-merge is NO LONGER permitted: the repo is public as of FD-38, which lapsed D-11's private-repo self-merge allowance. Merging is a human decision.
 5. Run fixture campaigns and dry-run applies anywhere.
 6. Run Real applies against fixtures and disposable copies only, never against E:\Books - Audio.
 7. Build unsigned local artifacts for inspection.
@@ -64,7 +64,7 @@ Work is routed by risk and complexity, not by convenience:
 ## 6. Governance: branches, merges, CI gates
 
 1. Branching: trunk-based; `main` is the default branch; all work on short-lived feature branches; PRs into `main`. Branch first, always.
-2. Merge policy, tiered by visibility (D-11, private-repo self-merge): while the repo is private, an agent may self-merge a PR once every required check is green; CI is the substitute for code review. The moment the repo is public (a human-only action), merges to `main` require human review.
+2. Merge policy, tiered by visibility (D-11, private-repo self-merge). **The repo is PUBLIC as of 2026-07-31 (FD-38), so the second tier is the operative one: merges to `main` require a human decision and an agent must not self-merge.** The first tier is retained as the record of how v0.1.0 through v0.5.0 were built: while the repo was private, an agent could self-merge a PR once every required check was green, with CI as the substitute for code review. Green CI is still necessary before any merge; it is simply no longer sufficient.
 3. Required green checks before any merge are exactly the ci-plan gate list, per release plan Section 6.1 and FD-24 (CI shape fixes):
    - `cargo fmt --all --check`
    - `cargo clippy --workspace --all-targets -- -D warnings`

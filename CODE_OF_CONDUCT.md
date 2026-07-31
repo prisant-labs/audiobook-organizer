@@ -1,8 +1,7 @@
 # Code of Conduct
 
-Draft - pending (D-13, OSS posture decided at v0.9.0). This repository is
-private; this document is written public-ready ahead of that decision, per
-D-13.
+This applies to everyone taking part in this project's issues, pull requests,
+and discussions.
 
 ## Our pledge
 

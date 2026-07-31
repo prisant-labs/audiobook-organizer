@@ -25,7 +25,7 @@ Where a crate name appears (`abo-core` for the core crate, `abo` for the Tauri s
 
 Five ideas govern this pipeline. They inherit from the reference architecture (v1-architecture-and-decisions.md, CI gates section) and adapt to this product's safety profile.
 
-1. CI is the substitute for code review. This is a solo agent-driven build (D-11, private-repo governance). There is no second human reviewer while the repo is private, so the required check set IS the merge policy: a green matrix is the gate, not a courtesy.
+1. CI is the substitute for code review. This is a solo agent-driven build (D-11, private-repo governance). While the repo was private there was no second reviewer, so the required check set WAS the merge policy: a green matrix was the gate, not a courtesy. Since the repo went public (FD-38, 2026-07-31) green CI is necessary but no longer sufficient - a human decides the merge. The check set below is unchanged either way.
 2. Required checks ARE the merge policy. The list in Section 6 (branch protection) is the contract. If a check is not in that list, it does not gate merges; if it is, it is non-negotiable.
 3. Safety invariants are mechanical gates, not conventions. The D-09 (safety invariants) guarantees - quarantine-only, journal-before-act, single-writer, rename-first, never-overwrite, rollback-as-a-plan - are proven by CI jobs (core-purity, plan-determinism, rollback round-trip, hostile-fixture validation), not by reviewer vigilance.
 4. Windows-first, macOS honest-in-CI. Windows 11 is the GA bar (built, human-validated, packaged). macOS is "compiles + bundles in CI" only; its build leg is allow-fail-capable via the D-10 (full-ladder) descope trigger and never blocks a Windows release.
@@ -413,12 +413,12 @@ Every gate: what it proves, the release it starts in, where it runs, and whether
 
 ## 6. Branch protection and merge policy
 
-Mirrors the reference EXECUTION.md governance and D-11 (private-repo self-merge). Configured on `main` when the repo is scaffolded in v0.1.0.
+Mirrors the reference EXECUTION.md governance and D-11. Configured on `main` when the repo is scaffolded in v0.1.0, and re-applied identically when the repo was republished public (FD-38).
 
 - Trunk-based: `main` is the default branch; all work on short-lived feature branches; PRs into `main`.
 - Required status checks (must be green before merge, exactly): `lint`, `test (ubuntu-latest)`, `test (windows-latest)`, `build (windows-latest)`. The `build (macos-latest)` leg is required while green but is the sanctioned allow-fail per the D-10 descope trigger; if downgraded it drops off this list and gets a tracking issue.
 - Require branches up to date before merging (linear history against `main`).
-- Merge policy (D-11): while the repo is private, the agent may self-merge a green PR (CI is the reviewer). If the repo ever flips public (human-only, D-13), merges to `main` become human-reviewed.
+- Merge policy (D-11): the repo went public on 2026-07-31 (FD-38), so merges to `main` are human-decided and an agent must not self-merge. The private-repo allowance (agent self-merges a green PR, CI as the reviewer) applied through v0.5.0 and is retained here as the historical record.
 - No force-push to `main`; no history rewrites (both are on the D-10 / EXECUTION.md human-only allowlist).
 - Human-only allowlist that gates merges and publishes: any Real (non-dry-run) apply against the actual library, publishing releases/tags, the public flip, spending money (signing certificate), and history rewrites (D-10).
 
@@ -431,7 +431,7 @@ Reproducible toolchains keep the goldens (plan-determinism, bindings-drift) hone
 - pnpm: `packageManager` field in `package.json` via corepack (repo-sync uses `pnpm@10.33.4`); `pnpm/action-setup@v4` reads it, so no second version input anywhere. `pnpm install --frozen-lockfile` everywhere; `pnpm-lock.yaml` is committed.
 - Tauri family + tauri-specta: exact-pinned in `Cargo.toml` (no caret ranges) per the reference posture. Version-pinning friction is a known v0.1.0 risk (release-plan); budget for it.
 - Byte-stability: `.gitattributes` with `* text=auto eol=lf` (FD-25) so goldens are byte-stable across Windows and Linux checkouts. Lands in the docs branch now (FD-25).
-- Dependency automation: recommend Dependabot, weekly, grouped (one PR per ecosystem: cargo, npm, github-actions), agent triages and self-merges the green grouped PR under D-11. Repo-sync has no `dependabot.yml` or Renovate config visible in its repo, so this is a proposal, not an inherited pattern. A starting `.github/dependabot.yml` lands with the v0.1.0 workflow set.
+- Dependency automation: Dependabot, weekly, grouped (one PR per ecosystem: cargo, npm, github-actions). An agent triages the grouped PR and reports; merging is a human decision since FD-38. Triage is not a rubber stamp on green: a bump can pass every check and still be wrong, as the TypeScript 7 bump showed - it went green on build and test while silently taking the whole lint gate down, because typescript-eslint exits rather than degrading. Version constraints that exist for that kind of reason are recorded in `.github/dependabot.yml` with their removal condition.
 
 ## 8. WebKitGTK smoke: deliberate non-adoption
 

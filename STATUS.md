@@ -13,8 +13,6 @@ One page. The top section is the only part that needs you. Everything below is c
 
 ## WAITING ON YOU (nothing else is blocked on code)
 
-- [ ] **Merge PR #1 (v0.6.0 P1 + P0) once CI is green.** D-11's agent self-merge permission was scoped to the repo being private, so it lapsed with FD-38. Merging is now yours.
-- [ ] **Review the Dependabot PRs** that re-opened on the new repo (JavaScript, Rust, and Actions groups). CI runs on them now, so a green check is real evidence.
 - [ ] **Cut tags v0.1.0 through v0.5.0.** Five releases are built and merged; zero are tagged. Human-only. Runbook: `docs/internal/release-plans/runbook_cut-tag-release.md`
 - [ ] **AC-17 (round-trip evidence): accept or extend.** Byte-identical round-trip is proven on a 3-book subset. Say "good enough" or ask for a fuller run. Scratch copies retained at `E:\tmp\abo-rt\`. Detail: `docs/internal/releases/v0.5.0-acting/spec.md`
 - [ ] **FD-33 / FD-34 veto window.** Two decisions from v0.5.0 that stand unless you object: journal durability boundary, set-aside placement (beside the library, not inside). Detail: bottom of `docs/internal/decision-ledger.md`
@@ -37,22 +35,24 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 | v0.3.0 | planning | yes | yes | no | tag, G-6 |
 | v0.4.0 | seeing | yes | yes | no | tag, G-1 |
 | v0.5.0 | acting | yes | yes | no | tag, AC-17, FD-33/34 |
-| v0.6.0 | hardening | in progress | no | - | see below |
+| v0.6.0 | hardening | in progress | P0/P1 yes | no | P1c crit, AC-8 walk |
 | M-1 | campaign | planned | - | - | - |
 | v0.9.0 | packaged | planned | - | - | public flip decision |
 
 ## In flight right now
 
-**Branch `feat/v0.6.0-p1-interruption-safety`**, 7 commits ahead of `main` (9e8a693). Not yet pushed; no PR (blocked on CI billing above).
+Nothing. Everything below merged to `main` on 2026-07-31 (PRs #1 to #4), all four checks green on each.
 
-Landed on the branch:
+Landed in v0.6.0 so far:
 
-- **P1a/P1b (interruption safety, F-606)** - the reconciler: after a kill, find the single in-doubt operation, verify what actually happened on disk, repair the journal, and report what can be done. Four commits, all green.
-- **The reconcile-failed copy fix** - the branch was red (`pnpm typecheck` + one frontend test) because a new error code had no family-safe copy.
-- **Mode-aware reconciliation** - the audit found the startup sweep probed the REAL library to classify jobs that may have been rehearsals. Because the UI pins dry-run, every stranded job in practice was a rehearsal. Now gated on `jobs.mode`, fails closed on an unreadable mode, and fails closed rather than sweeping multiple stranded jobs.
-- **History and undo (new scope, see below)** - the History screen, its engine read model, and the wiring that makes undo reachable.
+- **P1a/P1b (interruption safety, F-606)** - the reconciler: after a kill, find the single in-doubt operation, verify what actually happened on disk, repair the journal, and report what can be done next.
+- **Mode-aware reconciliation (FD-37)** - the startup sweep was probing the REAL library to classify jobs that may have been rehearsals. Because the UI pins dry-run, every stranded job in practice WAS a rehearsal. Now gated on `jobs.mode`, failing closed on an unreadable mode and on more than one stranded run.
+- **P0: History and undo (FD-36)** - the screen, its engine read model, and the wiring that makes v0.5.0's undo machinery reachable at last.
+- **Kill-process recovery tests** - a real binary that runs a real apply and then calls `abort()` mid-operation, so recovery is proven against a genuinely killed process rather than a hand-built journal state. Covers AC-4 (intent-then-kill) and AC-5 (act-then-kill).
+- **Four review-found defects fixed**, including probes that turned I/O failures into evidence of completion, and fail-closed paths that erased their own retry condition.
+- Three dependency groups updated. TypeScript is held at 6.x because typescript-eslint 8.x refuses to run against TS 7 and takes the whole lint gate down; `.github/dependabot.yml` records the constraint and its removal condition.
 
-Still open on v0.6.0: P1c (resume-or-rollback surface, awaiting your mockup crit), then P2 hash verification, P3 policies, P4-P7 surfaces, P8 long-path and gate. OQ-1 (bitrate source) blocks P3 keep-higher-bitrate; OQ-2 (ruleset schema mismatch) blocks P6.
+Still open on v0.6.0: **P1c** (resume-or-rollback surface, awaiting your mockup crit) and the **AC-8 hand walkthrough**, then P2 hash verification, P3 policies, P4-P7 surfaces, P8 long-path and gate. OQ-1 (bitrate source) blocks P3 keep-higher-bitrate; OQ-2 (ruleset schema mismatch) blocks P6.
 
 ## Scope change on v0.6.0 (decision recorded, vetoable)
 
