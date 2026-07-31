@@ -96,7 +96,7 @@ pub struct HistoryEntry {
 /// the record - but scan jobs are not, since they change nothing.
 pub async fn list_history(pool: &SqlitePool, limit: i64) -> Result<Vec<HistoryEntry>, AppError> {
     let rows = sqlx::query(
-        "SELECT id, mode, state, started_at, finished_at \
+        "SELECT id, mode, state, started_at, finished_at, error_code \
          FROM jobs WHERE kind = 'apply' \
          ORDER BY COALESCE(started_at, '') DESC, id DESC \
          LIMIT ?",
@@ -116,13 +116,23 @@ pub async fn list_history(pool: &SqlitePool, limit: i64) -> Result<Vec<HistoryEn
             .as_deref()
             .and_then(ApplyMode::from_db_tag);
 
+        let state: String = row.get("state");
+        let error_code: Option<String> = row.get("error_code");
         let done_op_ids = done_op_ids(pool, job_id).await?;
-        let undo = resolve_undo_offer(pool, job_id, mode, &done_op_ids).await?;
+        let undo = resolve_undo_offer(
+            pool,
+            job_id,
+            mode,
+            &state,
+            error_code.as_deref(),
+            &done_op_ids,
+        )
+        .await?;
 
         out.push(HistoryEntry {
             job_id,
             mode,
-            state: row.get("state"),
+            state,
             started_at: row.get("started_at"),
             finished_at: row.get("finished_at"),
             changes_made: done_op_ids.len() as i64,
@@ -142,6 +152,8 @@ async fn resolve_undo_offer(
     pool: &SqlitePool,
     job_id: i64,
     mode: Option<ApplyMode>,
+    state: &str,
+    error_code: Option<&str>,
     done_op_ids: &[i64],
 ) -> Result<UndoOffer, AppError> {
     // An unreadable mode means we cannot say whether this run touched real files.
@@ -156,11 +168,45 @@ async fn resolve_undo_offer(
         return Ok(UndoOffer::PracticeRun);
     }
 
-    // Reconciliation records an ambiguous in-doubt op as a `failed` terminal row
-    // carrying a reconcile reason. An ambiguous op means the on-disk state does not
-    // decisively say what happened, and a generic inverse could double-move or
-    // clobber - so this run needs a person, not an automatic reversal.
-    if has_unresolved_ambiguity(pool, job_id).await? {
+    // A run that is still going has no settled outcome to reverse, and its journal
+    // is being appended to right now. (It can also be a job stranded by a kill that
+    // startup reconciliation has not yet reclaimed.) Either way, not undoable.
+    if state == "running" {
+        return Ok(UndoOffer::NeedsALook);
+    }
+
+    // Startup reconciliation stamps this when it REFUSED to establish what a run
+    // did (unreadable mode, broken single-writer invariant, journal read failure).
+    // That is precisely a run whose changes must not be reversed on a guess.
+    if error_code == Some(super::reconcile::RECONCILE_FAILED_CODE) {
+        return Ok(UndoOffer::NeedsALook);
+    }
+
+    // STRUCTURAL check, and the important one: any intent without a terminal row
+    // means an operation whose fate is unrecorded. Reconciliation deliberately
+    // leaves these unrepaired when it aborts (more than one in-doubt row), so they
+    // outlive the pass. A partial undo built from the `done` rows alone would
+    // silently skip such an operation, reversing around it and leaving whatever it
+    // did in place. Catching it here does not depend on any failure marker being
+    // present, formatted a particular way, or written at all.
+    if has_unmatched_intent(pool, job_id).await? {
+        return Ok(UndoOffer::NeedsALook);
+    }
+
+    // An op reconciliation resolved as ambiguous: the on-disk state did not
+    // decisively say what happened, so a generic inverse could double-move or
+    // clobber. Read structurally out of the JSON rather than by substring, so
+    // whitespace or key-order differences cannot make it silently miss.
+    if has_ambiguous_reconcile(pool, job_id).await? {
+        return Ok(UndoOffer::NeedsALook);
+    }
+
+    // A manifest that explicitly records `reversible = 0` is a run containing an
+    // operation that CANNOT be reversed. Falling through to the journal-tail offer
+    // here would quietly downgrade "this run is not reversible" into "reverse the
+    // parts we happen to have rows for", which is the opposite of what the flag
+    // means.
+    if has_non_reversible_manifest(pool, job_id).await? {
         return Ok(UndoOffer::NeedsALook);
     }
 
@@ -169,14 +215,13 @@ async fn resolve_undo_offer(
     }
 
     // A completed walk exports a self-contained undo file; its index row points at
-    // it. `reversible = 0` records honestly that some operation in the run cannot
-    // be reversed, so the whole-run offer is withheld.
+    // it.
     if let Some(manifest_id) = reversible_manifest_id(pool, job_id).await? {
         return Ok(UndoOffer::PutEverythingBack { manifest_id });
     }
 
     // No undo file (halted, stopped, or failed before export), but the journal
-    // records what landed.
+    // records what landed, and every intent has a terminal row.
     Ok(UndoOffer::PutRecentChangesBack {
         op_ids: done_op_ids.to_vec(),
     })
@@ -197,16 +242,20 @@ async fn done_op_ids(pool: &SqlitePool, job_id: i64) -> Result<Vec<i64>, AppErro
     Ok(rows.into_iter().map(|r| r.get::<i64, _>("op_id")).collect())
 }
 
-/// Whether startup reconciliation closed an op on this job as ambiguous.
+/// Whether any `intent` row for this job lacks a `done`/`failed` terminal row.
 ///
-/// Matches the marker [`super::reconcile`] writes into the `failed` row's detail,
-/// rather than any free-text failure message, so an ordinary walk-time failure
-/// (permission denied, say) does not get mistaken for an unresolved state.
-async fn has_unresolved_ambiguity(pool: &SqlitePool, job_id: i64) -> Result<bool, AppError> {
+/// The same shape as [`super::reconcile::query_in_doubt`], asked as a count. An
+/// unmatched intent is an operation whose fate was never recorded, which no undo
+/// may be built around.
+async fn has_unmatched_intent(pool: &SqlitePool, job_id: i64) -> Result<bool, AppError> {
     let row = sqlx::query(
-        "SELECT COUNT(*) AS n FROM journal \
-         WHERE job_id = ? AND phase = 'failed' \
-           AND detail_json LIKE '%\"reconcile\":\"ambiguous on-disk state\"%'",
+        "SELECT COUNT(*) AS n FROM journal AS j \
+         WHERE j.job_id = ? AND j.phase = 'intent' \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM journal AS t \
+             WHERE t.job_id = j.job_id AND t.op_id = j.op_id \
+               AND t.phase IN ('done', 'failed') \
+           )",
     )
     .bind(job_id)
     .fetch_one(pool)
@@ -214,6 +263,46 @@ async fn has_unresolved_ambiguity(pool: &SqlitePool, job_id: i64) -> Result<bool
     .map_err(|e| AppError::HistoryUnavailable {
         detail: e.to_string(),
     })?;
+    Ok(row.get::<i64, _>("n") > 0)
+}
+
+/// Whether startup reconciliation closed an op on this job as ambiguous.
+///
+/// Reads the marker [`super::reconcile`] writes with `json_extract` rather than a
+/// `LIKE` over the serialized text: a substring match would silently stop working
+/// if the detail were ever written with different spacing, key order, or escaping,
+/// and silently-stops-working is the worst failure mode for a check whose whole
+/// job is to WITHHOLD an offer. Keyed on the marker rather than any free-text
+/// message, so an ordinary walk-time failure (permission denied, say) is not
+/// mistaken for an unresolved state.
+async fn has_ambiguous_reconcile(pool: &SqlitePool, job_id: i64) -> Result<bool, AppError> {
+    let row = sqlx::query(
+        "SELECT COUNT(*) AS n FROM journal \
+         WHERE job_id = ? AND phase = 'failed' \
+           AND detail_json IS NOT NULL \
+           AND json_valid(detail_json) \
+           AND json_extract(detail_json, '$.reconcile') = 'ambiguous on-disk state'",
+    )
+    .bind(job_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::HistoryUnavailable {
+        detail: e.to_string(),
+    })?;
+    Ok(row.get::<i64, _>("n") > 0)
+}
+
+/// Whether this job exported a manifest that records at least one operation which
+/// cannot be reversed.
+async fn has_non_reversible_manifest(pool: &SqlitePool, job_id: i64) -> Result<bool, AppError> {
+    let row =
+        sqlx::query("SELECT COUNT(*) AS n FROM manifests WHERE job_id = ? AND reversible = 0")
+            .bind(job_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::HistoryUnavailable {
+                detail: e.to_string(),
+            })?;
     Ok(row.get::<i64, _>("n") > 0)
 }
 
@@ -530,6 +619,139 @@ mod tests {
             add_job(&pool, Some("real"), "done").await;
         }
         assert_eq!(list_history(&pool, 3).await.unwrap().len(), 3);
+        pool.close().await;
+    }
+
+    // -- Over-offering guards (adversarial-review finding 3) --------------------
+    //
+    // The first cut's catch-all `PutRecentChangesBack` arm was reachable from four
+    // states it had no business offering an undo for. Each is now blocked, and each
+    // is checked here.
+
+    /// A run still marked `running` has no settled outcome to reverse.
+    #[tokio::test]
+    async fn a_running_job_needs_a_look_rather_than_an_undo() {
+        let (_d, pool) = fresh_pool().await;
+        let job = add_job(&pool, Some("real"), "running").await;
+        let (_plan, op) = add_plan_op(&pool).await;
+        journal_done(&pool, job, op, 0).await;
+
+        let history = list_history(&pool, 20).await.unwrap();
+        assert_eq!(history[0].undo, UndoOffer::NeedsALook);
+        pool.close().await;
+    }
+
+    /// A run startup reconciliation REFUSED to establish is never auto-reversed.
+    #[tokio::test]
+    async fn a_reconcile_failed_job_needs_a_look() {
+        let (_d, pool) = fresh_pool().await;
+        let job = add_job(&pool, Some("real"), "failed").await;
+        sqlx::query("UPDATE jobs SET error_code = ? WHERE id = ?")
+            .bind(crate::exec::reconcile::RECONCILE_FAILED_CODE)
+            .bind(job)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_plan, op) = add_plan_op(&pool).await;
+        journal_done(&pool, job, op, 0).await;
+
+        let history = list_history(&pool, 20).await.unwrap();
+        assert_eq!(history[0].undo, UndoOffer::NeedsALook);
+        pool.close().await;
+    }
+
+    /// The structural guard: an intent with no terminal row is an operation whose
+    /// fate is unrecorded. Reconciliation leaves these when it safety-aborts, so a
+    /// journal-tail undo built from the `done` rows would reverse AROUND it and
+    /// leave whatever it did in place.
+    #[tokio::test]
+    async fn an_unmatched_intent_needs_a_look_even_with_completed_ops() {
+        let (_d, pool) = fresh_pool().await;
+        let job = add_job(&pool, Some("real"), "failed").await;
+        let (_plan, op) = add_plan_op(&pool).await;
+        journal_done(&pool, job, op, 0).await;
+
+        // A second op with an intent and NO terminal row.
+        let (_p2, op2) = add_plan_op(&pool).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&JournalEntry {
+                job_id: job,
+                seq: 1,
+                op_id: op2,
+                phase: JournalPhase::Intent,
+                at: NOW.to_string(),
+                detail_json: None,
+            })
+            .await
+            .unwrap();
+
+        let history = list_history(&pool, 20).await.unwrap();
+        assert_eq!(
+            history[0].undo,
+            UndoOffer::NeedsALook,
+            "an operation with no recorded outcome blocks every undo offer"
+        );
+        pool.close().await;
+    }
+
+    /// `reversible = 0` means the run contains an operation that cannot be
+    /// reversed. It must not quietly degrade into a partial journal-tail offer.
+    #[tokio::test]
+    async fn a_non_reversible_manifest_needs_a_look_not_a_partial_undo() {
+        let (_d, pool) = fresh_pool().await;
+        let job = add_job(&pool, Some("real"), "done").await;
+        let (plan, op) = add_plan_op(&pool).await;
+        journal_done(&pool, job, op, 0).await;
+        sqlx::query(
+            "INSERT INTO manifests (job_id, plan_id, json_path, reversible, mode) \
+             VALUES (?, ?, 'E:\\Reports\\undo.json', 0, 'real')",
+        )
+        .bind(job)
+        .bind(plan)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let history = list_history(&pool, 20).await.unwrap();
+        assert_eq!(history[0].undo, UndoOffer::NeedsALook);
+        pool.close().await;
+    }
+
+    /// The ambiguity check reads the marker structurally, so formatting differences
+    /// (spaces, key order) cannot make it silently miss - which for a check whose
+    /// job is to WITHHOLD an offer is the worst possible failure.
+    #[tokio::test]
+    async fn the_ambiguity_marker_is_read_structurally_not_by_substring() {
+        let (_d, pool) = fresh_pool().await;
+        let job = add_job(&pool, Some("real"), "failed").await;
+        let (_plan, op) = add_plan_op(&pool).await;
+        journal_done(&pool, job, op, 0).await;
+
+        let (_p2, op2) = add_plan_op(&pool).await;
+        let j = SqliteJournal::new(pool.clone());
+        let e = JournalEntry {
+            job_id: job,
+            seq: 1,
+            op_id: op2,
+            phase: JournalPhase::Intent,
+            at: NOW.to_string(),
+            detail_json: None,
+        };
+        j.write_intent(&e).await.unwrap();
+        j.write_failed(&JournalEntry {
+            phase: JournalPhase::Failed,
+            // Same meaning, different formatting: extra whitespace and a second key
+            // ahead of the marker. A LIKE over the compact form would miss this.
+            detail_json: Some(
+                r#"{ "code": "x",  "reconcile" : "ambiguous on-disk state" }"#.to_string(),
+            ),
+            ..e
+        })
+        .await
+        .unwrap();
+
+        let history = list_history(&pool, 20).await.unwrap();
+        assert_eq!(history[0].undo, UndoOffer::NeedsALook);
         pool.close().await;
     }
 

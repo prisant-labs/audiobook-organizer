@@ -155,25 +155,58 @@ pub fn verify_outcome<V: Vfs>(
     target: &Path,
     expected_size: Option<u64>,
 ) -> OpOutcome {
-    let source_present = vfs.exists(source);
-    let target_present = vfs.exists(target);
-    match (source_present, target_present) {
-        (false, true) => match expected_size {
+    match (probe(vfs, source), probe(vfs, target)) {
+        (Presence::Absent, Presence::Present { size }) => match expected_size {
             // Same-volume rename/move: existence is decisive (atomic no-clobber).
             None => OpOutcome::Completed,
             // Cross-volume copy: the target must be the full snapshot size, or it
             // is a partial copy with the source already gone - ambiguous, offer
             // rollback rather than trusting a short target.
-            Some(size) => match vfs.metadata(target) {
-                Ok(m) if m.size == size => OpOutcome::Completed,
-                _ => OpOutcome::Ambiguous,
-            },
+            Some(expected) if size == expected => OpOutcome::Completed,
+            Some(_) => OpOutcome::Ambiguous,
         },
         // Source still there, target not: the op never landed. Resume from it.
-        (true, false) => OpOutcome::NotStarted,
-        // Both present (copy done, source-delete pending) or neither present (the
-        // item vanished): never auto-resume - record failed and offer rollback.
+        (Presence::Present { .. }, Presence::Absent) => OpOutcome::NotStarted,
+        // Both present (copy done, source-delete pending), neither present (the
+        // item vanished), or EITHER path unreadable: never auto-resume - record
+        // failed and offer rollback.
         _ => OpOutcome::Ambiguous,
+    }
+}
+
+/// What a single filesystem probe could establish about a path.
+///
+/// The third arm is the point of this type. A boolean `exists` cannot distinguish
+/// "this path is definitely not there" from "I could not find out", because
+/// [`RealFs::exists`](super::RealFs) is `std::fs::metadata(..).is_ok()` and so
+/// answers `false` for a permission denial, an offline network path, a device
+/// error, or a locked file just as readily as for a genuine absence.
+///
+/// That distinction is load-bearing here. If a cross-volume copy finished but the
+/// SOURCE is momentarily unreadable, a boolean probe observes (absent, present),
+/// concludes `Completed`, writes a `done` row that is false, and offers to resume
+/// past an operation whose source may still be sitting on disk - producing a
+/// duplicate the journal now claims was cleaned up. An unreadable path is not
+/// evidence of anything, so it resolves to
+/// [`Ambiguous`](OpOutcome::Ambiguous) and the run is offered rollback only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Presence {
+    /// The path is there, with this size.
+    Present { size: u64 },
+    /// The path is provably not there (`NotFound`, and only `NotFound`).
+    Absent,
+    /// The probe failed for any other reason, so nothing was established.
+    Unknown,
+}
+
+/// Probe one path, keeping "not there" and "could not tell" distinct.
+fn probe<V: Vfs>(vfs: &V, path: &Path) -> Presence {
+    match vfs.metadata(path) {
+        Ok(m) => Presence::Present { size: m.size },
+        Err(super::vfs::VfsError::NotFound(_)) => Presence::Absent,
+        // Permission denied, I/O error, offline network path, a path component
+        // that is not a directory: all "could not tell", never "absent".
+        Err(_) => Presence::Unknown,
     }
 }
 
@@ -183,10 +216,11 @@ pub fn verify_outcome<V: Vfs>(
 /// - `no-op` changes nothing on disk, so it is trivially
 ///   [`Completed`](OpOutcome::Completed);
 /// - `mkdir` creates `op.target_path` (idempotent `create_dir_all`): present is
-///   `Completed`, absent is `NotStarted` - never ambiguous, because a directory
-///   either exists or does not and re-running the create is safe either way;
+///   `Completed`, absent is `NotStarted`, and an UNREADABLE path is `Ambiguous`
+///   (re-running a create is harmless, but claiming to know the state when the
+///   probe failed is not);
 /// - `rmdir-empty` removes `op.source_path`: absent is `Completed`, present is
-///   `NotStarted`;
+///   `NotStarted`, unreadable is `Ambiguous`;
 /// - `move`/`rename`/`quarantine` is a source-to-target move, delegated to
 ///   [`verify_outcome`] with `expected_size = None` for a same-volume rename or
 ///   `Some(op.byte_size)` for a cross-volume copy - the same split
@@ -197,20 +231,17 @@ pub fn verify_outcome<V: Vfs>(
 pub fn classify_op_outcome<V: Vfs>(vfs: &V, op: &PlanOpRow) -> OpOutcome {
     match op.kind.as_str() {
         "no-op" => OpOutcome::Completed,
-        "mkdir" => {
-            if vfs.exists(Path::new(&op.target_path)) {
-                OpOutcome::Completed
-            } else {
-                OpOutcome::NotStarted
-            }
-        }
-        "rmdir-empty" => {
-            if vfs.exists(Path::new(&op.source_path)) {
-                OpOutcome::NotStarted
-            } else {
-                OpOutcome::Completed
-            }
-        }
+        // An unreadable path is never treated as an answer: see `Presence`.
+        "mkdir" => match probe(vfs, Path::new(&op.target_path)) {
+            Presence::Present { .. } => OpOutcome::Completed,
+            Presence::Absent => OpOutcome::NotStarted,
+            Presence::Unknown => OpOutcome::Ambiguous,
+        },
+        "rmdir-empty" => match probe(vfs, Path::new(&op.source_path)) {
+            Presence::Present { .. } => OpOutcome::NotStarted,
+            Presence::Absent => OpOutcome::Completed,
+            Presence::Unknown => OpOutcome::Ambiguous,
+        },
         "move" | "rename" | "quarantine" => {
             let source = Path::new(&op.source_path);
             let target = Path::new(&op.target_path);
@@ -495,27 +526,45 @@ pub async fn reconcile_stranded_apply_jobs<V: Vfs>(
     vfs: &V,
     now: &str,
 ) -> Result<Option<ReconcileResult>, AppError> {
-    let stranded = stranded_apply_jobs(pool).await?;
-
     // The single-writer lock permits at most one apply in flight, so at most one
     // apply row can be left `running`. Two or more means the invariant has already
     // been broken (a corrupt database, a hand-edited row, or a lock bug), and the
     // rows give us no way to tell which one this session's filesystem state
     // corresponds to. Fail CLOSED: repair no journal, offer no recovery, and
-    // surface the violation. Sweeping them in id order - the previous behaviour -
+    // surface the violation. Sweeping them in id order - the first cut's behaviour -
     // would have written terminal rows for jobs whose on-disk story we cannot
     // attribute, which is exactly the kind of confident-but-groundless repair the
     // reconciler exists to avoid.
-    if stranded.len() > 1 {
+    //
+    // This count deliberately covers ONLY `running` jobs. A job an earlier launch
+    // refused to reconcile is no longer running and is not holding the lock, so it
+    // is not evidence of a broken invariant and must not make the count trip.
+    let running = stranded_apply_jobs(pool, JobPopulation::Running).await?;
+    if running.len() > 1 {
+        for job in &running {
+            mark_needs_review(pool, job.id).await?;
+        }
         return Err(AppError::ReconcileFailed {
             detail: format!(
                 "{} apply jobs are still marked running; at most one is possible under the single-writer lock, so none were reconciled",
-                stranded.len()
+                running.len()
             ),
         });
     }
 
-    let Some(job) = stranded.into_iter().next() else {
+    // Prefer this session's stranded job. With none, retry the oldest job an
+    // earlier launch could not reconcile: its journal intent is still unmatched,
+    // and whatever blocked the earlier attempt (a transient journal read failure,
+    // say) may have cleared. One candidate per launch keeps the at-most-one
+    // discipline the rest of this module is built on.
+    let candidate = match running.into_iter().next() {
+        Some(job) => Some(job),
+        None => stranded_apply_jobs(pool, JobPopulation::NeedsReview)
+            .await?
+            .into_iter()
+            .next(),
+    };
+    let Some(job) = candidate else {
         return Ok(None);
     };
 
@@ -525,6 +574,7 @@ pub async fn reconcile_stranded_apply_jobs<V: Vfs>(
     // to Real here would reintroduce the rehearsal-probes-the-real-library bug for
     // precisely the rows we know least about.
     let Some(mode) = job.mode.as_deref().and_then(ApplyMode::from_db_tag) else {
+        mark_needs_review(pool, job.id).await?;
         return Err(AppError::ReconcileFailed {
             detail: format!(
                 "apply job {} has no recognisable mode recorded, so its outcome was not verified against the real library",
@@ -534,7 +584,65 @@ pub async fn reconcile_stranded_apply_jobs<V: Vfs>(
     };
 
     let result = reconcile_interrupted_job(pool, vfs, job.id, mode, now).await?;
+    // The pass completed, so whatever was in doubt is now settled and a
+    // needs-review stamp from an earlier launch no longer applies. Only that exact
+    // code is cleared, so the reclaim's `interrupted` is left intact.
+    clear_needs_review(pool, job.id).await?;
     Ok(result.interrupted.then_some(result))
+}
+
+/// The `jobs.error_code` marking a job this pass REFUSED to reconcile.
+///
+/// Distinct from the reclaim's generic `interrupted`: that means "a run was cut
+/// short", this means "a run was cut short AND we could not establish what it
+/// did". History turns it into a needs-a-look row and never offers an undo for it.
+pub const RECONCILE_FAILED_CODE: &str = "reconcile-failed";
+
+/// Record that this job could not be reconciled, durably, BEFORE the startup
+/// reclaim clears its `running` state.
+///
+/// Without this the fail-closed paths would be self-defeating. Refusing to
+/// reconcile leaves the job `running`; the reclaim that runs moments later sets
+/// every `running` apply job to `failed`; and the sweep only looks at `running`
+/// jobs. So the refusal would erase its own retry condition and the unmatched
+/// journal intent would sit there forever, with the job's durable record claiming
+/// nothing more than "interrupted". Stamping the code first makes the unresolved
+/// state survive both the reclaim (which now COALESCEs rather than overwrites) and
+/// the restart.
+async fn mark_needs_review(pool: &SqlitePool, job_id: i64) -> Result<(), AppError> {
+    sqlx::query("UPDATE jobs SET error_code = ? WHERE id = ?")
+        .bind(RECONCILE_FAILED_CODE)
+        .bind(job_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::ReconcileFailed {
+            detail: e.to_string(),
+        })?;
+    Ok(())
+}
+
+/// Drop a [`RECONCILE_FAILED_CODE`] stamp after a pass that did settle the job.
+async fn clear_needs_review(pool: &SqlitePool, job_id: i64) -> Result<(), AppError> {
+    sqlx::query("UPDATE jobs SET error_code = NULL WHERE id = ? AND error_code = ?")
+        .bind(job_id)
+        .bind(RECONCILE_FAILED_CODE)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::ReconcileFailed {
+            detail: e.to_string(),
+        })?;
+    Ok(())
+}
+
+/// Which set of apply jobs a sweep query is asking for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum JobPopulation {
+    /// Left `running`: stranded by a kill and not yet reclaimed. The single-writer
+    /// invariant is asserted over exactly this set.
+    Running,
+    /// Already reclaimed, but stamped [`RECONCILE_FAILED_CODE`] by an earlier
+    /// launch that refused to reconcile them. Retry candidates.
+    NeedsReview,
 }
 
 /// An apply job left `running` by a prior session's kill.
@@ -551,15 +659,30 @@ struct StrandedJob {
 /// filesystem may be read at all: migration 0005 added `jobs.mode` expressly so
 /// that "a dry-run rehearsal is never mistaken for a real apply" during DB-side
 /// recovery, and that guarantee is only worth anything if recovery reads it.
-async fn stranded_apply_jobs(pool: &SqlitePool) -> Result<Vec<StrandedJob>, AppError> {
-    let rows = sqlx::query(
-        "SELECT id, mode FROM jobs WHERE kind = 'apply' AND state = 'running' ORDER BY id",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| AppError::ReconcileFailed {
-        detail: e.to_string(),
-    })?;
+async fn stranded_apply_jobs(
+    pool: &SqlitePool,
+    population: JobPopulation,
+) -> Result<Vec<StrandedJob>, AppError> {
+    let sql = match population {
+        JobPopulation::Running => {
+            "SELECT id, mode FROM jobs \
+             WHERE kind = 'apply' AND state = 'running' ORDER BY id"
+        }
+        JobPopulation::NeedsReview => {
+            "SELECT id, mode FROM jobs \
+             WHERE kind = 'apply' AND state = 'failed' AND error_code = ? ORDER BY id"
+        }
+    };
+    let mut q = sqlx::query(sql);
+    if matches!(population, JobPopulation::NeedsReview) {
+        q = q.bind(RECONCILE_FAILED_CODE);
+    }
+    let rows = q
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::ReconcileFailed {
+            detail: e.to_string(),
+        })?;
     Ok(rows
         .into_iter()
         .map(|r| StrandedJob {
@@ -1367,6 +1490,245 @@ mod tests {
             .await
             .expect_err("an unrecognised mode must not be reconciled");
         assert!(matches!(err, AppError::ReconcileFailed { .. }));
+        pool.close().await;
+    }
+
+    // -- Unreadable paths are never read as answers -----------------------------
+    //
+    // Regression tests for the adversarial-review finding: `Vfs::exists` is
+    // `metadata(..).is_ok()` on RealFs, so a permission denial, an offline network
+    // path, or a device error all answer "false" exactly like a genuine absence.
+    // Classifying on a boolean therefore turned an I/O failure into evidence.
+
+    /// A `Vfs` whose named paths fail to probe with a non-NotFound error, and whose
+    /// other paths behave like the given `MemFs`.
+    struct UnreadableFs {
+        inner: MemFs,
+        unreadable: Vec<String>,
+    }
+
+    impl UnreadableFs {
+        fn blocked(&self, path: &Path) -> bool {
+            let p = path.to_string_lossy().to_lowercase();
+            self.unreadable.iter().any(|u| u.to_lowercase() == p)
+        }
+    }
+
+    impl Vfs for UnreadableFs {
+        fn exists(&self, path: &Path) -> bool {
+            // Mirrors RealFs: any probe failure collapses to `false`.
+            !self.blocked(path) && self.inner.exists(path)
+        }
+        fn is_dir(&self, path: &Path) -> bool {
+            !self.blocked(path) && self.inner.is_dir(path)
+        }
+        fn metadata(&self, path: &Path) -> Result<VfsMetadata, VfsError> {
+            if self.blocked(path) {
+                return Err(VfsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "access is denied",
+                )));
+            }
+            self.inner.metadata(path)
+        }
+        fn rename(&self, from: &Path, to: &Path) -> Result<(), VfsError> {
+            self.inner.rename(from, to)
+        }
+        fn copy_file(&self, from: &Path, to: &Path) -> Result<u64, VfsError> {
+            self.inner.copy_file(from, to)
+        }
+        fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
+            self.inner.remove_file(path)
+        }
+        fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+            self.inner.remove_dir(path)
+        }
+        fn create_dir_all(&self, path: &Path) -> Result<(), VfsError> {
+            self.inner.create_dir_all(path)
+        }
+    }
+
+    /// The exact false-completion the review predicted: a cross-volume copy landed,
+    /// but the SOURCE is unreadable rather than gone. A boolean probe reads
+    /// (absent, present) and concludes Completed, writing a false `done` row and
+    /// offering to resume past an op whose source may still be on disk.
+    #[test]
+    fn an_unreadable_source_is_ambiguous_not_completed() {
+        let fs = UnreadableFs {
+            inner: mem(&[
+                (r"E:\lib\Old\B.m4b", 100, false),
+                (r"F:\lib\New\B.m4b", 100, false),
+            ]),
+            unreadable: vec![r"E:\lib\Old\B.m4b".to_string()],
+        };
+        // The boolean view the old code used would have said "source gone".
+        assert!(!fs.exists(Path::new(r"E:\lib\Old\B.m4b")));
+
+        let outcome = verify_outcome(
+            &fs,
+            Path::new(r"E:\lib\Old\B.m4b"),
+            Path::new(r"F:\lib\New\B.m4b"),
+            Some(100),
+        );
+        assert_eq!(
+            outcome,
+            OpOutcome::Ambiguous,
+            "an unreadable source is not evidence the move completed"
+        );
+    }
+
+    /// The mirror case: an unreadable TARGET must not read as "never started",
+    /// which would offer to resume an op that may already have landed.
+    #[test]
+    fn an_unreadable_target_is_ambiguous_not_not_started() {
+        let fs = UnreadableFs {
+            inner: mem(&[
+                (r"E:\lib\Old\B.m4b", 100, false),
+                (r"E:\lib\New\B.m4b", 100, false),
+            ]),
+            unreadable: vec![r"E:\lib\New\B.m4b".to_string()],
+        };
+        let outcome = verify_outcome(
+            &fs,
+            Path::new(r"E:\lib\Old\B.m4b"),
+            Path::new(r"E:\lib\New\B.m4b"),
+            None,
+        );
+        assert_eq!(outcome, OpOutcome::Ambiguous);
+    }
+
+    /// mkdir and rmdir-empty go through the same probe, so an unreadable path is
+    /// ambiguous there too rather than a confident answer.
+    #[test]
+    fn unreadable_paths_are_ambiguous_for_mkdir_and_rmdir() {
+        let fs = UnreadableFs {
+            inner: mem(&[(r"E:\lib\New", 0, true)]),
+            unreadable: vec![r"E:\lib\New".to_string()],
+        };
+        assert_eq!(
+            classify_op_outcome(&fs, &plan_op("mkdir", "", r"E:\lib\New", 0)),
+            OpOutcome::Ambiguous
+        );
+        assert_eq!(
+            classify_op_outcome(&fs, &plan_op("rmdir-empty", r"E:\lib\New", "", 0)),
+            OpOutcome::Ambiguous
+        );
+    }
+
+    // -- Fail-closed state must survive the startup reclaim ---------------------
+
+    /// The review's second finding: refusing to reconcile leaves the job `running`,
+    /// the reclaim moments later marks every running apply job `failed`, and the
+    /// sweep only looks at running jobs - so the refusal erased its own retry
+    /// condition. The disposition must be stamped durably and the job must remain
+    /// findable on a later launch.
+    #[tokio::test]
+    async fn a_fail_closed_job_is_stamped_and_retried_after_the_reclaim() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(None).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+
+        // Launch 1: refuses (unreadable mode) and stamps the disposition.
+        reconcile_stranded_apply_jobs(&pool, &PoisonFs, NOW)
+            .await
+            .expect_err("unreadable mode fails closed");
+        let code: Option<String> = sqlx::query_scalar("SELECT error_code FROM jobs WHERE id = ?")
+            .bind(job)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(code.as_deref(), Some(RECONCILE_FAILED_CODE));
+
+        // The reclaim runs next, as it does at startup, and must not erase it.
+        super::super::lock::reclaim_stranded_apply_jobs(&pool, NOW)
+            .await
+            .unwrap();
+        let (state, code): (String, Option<String>) =
+            sqlx::query_as("SELECT state, error_code FROM jobs WHERE id = ?")
+                .bind(job)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state, "failed");
+        assert_eq!(
+            code.as_deref(),
+            Some(RECONCILE_FAILED_CODE),
+            "the reclaim must not overwrite the needs-review disposition with 'interrupted'"
+        );
+
+        // Launch 2: the job is no longer `running`, but is still reconsidered.
+        let err = reconcile_stranded_apply_jobs(&pool, &PoisonFs, NOW)
+            .await
+            .expect_err("still unreadable, so still refused - but it was LOOKED AT");
+        assert!(matches!(err, AppError::ReconcileFailed { .. }));
+        assert!(
+            !query_in_doubt(&pool, job).await.unwrap().is_empty(),
+            "and it still has not been repaired on a guess"
+        );
+        pool.close().await;
+    }
+
+    /// A previously-refused job must not make the single-writer count trip: it is
+    /// no longer running and is not holding the lock.
+    #[tokio::test]
+    async fn a_needs_review_job_does_not_trip_the_single_writer_check() {
+        let (_dir, pool, old) = fresh_pool_and_job_with_mode(Some("real")).await;
+        sqlx::query("UPDATE jobs SET state = 'failed', error_code = ? WHERE id = ?")
+            .bind(RECONCILE_FAILED_CODE)
+            .bind(old)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A fresh stranded run, plus the old needs-review one.
+        let new_job = add_stranded_job(&pool, Some("real")).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(new_job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+        let fs = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
+
+        let surfaced = reconcile_stranded_apply_jobs(&pool, &fs, NOW)
+            .await
+            .expect("one running job is not an invariant violation")
+            .expect("surfaced");
+        assert_eq!(surfaced.job_id, new_job);
+        pool.close().await;
+    }
+
+    /// A successful pass clears the needs-review stamp so it stops being retried.
+    #[tokio::test]
+    async fn a_successful_pass_clears_the_needs_review_stamp() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(Some("real")).await;
+        sqlx::query("UPDATE jobs SET state = 'failed', error_code = ? WHERE id = ?")
+            .bind(RECONCILE_FAILED_CODE)
+            .bind(job)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+        let fs = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
+
+        reconcile_stranded_apply_jobs(&pool, &fs, NOW)
+            .await
+            .unwrap();
+        let code: Option<String> = sqlx::query_scalar("SELECT error_code FROM jobs WHERE id = ?")
+            .bind(job)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(code, None, "settled, so no longer needs review");
         pool.close().await;
     }
 
