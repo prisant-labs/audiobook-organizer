@@ -275,6 +275,18 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "danger",
   },
 
+  // -- Picking up after an interruption (v0.6.0 F-606) ------------------------
+  // The startup pass only READS the shelves to work out how far an interrupted
+  // tidy-up got; it never moves anything. So the copy can promise, without
+  // qualification, that nothing was changed by the failure itself.
+  "reconcile-failed": {
+    sentence: "A tidy-up was interrupted, and the app couldn't work out how far it got.",
+    nextStep:
+      "Nothing was changed by this. Restart the app to try again, or scan your library to see where your books stand now.",
+    retryable: true,
+    tone: "danger",
+  },
+
   // -- After-the-fact check (v0.5.0: paused until a difference is acknowledged) --
   "tidying-blocked": {
     sentence: "The last tidy-up's after-the-fact check found a difference that needs a look.",
