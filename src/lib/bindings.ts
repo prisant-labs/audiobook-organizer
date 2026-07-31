@@ -153,6 +153,18 @@ export const commands = {
 	/**  The apply job this pass inspected. */
 	job_id: number,
 	/**
+	 *  Which filesystem the interrupted job had been walking.
+	 * 
+	 *  This is what separates the two recovery stories the shell must tell. A
+	 *  [`Real`](ApplyMode::Real) job may have left a half-applied change on the
+	 *  real shelves, so its outcome was verified against the disk and resume may
+	 *  be offered. A [`DryRun`](ApplyMode::DryRun) job only ever touched a
+	 *  [`MemFs`](super::MemFs) that died with the process: the real shelves were
+	 *  never touched, nothing on disk can be verified, and there is nothing to
+	 *  resume - only a practice run to close out.
+	 */
+	mode: ApplyMode,
+	/**
 	 *  Whether an in-doubt op was found and its terminal row repaired. `false`
 	 *  means the job left nothing to recover: a clean finish, or the FD-33
 	 *  lost-WAL-tail case.
@@ -1635,6 +1647,18 @@ export type ReasonKind = "warn" | "alert";
 export type ReconcileResult = {
 	/**  The apply job this pass inspected. */
 	job_id: number,
+	/**
+	 *  Which filesystem the interrupted job had been walking.
+	 * 
+	 *  This is what separates the two recovery stories the shell must tell. A
+	 *  [`Real`](ApplyMode::Real) job may have left a half-applied change on the
+	 *  real shelves, so its outcome was verified against the disk and resume may
+	 *  be offered. A [`DryRun`](ApplyMode::DryRun) job only ever touched a
+	 *  [`MemFs`](super::MemFs) that died with the process: the real shelves were
+	 *  never touched, nothing on disk can be verified, and there is nothing to
+	 *  resume - only a practice run to close out.
+	 */
+	mode: ApplyMode,
 	/**
 	 *  Whether an in-doubt op was found and its terminal row repaired. `false`
 	 *  means the job left nothing to recover: a clean finish, or the FD-33

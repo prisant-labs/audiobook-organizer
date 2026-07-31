@@ -25,6 +25,23 @@
 //! primitives are pure and independently testable, which is where the safety
 //! reasoning lives.
 //!
+//! # Reconciliation is mode-gated
+//!
+//! Recovery runs at STARTUP, outside the lifetime of the job it is recovering, so
+//! the [`Vfs`] that job was walking no longer exists and cannot be inherited - it
+//! has to be re-derived from what was persisted. That is what `jobs.mode` is for
+//! (migration 0005 adds it so "a dry-run rehearsal is never mistaken for a real
+//! apply" during DB-side recovery), and every path here that would read the
+//! filesystem is gated on it:
+//!
+//! - `mode = 'real'`: the real shelves may hold a half-applied change. Verify the
+//!   in-doubt op against the disk and possibly offer resume.
+//! - `mode = 'dry-run'`: the rehearsal's [`MemFs`](super::MemFs) died with the
+//!   process and the real shelves were never touched. Close it out without a single
+//!   filesystem read ([`close_interrupted_rehearsal`]).
+//! - `mode` NULL or unrecognised: fail closed. Never guess Real - guessing Real for
+//!   the rows we know least about is the whole bug this gate prevents.
+//!
 //! # The FD-33 lost-tail boundary
 //!
 //! `open_db` runs WAL with `synchronous = NORMAL`. A committed `intent` survives a
@@ -46,7 +63,7 @@ use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
 
 use super::vfs::Vfs;
-use super::{Journal, JournalEntry, JournalPhase, SqliteJournal};
+use super::{ApplyMode, Journal, JournalEntry, JournalPhase, SqliteJournal};
 
 /// The verified on-disk outcome of the single in-doubt operation, determined by
 /// re-reading the filesystem after an interruption.
@@ -216,6 +233,16 @@ pub fn classify_op_outcome<V: Vfs>(vfs: &V, op: &PlanOpRow) -> OpOutcome {
 pub struct ReconcileResult {
     /// The apply job this pass inspected.
     pub job_id: i64,
+    /// Which filesystem the interrupted job had been walking.
+    ///
+    /// This is what separates the two recovery stories the shell must tell. A
+    /// [`Real`](ApplyMode::Real) job may have left a half-applied change on the
+    /// real shelves, so its outcome was verified against the disk and resume may
+    /// be offered. A [`DryRun`](ApplyMode::DryRun) job only ever touched a
+    /// [`MemFs`](super::MemFs) that died with the process: the real shelves were
+    /// never touched, nothing on disk can be verified, and there is nothing to
+    /// resume - only a practice run to close out.
+    pub mode: ApplyMode,
     /// Whether an in-doubt op was found and its terminal row repaired. `false`
     /// means the job left nothing to recover: a clean finish, or the FD-33
     /// lost-WAL-tail case.
@@ -244,12 +271,29 @@ pub struct ReconcileResult {
 /// the append-only, every-intent-has-a-terminal-row invariant the rest of the system
 /// relies on. Never touches the filesystem - it only reads it, through `vfs`, to
 /// classify the outcome.
+///
+/// # `mode` decides whether the filesystem is read at all
+///
+/// `mode` is REQUIRED rather than inferred, and it gates the `vfs` entirely.
+/// [`DryRun`](ApplyMode::DryRun) takes the [`close_interrupted_rehearsal`] path,
+/// which never calls a single `vfs` method; only [`Real`](ApplyMode::Real) probes
+/// the disk. Passing the mode explicitly is what makes "a rehearsal is never
+/// reconciled against the real library" a property of the type signature instead
+/// of a convention a future caller can forget: there is no way to reach the
+/// probing code without having named [`Real`](ApplyMode::Real) at the call site.
 pub async fn reconcile_interrupted_job<V: Vfs>(
     pool: &SqlitePool,
     vfs: &V,
     job_id: i64,
+    mode: ApplyMode,
     now: &str,
 ) -> Result<ReconcileResult, AppError> {
+    // A rehearsal's effects lived in a MemFs that died with the process; the real
+    // shelves were never touched. Close it out WITHOUT reading the disk.
+    if mode == ApplyMode::DryRun {
+        return close_interrupted_rehearsal(pool, job_id, now).await;
+    }
+
     let in_doubt = query_in_doubt(pool, job_id).await?;
     let done_count = count_done(pool, job_id).await?;
 
@@ -259,6 +303,7 @@ pub async fn reconcile_interrupted_job<V: Vfs>(
     if in_doubt.len() > 1 {
         return Ok(ReconcileResult {
             job_id,
+            mode,
             interrupted: true,
             outcome: None,
             in_doubt_op_id: None,
@@ -272,6 +317,7 @@ pub async fn reconcile_interrupted_job<V: Vfs>(
     let Some(entry) = in_doubt.into_iter().next() else {
         return Ok(ReconcileResult {
             job_id,
+            mode,
             interrupted: false,
             outcome: None,
             in_doubt_op_id: None,
@@ -329,10 +375,90 @@ pub async fn reconcile_interrupted_job<V: Vfs>(
 
     Ok(ReconcileResult {
         job_id,
+        mode,
         interrupted: true,
         outcome: Some(outcome),
         in_doubt_op_id: Some(entry.op_id),
         resume_offered,
+        done_count,
+    })
+}
+
+/// Close out an interrupted DRY-RUN apply (a practice run killed mid-walk)
+/// WITHOUT reading the filesystem.
+///
+/// A rehearsal walks a [`MemFs`](super::MemFs) seeded from the snapshot, so its
+/// every effect lived in process memory and vanished with the kill. Two things
+/// follow, and they are the whole reason this path exists separately from the
+/// real one:
+///
+/// 1. **There is nothing on disk to verify.** The real shelves were never touched
+///    by this job, so probing them cannot say anything about it. Probing anyway
+///    would classify the in-doubt op against a filesystem the rehearsal never
+///    wrote to, and could report `Completed` purely because the library already
+///    happened to look that way - a recovery offer with no causal connection to
+///    the run that was lost.
+/// 2. **There is nothing to resume.** The MemFs the walk was mutating is gone, so
+///    a resume could not continue it even in principle. Re-running the rehearsal
+///    from the top is the only sensible action, and that is an ordinary new job,
+///    not a recovery.
+///
+/// So this writes the one `failed` terminal row the kill prevented (preserving the
+/// every-intent-has-a-terminal-row invariant) and reports the interruption with
+/// `outcome: None` - making NO on-disk claim - and `resume_offered: false`.
+async fn close_interrupted_rehearsal(
+    pool: &SqlitePool,
+    job_id: i64,
+    now: &str,
+) -> Result<ReconcileResult, AppError> {
+    let in_doubt = query_in_doubt(pool, job_id).await?;
+    let done_count = count_done(pool, job_id).await?;
+
+    // Same safety abort as the real path: more than one in-doubt row means a
+    // corrupt or hand-edited journal, so repair nothing.
+    if in_doubt.len() > 1 {
+        return Ok(ReconcileResult {
+            job_id,
+            mode: ApplyMode::DryRun,
+            interrupted: true,
+            outcome: None,
+            in_doubt_op_id: None,
+            resume_offered: false,
+            done_count,
+        });
+    }
+
+    let Some(entry) = in_doubt.into_iter().next() else {
+        return Ok(ReconcileResult {
+            job_id,
+            mode: ApplyMode::DryRun,
+            interrupted: false,
+            outcome: None,
+            in_doubt_op_id: None,
+            resume_offered: false,
+            done_count,
+        });
+    };
+
+    let terminal = JournalEntry {
+        job_id: entry.job_id,
+        seq: entry.seq,
+        op_id: entry.op_id,
+        phase: JournalPhase::Failed,
+        at: now.to_string(),
+        detail_json: Some(reconcile_detail("interrupted rehearsal")),
+    };
+    SqliteJournal::new(pool.clone())
+        .write_failed(&terminal)
+        .await?;
+
+    Ok(ReconcileResult {
+        job_id,
+        mode: ApplyMode::DryRun,
+        interrupted: true,
+        outcome: None,
+        in_doubt_op_id: Some(entry.op_id),
+        resume_offered: false,
         done_count,
     })
 }
@@ -369,27 +495,78 @@ pub async fn reconcile_stranded_apply_jobs<V: Vfs>(
     vfs: &V,
     now: &str,
 ) -> Result<Option<ReconcileResult>, AppError> {
-    let mut surfaced = None;
-    for job_id in stranded_apply_job_ids(pool).await? {
-        let result = reconcile_interrupted_job(pool, vfs, job_id, now).await?;
-        if result.interrupted && surfaced.is_none() {
-            surfaced = Some(result);
-        }
+    let stranded = stranded_apply_jobs(pool).await?;
+
+    // The single-writer lock permits at most one apply in flight, so at most one
+    // apply row can be left `running`. Two or more means the invariant has already
+    // been broken (a corrupt database, a hand-edited row, or a lock bug), and the
+    // rows give us no way to tell which one this session's filesystem state
+    // corresponds to. Fail CLOSED: repair no journal, offer no recovery, and
+    // surface the violation. Sweeping them in id order - the previous behaviour -
+    // would have written terminal rows for jobs whose on-disk story we cannot
+    // attribute, which is exactly the kind of confident-but-groundless repair the
+    // reconciler exists to avoid.
+    if stranded.len() > 1 {
+        return Err(AppError::ReconcileFailed {
+            detail: format!(
+                "{} apply jobs are still marked running; at most one is possible under the single-writer lock, so none were reconciled",
+                stranded.len()
+            ),
+        });
     }
-    Ok(surfaced)
+
+    let Some(job) = stranded.into_iter().next() else {
+        return Ok(None);
+    };
+
+    // A job whose mode we cannot read is a job we must not probe the disk for.
+    // `jobs.mode` is nullable (see `ApplyMode::from_db_tag`), so this is reachable
+    // for pre-0005 rows and for any row inserted outside the lock path. Defaulting
+    // to Real here would reintroduce the rehearsal-probes-the-real-library bug for
+    // precisely the rows we know least about.
+    let Some(mode) = job.mode.as_deref().and_then(ApplyMode::from_db_tag) else {
+        return Err(AppError::ReconcileFailed {
+            detail: format!(
+                "apply job {} has no recognisable mode recorded, so its outcome was not verified against the real library",
+                job.id
+            ),
+        });
+    };
+
+    let result = reconcile_interrupted_job(pool, vfs, job.id, mode, now).await?;
+    Ok(result.interrupted.then_some(result))
 }
 
-/// The ids of apply jobs still marked `running` - stranded by a prior session's
-/// kill (the single-writer invariant means there is normally zero or one).
-async fn stranded_apply_job_ids(pool: &SqlitePool) -> Result<Vec<i64>, AppError> {
-    let rows =
-        sqlx::query("SELECT id FROM jobs WHERE kind = 'apply' AND state = 'running' ORDER BY id")
-            .fetch_all(pool)
-            .await
-            .map_err(|e| AppError::ReconcileFailed {
-                detail: e.to_string(),
-            })?;
-    Ok(rows.into_iter().map(|r| r.get::<i64, _>("id")).collect())
+/// An apply job left `running` by a prior session's kill.
+struct StrandedJob {
+    id: i64,
+    /// The raw `jobs.mode` tag, which is NULLABLE - see [`ApplyMode::from_db_tag`].
+    mode: Option<String>,
+}
+
+/// The apply jobs still marked `running` - stranded by a prior session's kill (the
+/// single-writer invariant means there is normally zero or one).
+///
+/// Selects `mode` alongside the id because the mode decides whether the real
+/// filesystem may be read at all: migration 0005 added `jobs.mode` expressly so
+/// that "a dry-run rehearsal is never mistaken for a real apply" during DB-side
+/// recovery, and that guarantee is only worth anything if recovery reads it.
+async fn stranded_apply_jobs(pool: &SqlitePool) -> Result<Vec<StrandedJob>, AppError> {
+    let rows = sqlx::query(
+        "SELECT id, mode FROM jobs WHERE kind = 'apply' AND state = 'running' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AppError::ReconcileFailed {
+        detail: e.to_string(),
+    })?;
+    Ok(rows
+        .into_iter()
+        .map(|r| StrandedJob {
+            id: r.get::<i64, _>("id"),
+            mode: r.get::<Option<String>, _>("mode"),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -397,23 +574,49 @@ mod tests {
     use super::*;
     use crate::db::open_db;
     use crate::db::plans::PlanOpRow;
+    use crate::exec::vfs::{VfsError, VfsMetadata};
     use crate::exec::{Journal, JournalEntry, JournalPhase, MemFs, SeedEntry, SqliteJournal};
     use std::path::Path;
     use tempfile::TempDir;
 
     /// A fresh migrated database with the one `jobs` row the journal's `job_id`
     /// foreign key needs, returning the pool and that job id.
+    ///
+    /// The row is stamped `mode = 'real'`, matching what the single-writer lock
+    /// writes for a real apply, so these fixtures exercise the disk-probing path.
     async fn fresh_pool_and_job() -> (TempDir, SqlitePool, i64) {
+        fresh_pool_and_job_with_mode(Some("real")).await
+    }
+
+    /// As [`fresh_pool_and_job`], but with an explicit `jobs.mode` tag - including
+    /// `None`, which is what pre-0005 rows and any insert outside the lock path
+    /// leave behind (the column is nullable).
+    async fn fresh_pool_and_job_with_mode(mode: Option<&str>) -> (TempDir, SqlitePool, i64) {
         let dir = TempDir::new().expect("db tempdir");
         let (pool, _) = open_db(dir.path()).await.expect("open_db");
         let result = sqlx::query(
-            "INSERT INTO jobs (kind, state, started_at) VALUES ('apply', 'running', ?)",
+            "INSERT INTO jobs (kind, state, started_at, mode) VALUES ('apply', 'running', ?, ?)",
         )
         .bind("2026-07-22T00:00:00Z")
+        .bind(mode)
         .execute(&pool)
         .await
         .expect("insert jobs row");
         (dir, pool, result.last_insert_rowid())
+    }
+
+    /// Add a SECOND stranded `running` apply row, breaking the single-writer
+    /// invariant the way a corrupt database or a lock bug would.
+    async fn add_stranded_job(pool: &SqlitePool, mode: Option<&str>) -> i64 {
+        sqlx::query(
+            "INSERT INTO jobs (kind, state, started_at, mode) VALUES ('apply', 'running', ?, ?)",
+        )
+        .bind("2026-07-22T00:00:01Z")
+        .bind(mode)
+        .execute(pool)
+        .await
+        .expect("insert second jobs row")
+        .last_insert_rowid()
     }
 
     fn entry(job_id: i64, seq: i64, op_id: i64, phase: JournalPhase) -> JournalEntry {
@@ -837,7 +1040,7 @@ mod tests {
         // Target landed, source gone: the same-volume rename completed.
         let fs = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
 
-        let result = reconcile_interrupted_job(&pool, &fs, job, NOW)
+        let result = reconcile_interrupted_job(&pool, &fs, job, ApplyMode::Real, NOW)
             .await
             .unwrap();
         assert!(result.interrupted);
@@ -864,7 +1067,7 @@ mod tests {
         // Source still present, target absent: the op never landed.
         let fs = mem(&[(r"E:\lib\Old\B.m4b", 100, false)]);
 
-        let result = reconcile_interrupted_job(&pool, &fs, job, NOW)
+        let result = reconcile_interrupted_job(&pool, &fs, job, ApplyMode::Real, NOW)
             .await
             .unwrap();
         assert!(result.interrupted);
@@ -891,7 +1094,7 @@ mod tests {
             (r"E:\lib\New\B.m4b", 100, false),
         ]);
 
-        let result = reconcile_interrupted_job(&pool, &fs, job, NOW)
+        let result = reconcile_interrupted_job(&pool, &fs, job, ApplyMode::Real, NOW)
             .await
             .unwrap();
         assert!(result.interrupted);
@@ -916,7 +1119,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = reconcile_interrupted_job(&pool, &MemFs::new(), job, NOW)
+        let result = reconcile_interrupted_job(&pool, &MemFs::new(), job, ApplyMode::Real, NOW)
             .await
             .unwrap();
         assert!(!result.interrupted);
@@ -979,6 +1182,7 @@ mod tests {
     fn reconcile_result_round_trips_through_serde() {
         let r = ReconcileResult {
             job_id: 7,
+            mode: ApplyMode::Real,
             interrupted: true,
             outcome: Some(OpOutcome::NotStarted),
             in_doubt_op_id: Some(42),
@@ -990,7 +1194,203 @@ mod tests {
             json.contains("not-started"),
             "OpOutcome is kebab-case on the wire"
         );
+        assert!(
+            json.contains("\"mode\":\"real\""),
+            "ApplyMode is kebab-case on the wire"
+        );
         let back: ReconcileResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, r);
+    }
+
+    // -- Mode-awareness: a rehearsal is never reconciled against the real library --
+    //
+    // These are the regression tests for the defect the v0.6.0 audit found: the
+    // startup sweep queried `running` apply jobs without reading `jobs.mode` while
+    // the shell always handed it `RealFs`. Because the shipped frontend pins
+    // dry-run, EVERY stranded job in practice was a rehearsal, so a kill during a
+    // practice run would probe the user's actual library to classify an operation
+    // that had only ever touched memory.
+
+    /// A `Vfs` that fails the test if anything reads it. Used to prove the dry-run
+    /// path is not merely *correct* about the disk but never touches it at all -
+    /// an assertion about the outcome could pass by luck; this cannot.
+    #[derive(Default)]
+    struct PoisonFs;
+
+    impl Vfs for PoisonFs {
+        fn exists(&self, path: &Path) -> bool {
+            panic!("a dry-run reconciliation READ the real filesystem: exists({path:?})");
+        }
+        fn is_dir(&self, path: &Path) -> bool {
+            panic!("a dry-run reconciliation READ the real filesystem: is_dir({path:?})");
+        }
+        fn metadata(&self, path: &Path) -> Result<VfsMetadata, VfsError> {
+            panic!("a dry-run reconciliation READ the real filesystem: metadata({path:?})");
+        }
+        fn rename(&self, from: &Path, _to: &Path) -> Result<(), VfsError> {
+            panic!("a dry-run reconciliation WROTE the real filesystem: rename({from:?})");
+        }
+        fn copy_file(&self, from: &Path, _to: &Path) -> Result<u64, VfsError> {
+            panic!("a dry-run reconciliation WROTE the real filesystem: copy_file({from:?})");
+        }
+        fn remove_file(&self, path: &Path) -> Result<(), VfsError> {
+            panic!("a dry-run reconciliation WROTE the real filesystem: remove_file({path:?})");
+        }
+        fn remove_dir(&self, path: &Path) -> Result<(), VfsError> {
+            panic!("a dry-run reconciliation WROTE the real filesystem: remove_dir({path:?})");
+        }
+        fn create_dir_all(&self, path: &Path) -> Result<(), VfsError> {
+            panic!("a dry-run reconciliation WROTE the real filesystem: create_dir_all({path:?})");
+        }
+    }
+
+    /// The core guarantee: an interrupted rehearsal is closed out WITHOUT a single
+    /// filesystem read, and never offers resume.
+    #[tokio::test]
+    async fn an_interrupted_rehearsal_never_touches_the_real_filesystem() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(Some("dry-run")).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+
+        // PoisonFs panics on ANY access; reaching the end proves none happened.
+        let surfaced = reconcile_stranded_apply_jobs(&pool, &PoisonFs, NOW)
+            .await
+            .expect("dry-run reconciliation succeeds without reading the disk")
+            .expect("the interrupted rehearsal is surfaced");
+
+        assert_eq!(surfaced.mode, ApplyMode::DryRun);
+        assert!(surfaced.interrupted);
+        assert_eq!(
+            surfaced.outcome, None,
+            "a rehearsal makes NO on-disk claim: there is nothing on disk it could have done"
+        );
+        assert!(
+            !surfaced.resume_offered,
+            "the MemFs the rehearsal was mutating died with the process, so there is nothing to resume"
+        );
+        assert!(
+            query_in_doubt(&pool, job).await.unwrap().is_empty(),
+            "the journal invariant still holds: the intent got its terminal row"
+        );
+        pool.close().await;
+    }
+
+    /// The specific false-recovery the audit predicted: a library that already
+    /// looks like the rehearsal's target must NOT be read as "the op completed".
+    /// Under the old mode-blind sweep this returned Completed with resume offered.
+    #[tokio::test]
+    async fn a_rehearsal_is_not_resumed_because_the_real_library_happens_to_match() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(Some("dry-run")).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+
+        // A real disk where the target already exists and the source is gone: for a
+        // REAL job this is the textbook `Completed` shape (AC-2).
+        let looks_completed = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
+
+        let surfaced = reconcile_stranded_apply_jobs(&pool, &looks_completed, NOW)
+            .await
+            .unwrap()
+            .expect("surfaced");
+
+        assert_eq!(
+            surfaced.outcome, None,
+            "no outcome is inferred for a rehearsal"
+        );
+        assert!(
+            !surfaced.resume_offered,
+            "the pre-fix bug: this said Completed + resume, from a disk the rehearsal never wrote"
+        );
+        pool.close().await;
+    }
+
+    /// A real interrupted job still probes the disk and still offers resume - the
+    /// mode gate must not have broken the path it is guarding.
+    #[tokio::test]
+    async fn a_real_interrupted_job_still_verifies_against_the_disk() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(Some("real")).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+        let fs = mem(&[(r"E:\lib\New\B.m4b", 100, false)]);
+
+        let surfaced = reconcile_stranded_apply_jobs(&pool, &fs, NOW)
+            .await
+            .unwrap()
+            .expect("surfaced");
+
+        assert_eq!(surfaced.mode, ApplyMode::Real);
+        assert_eq!(surfaced.outcome, Some(OpOutcome::Completed));
+        assert!(surfaced.resume_offered);
+        pool.close().await;
+    }
+
+    /// A NULL `jobs.mode` fails closed rather than defaulting to Real. The column is
+    /// nullable, so this is a reachable state, not a hypothetical one.
+    #[tokio::test]
+    async fn an_unknown_mode_fails_closed_and_never_probes_the_disk() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(None).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+
+        let err = reconcile_stranded_apply_jobs(&pool, &PoisonFs, NOW)
+            .await
+            .expect_err("an unreadable mode must not be reconciled");
+        assert!(matches!(err, AppError::ReconcileFailed { .. }));
+        assert!(
+            !query_in_doubt(&pool, job).await.unwrap().is_empty(),
+            "failing closed means the journal was NOT repaired on a guess"
+        );
+        pool.close().await;
+    }
+
+    /// An unrecognised mode tag (a future or corrupted value) fails closed too.
+    #[tokio::test]
+    async fn an_unrecognised_mode_tag_fails_closed() {
+        let (_dir, pool, _job) = fresh_pool_and_job_with_mode(Some("simulated")).await;
+        let err = reconcile_stranded_apply_jobs(&pool, &PoisonFs, NOW)
+            .await
+            .expect_err("an unrecognised mode must not be reconciled");
+        assert!(matches!(err, AppError::ReconcileFailed { .. }));
+        pool.close().await;
+    }
+
+    /// Two stranded `running` apply rows violate single-writer. Fail closed and
+    /// repair NOTHING, rather than sweeping them in id order as the first cut did.
+    #[tokio::test]
+    async fn multiple_stranded_apply_jobs_fail_closed_without_repairing_any() {
+        let (_dir, pool, job) = fresh_pool_and_job_with_mode(Some("real")).await;
+        let op_id =
+            seed_plan_op(&pool, "move", r"E:\lib\Old\B.m4b", r"E:\lib\New\B.m4b", 100).await;
+        SqliteJournal::new(pool.clone())
+            .write_intent(&entry(job, 0, op_id, JournalPhase::Intent))
+            .await
+            .unwrap();
+        add_stranded_job(&pool, Some("real")).await;
+
+        let err = reconcile_stranded_apply_jobs(&pool, &PoisonFs, NOW)
+            .await
+            .expect_err("a broken single-writer invariant must not be auto-repaired");
+        assert!(matches!(err, AppError::ReconcileFailed { .. }));
+        assert!(
+            !query_in_doubt(&pool, job).await.unwrap().is_empty(),
+            "no terminal row was invented for a job we cannot attribute"
+        );
+        pool.close().await;
     }
 }

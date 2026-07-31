@@ -279,9 +279,16 @@ pub fn run() {
             // reconcile its journal - verify the real on-disk outcome of the single
             // in-doubt operation and write the terminal row the kill prevented - and
             // capture the interruption so the shell can offer resume-or-rollback
-            // (the `startup_interruption` command reads it on mount). Reads the real
-            // filesystem (RealFs) but never mutates it. Best-effort: a failure only
-            // means no resume offer this launch; the reclaim below still runs.
+            // (the `startup_interruption` command reads it on mount).
+            //
+            // `RealFs` is passed as the probe the reconciler MAY use, not the one it
+            // will: the reconciler reads `jobs.mode` first and only touches this Vfs
+            // for a `mode = 'real'` job. An interrupted rehearsal is closed out
+            // without a single filesystem read, and an unreadable mode fails closed.
+            // Never mutates the filesystem either way.
+            //
+            // Best-effort: a failure (including the deliberate fail-closed cases)
+            // only means no resume offer this launch; the reclaim below still runs.
             let startup_interruption = tauri::async_runtime::block_on(async {
                 abo_core::exec::reconcile_stranded_apply_jobs(
                     &pool,

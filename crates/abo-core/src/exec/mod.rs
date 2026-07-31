@@ -129,6 +129,26 @@ impl ApplyMode {
             ApplyMode::Real => "real",
         }
     }
+
+    /// Parse the tag stored in `jobs.mode`, returning `None` for anything this
+    /// build does not recognise.
+    ///
+    /// `jobs.mode` is NULLABLE: migration 0005 adds it with a bare
+    /// `ALTER TABLE jobs ADD COLUMN mode TEXT`, because SQLite cannot add a
+    /// `NOT NULL` column to a populated table without a default. So rows written
+    /// before 0005, and any row inserted by a path that does not go through
+    /// [`super::lock`], carry `NULL` here. A `None` return is therefore a real
+    /// state, not an impossible one, and every caller that would touch the
+    /// filesystem on the strength of a mode MUST fail closed on it rather than
+    /// assuming [`Real`](ApplyMode::Real) - assuming Real is precisely how a
+    /// rehearsal ends up being reconciled against the actual library.
+    pub fn from_db_tag(tag: &str) -> Option<Self> {
+        match tag {
+            "dry-run" => Some(ApplyMode::DryRun),
+            "real" => Some(ApplyMode::Real),
+            _ => None,
+        }
+    }
 }
 
 /// The lifecycle phase of one journal row (see the module-level decision gate).
