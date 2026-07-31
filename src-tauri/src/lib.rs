@@ -152,6 +152,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::ruleset::ruleset_count,
             commands::ruleset::ruleset_preset_examples,
             commands::apply::apply_start,
+            commands::history::history_list,
             commands::rollback::rollback_prepare,
             commands::rollback::rollback_prepare_partial,
             commands::job::job_status,

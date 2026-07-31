@@ -46,6 +46,7 @@
 //! skeleton walk produces the INTENT rows in memory so the shape is exercised and
 //! the later phase implements persistence against a fixed type.
 
+pub mod history;
 pub mod journal;
 pub mod lock;
 pub mod manifest;
@@ -62,6 +63,7 @@ use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
 use crate::plan::builder::QUARANTINE_JOB_PLACEHOLDER;
 
+pub use history::{list_history, HistoryEntry, UndoOffer};
 pub use journal::{Journal, MemJournal, SqliteJournal};
 // `ExecControl`/`NoControl` are defined in this module (below); no re-export
 // needed here, but keep them reachable under `abo_core::exec::*` for the shell.

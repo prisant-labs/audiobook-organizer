@@ -352,6 +352,15 @@ pub enum AppError {
     /// an interruption at startup.
     #[error("could not check whether the last tidy-up was interrupted: {detail}")]
     ReconcileFailed { detail: String },
+
+    // ---- History family (v0.6.0: the record of past tidy-ups) ----
+    /// The History screen's read of past tidy-ups failed (a SQLite error reading
+    /// `jobs`, `journal`, or `manifests`). `detail` is the developer-facing cause.
+    /// A read-only failure: it means the record could not be SHOWN, never that a
+    /// past tidy-up or its undo file was lost - both live outside this read, and
+    /// the undo file is self-contained by design (AC-11).
+    #[error("could not read the record of past tidy-ups: {detail}")]
+    HistoryUnavailable { detail: String },
 }
 
 impl AppError {
@@ -410,6 +419,8 @@ impl AppError {
             AppError::NothingToResume => "nothing-to-resume",
             // Interruption safety family
             AppError::ReconcileFailed { .. } => "reconcile-failed",
+            // History family
+            AppError::HistoryUnavailable { .. } => "history-unavailable",
         }
     }
 
@@ -610,6 +621,10 @@ impl AppError {
                  data folder may be on a synced location (OneDrive); free space or move the app \
                  data out of the synced folder."
             }
+            // History family
+            AppError::HistoryUnavailable { .. } => {
+                "The app could not read the record of your past tidy-ups. Your books and your                  undo files are untouched - only the app's own notes could not be read. Restart                  the app and try again."
+            }
         }
     }
 }
@@ -622,6 +637,9 @@ mod tests {
     /// remediation coverage tests iterate this list.
     fn one_of_each() -> Vec<AppError> {
         vec![
+            AppError::HistoryUnavailable {
+                detail: "boom".into(),
+            },
             AppError::DbMigrationFailed {
                 detail: "boom".into(),
             },

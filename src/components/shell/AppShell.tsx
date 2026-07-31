@@ -13,6 +13,7 @@ import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
 import { ScreenContainer } from "./ScreenContainer";
 import { ComingSoon } from "./ComingSoon";
+import { History } from "@/routes/History";
 import { Settings } from "@/routes/Settings";
 import { Library } from "@/routes/Library";
 import { Review } from "@/routes/Review";
@@ -51,6 +52,10 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   // this holds the family-safe error surface instead of failing silently to the
   // console (P8 minor). Cleared by the retry action, which returns to the review.
   const [startError, setStartError] = useState<AppError | null>(null);
+  // An undo plan prepared from History (v0.6.0). Reviewing it uses the SAME
+  // surface a forward tidy-up uses (D-09), so this is just a plan id the
+  // Tidy-up route opens instead of generating one from the current scan.
+  const [openPlanId, setOpenPlanId] = useState<number | null>(null);
   // ONE `classify_overview` load for the whole shell (T-15): the Sidebar
   // badges and the Library home both derive from this single `health` value,
   // so they can never disagree and both refresh together when a scan
@@ -120,6 +125,11 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
               health={health}
               onRepickRoot={onRepickRoot}
               onStartApply={onStartApply}
+              openPlanId={openPlanId}
+              onOpenPlan={(planId) => {
+                setOpenPlanId(planId);
+                setRoute("tidy-up");
+              }}
             />
           )}
         </ScreenContainer>
@@ -136,6 +146,8 @@ function RouteContent({
   health,
   onRepickRoot,
   onStartApply,
+  openPlanId,
+  onOpenPlan,
 }: {
   route: RouteId;
   settings: AppSettings;
@@ -144,16 +156,24 @@ function RouteContent({
   health: UseHealthMetrics;
   onRepickRoot: () => Promise<boolean>;
   onStartApply: (planId: number) => Promise<void>;
+  openPlanId: number | null;
+  onOpenPlan: (planId: number) => void;
 }) {
   switch (route) {
     case "library":
       return <Library onNavigate={onNavigate} health={health} onRepickRoot={onRepickRoot} />;
     case "tidy-up":
-      return <Review scanId={health.overview?.scan_id ?? null} onStartApply={onStartApply} />;
+      return (
+        <Review
+          scanId={health.overview?.scan_id ?? null}
+          onStartApply={onStartApply}
+          openPlanId={openPlanId}
+        />
+      );
     case "duplicates":
       return <ComingSoon label="Duplicates" />;
     case "history":
-      return <ComingSoon label="History" />;
+      return <History onOpenPlan={onOpenPlan} />;
     case "settings":
       return (
         <Settings
