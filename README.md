@@ -79,4 +79,4 @@ This repository is private during the planning and early build phases. There is 
 
 ## License
 
-License: to be decided before any public release. The `Cargo.toml` and `package.json` metadata is not yet authoritative and is reconciled as part of that decision.
+MIT. See [LICENSE](LICENSE). The `Cargo.toml` and `package.json` metadata agree.
