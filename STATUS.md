@@ -3,7 +3,7 @@ title: "Audiobook Organizer - Status and Decision Queue"
 type: status
 project: audiobook-organizer
 created: 2026-07-20
-updated: 2026-07-30
+updated: 2026-07-31
 status: active
 ---
 
@@ -13,7 +13,8 @@ One page. The top section is the only part that needs you. Everything below is c
 
 ## WAITING ON YOU (nothing else is blocked on code)
 
-- [ ] **Restore GitHub Actions.** Jobs are refusing to start: *"recent account payments have failed or your spending limit needs to be increased."* This is the one item blocking merges. Under D-11 (agents may self-merge green PRs while private) a PR cannot merge without green CI, so the v0.6.0 P1 PR and three Dependabot PRs are all stuck behind it. Fix at github.com/settings/billing.
+- [ ] **Merge PR #1 (v0.6.0 P1 + P0) once CI is green.** D-11's agent self-merge permission was scoped to the repo being private, so it lapsed with FD-38. Merging is now yours.
+- [ ] **Review the Dependabot PRs** that re-opened on the new repo (JavaScript, Rust, and Actions groups). CI runs on them now, so a green check is real evidence.
 - [ ] **Cut tags v0.1.0 through v0.5.0.** Five releases are built and merged; zero are tagged. Human-only. Runbook: `docs/internal/release-plans/runbook_cut-tag-release.md`
 - [ ] **AC-17 (round-trip evidence): accept or extend.** Byte-identical round-trip is proven on a 3-book subset. Say "good enough" or ask for a fuller run. Scratch copies retained at `E:\tmp\abo-rt\`. Detail: `docs/internal/releases/v0.5.0-acting/spec.md`
 - [ ] **FD-33 / FD-34 veto window.** Two decisions from v0.5.0 that stand unless you object: journal durability boundary, set-aside placement (beside the library, not inside). Detail: bottom of `docs/internal/decision-ledger.md`
@@ -23,7 +24,9 @@ One page. The top section is the only part that needs you. Everything below is c
 - [ ] **Cross-volume policy (new, from the audit).** A move between drives currently copies, compares size, then deletes the source. Equal size is not equal content. Recommendation: prohibit cross-volume real moves until content hashing lands. Decide before any real-library campaign.
 - [ ] **Crit the 13 UI mockups** in `_local/gui/2026-07-22/` (open `index.html`). Highest-stakes: tidy-up and resume-rollback. P1c (the resume-or-rollback surface) is parked awaiting your direction on `resume-rollback.html`.
 
-**Do NOT flip this repo public.** 38 `refs/pull/*` refs on GitHub still hold pre-rewrite commits containing the scrubbed family name (verified 2026-07-30: commit `dce9b55` carries it in 7 files, including `PRODUCT.md` and two dropped session logs). Flipping visibility re-exposes exactly what FD-35 removed. Only GitHub Support can purge those refs. The sanctioned path is a FRESH public repo from clean history: `_local/runbooks/fresh-public-repo-runbook.md`.
+**This repo is now PUBLIC** (FD-38, executed 2026-07-31). It is a NEW repository built from verified-clean history, not a visibility change: the old private repo still holds 38 `refs/pull/*` refs carrying the scrubbed family name, which only GitHub Support can purge. That repo is renamed to `audiobook-organizer-private-archive`, archived, and **must stay private forever**. Do not un-archive it into public visibility, and do not delete it casually if you still want the old PR record. Verified at publication: 0 pull refs on the new repo, 0 name-bearing blobs across all 214 published commits.
+
+Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "not a final license grant" header that would have published a licence disclaiming itself.
 
 ## Release ladder at a glance
 
