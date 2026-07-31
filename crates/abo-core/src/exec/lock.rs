@@ -133,8 +133,17 @@ pub async fn acquire_apply_job(
 /// job's lifecycle is untouched. Safe to call unconditionally at startup: it is a
 /// no-op when nothing is stranded.
 pub async fn reclaim_stranded_apply_jobs(pool: &SqlitePool, now: &str) -> Result<u64, AppError> {
+    // `COALESCE` preserves an error_code the startup reconciliation pass already
+    // stamped. That pass runs FIRST and marks any job it refused to reconcile
+    // (unreadable mode, broken single-writer invariant, journal read failure) with
+    // `reconcile-failed`. Overwriting that with the generic `interrupted` would
+    // erase the only durable trace that the job is UNRESOLVED rather than merely
+    // interrupted - and since this update also clears `running`, the reconciler's
+    // own query would never find the job again, making a deliberate fail-closed
+    // refusal permanently invisible.
     let result = sqlx::query(
-        "UPDATE jobs SET state = 'failed', finished_at = ?, error_code = 'interrupted' \
+        "UPDATE jobs SET state = 'failed', finished_at = ?, \
+                error_code = COALESCE(error_code, 'interrupted') \
          WHERE kind = 'apply' AND state = 'running'",
     )
     .bind(now)

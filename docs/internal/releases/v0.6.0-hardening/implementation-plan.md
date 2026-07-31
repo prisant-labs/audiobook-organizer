@@ -79,9 +79,26 @@ design before it is built. Two audit-found defects were fixed on top:
    Reconciliation is now gated on `jobs.mode`, fails closed on an unreadable mode (the
    column is nullable), and fails closed rather than sweeping multiple stranded jobs.
 
-Still outstanding for P1: the true kill-process integration tests the spec calls for
-(current coverage simulates the in-doubt state rather than killing a process), and the
-AC-8 hand walkthrough.
+**Kill-process tests landed 2026-07-31.** The spec's kill-injection requirement is
+now met for real rather than simulated. `crates/abo-core/src/bin/kill_harness.rs` is a
+feature-gated binary that runs an actual apply against a real temp library through
+`RealFs` and then calls `std::process::abort` mid-operation - no unwinding, no `Drop`,
+no userspace flush - and `crates/abo-core/tests/kill_recovery.rs` reconciles whatever
+that leaves on disk. This matters because every other reconciler test builds the
+in-doubt state by hand, which proves the reconciler reasons correctly about a given
+database state but assumes the state a kill actually produces; the assumption was the
+untested part. Both journal-before-act cases are covered: intent-then-kill (AC-4, the
+source is still in place, resume restarts this op) and act-then-kill (AC-5, the rename
+landed, the journal is repaired as `done` not `failed`, resume continues from the next
+op). A third test pins the at-most-one-repaired-row invariant. The suite was
+mutation-checked: inverting the completed-rename classification fails the AC-5 test and
+correctly leaves the other two passing.
+
+The harness is gated behind a `kill-harness` cargo feature (off by default, enabled by
+the self dev-dependency for `cargo test -p abo-core`), so a normal build never produces
+it and core purity is unaffected.
+
+Still outstanding for P1: the AC-8 hand walkthrough (manual QA), and P1c.
 
 Phases P1-P3 are strictly ordered (safety foundation first). P4-P7 can proceed in parallel once P2/P3 land the dedupe data model. P8 is the closing gate.
 

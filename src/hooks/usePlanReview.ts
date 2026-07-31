@@ -57,7 +57,20 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function usePlanReview(scanId: number | null): UsePlanReview {
+/**
+ * @param scanId The scan to build a forward plan from.
+ * @param openPlanId An ALREADY-PERSISTED plan to open instead of generating one.
+ *   Used by the History screen's undo (v0.6.0): preparing an undo produces a real
+ *   inverse plan (D-09 - rollback is not a special code path), so it reviews on
+ *   this same surface rather than a parallel one. When set, the scan-driven
+ *   generation is skipped entirely: regenerating from the scan would silently
+ *   replace the undo the user asked to see with a fresh FORWARD plan, which is
+ *   the opposite of what they clicked.
+ */
+export function usePlanReview(
+  scanId: number | null,
+  openPlanId: number | null = null,
+): UsePlanReview {
   const [review, setReview] = useState<PlanReview | null>(null);
   const [ops, setOps] = useState<PlanOpView[]>([]);
   const [opsTruncated, setOpsTruncated] = useState(false);
@@ -91,16 +104,19 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
   }, []);
 
   useEffect(() => {
-    if (scanId == null) return;
+    if (openPlanId == null && scanId == null) return;
     let cancelled = false;
     inFlightRef.current = true;
     stoppedRef.current = false;
     void (async () => {
-      setPhase("generating");
+      setPhase(openPlanId == null ? "generating" : "loading");
       setError(null);
       setErrorCode(null);
       try {
-        const generated = await generatePlan(scanId);
+        // An already-persisted plan (an undo prepared from History) is LOADED,
+        // never regenerated - see the `openPlanId` doc above.
+        const generated =
+          openPlanId == null ? await generatePlan(scanId!) : await getPlanReview(openPlanId);
         if (cancelled || !mountedRef.current || stoppedRef.current) return;
         setReview(generated);
         setPhase("loading");
@@ -127,9 +143,10 @@ export function usePlanReview(scanId: number | null): UsePlanReview {
     return () => {
       cancelled = true;
     };
-  }, [scanId, regenNonce]);
+  }, [scanId, openPlanId, regenNonce]);
 
-  const status: PlanReviewStatus = scanId == null ? "no-scan" : phase === "idle" ? "generating" : phase;
+  const status: PlanReviewStatus =
+    openPlanId == null && scanId == null ? "no-scan" : phase === "idle" ? "generating" : phase;
 
   const regenerate = useCallback(() => {
     // Ignore an overlapping regenerate while a generation is still in flight

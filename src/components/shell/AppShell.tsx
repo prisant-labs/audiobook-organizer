@@ -13,6 +13,7 @@ import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
 import { ScreenContainer } from "./ScreenContainer";
 import { ComingSoon } from "./ComingSoon";
+import { History } from "@/routes/History";
 import { Settings } from "@/routes/Settings";
 import { Library } from "@/routes/Library";
 import { Review } from "@/routes/Review";
@@ -51,6 +52,31 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   // this holds the family-safe error surface instead of failing silently to the
   // console (P8 minor). Cleared by the retry action, which returns to the review.
   const [startError, setStartError] = useState<AppError | null>(null);
+  // An undo plan prepared from History (v0.6.0). Reviewing it uses the SAME
+  // surface a forward tidy-up uses (D-09), so this is just a plan id the
+  // Tidy-up route opens instead of generating one from the current scan.
+  //
+  // It is scoped to ONE visit. `usePlanReview` prefers this id over the scan on
+  // every run, including a regenerate, so leaving it set would strand the user on
+  // the undo: navigating away and back to Tidy-up would reopen the undo plan, and
+  // "build the plan again" would rebuild the undo rather than a forward plan.
+  // `navigate` below is therefore the ONLY way to change route from the chrome,
+  // and it always clears the selection; `openUndoPlan` is the one path that sets
+  // it, immediately before routing.
+  const [openPlanId, setOpenPlanId] = useState<number | null>(null);
+
+  // Ordinary navigation: always drops any prepared undo, so Tidy-up means the
+  // forward plan unless the user just asked for an undo.
+  const navigate = useCallback((next: RouteId) => {
+    setOpenPlanId(null);
+    setRoute(next);
+  }, []);
+
+  // The one path that opens a prepared undo on the review surface.
+  const openUndoPlan = useCallback((planId: number) => {
+    setOpenPlanId(planId);
+    setRoute("tidy-up");
+  }, []);
   // ONE `classify_overview` load for the whole shell (T-15): the Sidebar
   // badges and the Library home both derive from this single `health` value,
   // so they can never disagree and both refresh together when a scan
@@ -90,18 +116,20 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   }, []);
 
   // When the user finishes with the Apply screen (Done/acknowledge/stopped),
-  // return to the tidy-up route so they can see the plan or start again.
+  // return to the tidy-up route so they can see the plan or start again. Goes
+  // through `navigate` so a just-run undo plan is cleared: after running one, the
+  // review surface should show a fresh forward plan, not the undo again.
   const onApplyDone = useCallback(() => {
     setActiveJob(null);
-    setRoute("tidy-up");
+    navigate("tidy-up");
     health.reload();
-  }, [health]);
+  }, [health, navigate]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <Titlebar theme={theme} onThemeChange={onThemeChange} />
       <div className="grid min-h-0 flex-1 grid-cols-[212px_1fr]">
-        <Sidebar active={route} onNavigate={setRoute} counts={counts} />
+        <Sidebar active={route} onNavigate={navigate} counts={counts} />
         <ScreenContainer>
           {activeJob ? (
             <Apply jobId={activeJob.jobId} mode={activeJob.mode} onDone={onApplyDone} />
@@ -116,10 +144,12 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
               route={route}
               settings={settings}
               onUpdate={onUpdate}
-              onNavigate={setRoute}
+              onNavigate={navigate}
               health={health}
               onRepickRoot={onRepickRoot}
               onStartApply={onStartApply}
+              openPlanId={openPlanId}
+              onOpenPlan={openUndoPlan}
             />
           )}
         </ScreenContainer>
@@ -136,6 +166,8 @@ function RouteContent({
   health,
   onRepickRoot,
   onStartApply,
+  openPlanId,
+  onOpenPlan,
 }: {
   route: RouteId;
   settings: AppSettings;
@@ -144,16 +176,24 @@ function RouteContent({
   health: UseHealthMetrics;
   onRepickRoot: () => Promise<boolean>;
   onStartApply: (planId: number) => Promise<void>;
+  openPlanId: number | null;
+  onOpenPlan: (planId: number) => void;
 }) {
   switch (route) {
     case "library":
       return <Library onNavigate={onNavigate} health={health} onRepickRoot={onRepickRoot} />;
     case "tidy-up":
-      return <Review scanId={health.overview?.scan_id ?? null} onStartApply={onStartApply} />;
+      return (
+        <Review
+          scanId={health.overview?.scan_id ?? null}
+          onStartApply={onStartApply}
+          openPlanId={openPlanId}
+        />
+      );
     case "duplicates":
       return <ComingSoon label="Duplicates" />;
     case "history":
-      return <ComingSoon label="History" />;
+      return <History onOpenPlan={onOpenPlan} />;
     case "settings":
       return (
         <Settings
