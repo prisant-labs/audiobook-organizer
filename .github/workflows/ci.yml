@@ -30,7 +30,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Reality adaptation (Phase 7): ci-plan.md's lint job did not enumerate Linux
       # system packages. `cargo clippy --workspace --all-targets` compiles the
@@ -81,8 +81,8 @@ jobs:
           fi
           echo "OK: abo-core is Tauri-free."
 
-      - uses: pnpm/action-setup@v4          # version from packageManager in package.json
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6          # version from packageManager in package.json
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -164,7 +164,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # See the lint job for why this list and why it is needed even without a Linux
       # bundle target: `cargo test --workspace` compiles the src-tauri crate here too.
@@ -197,8 +197,8 @@ jobs:
       - name: cargo test (workspace)
         run: cargo test --workspace
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -256,15 +256,15 @@ jobs:
     # ci-plan.md Section 2 is updated to match in this same commit. Windows is
     # NEVER allow-fail, preset or otherwise.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -290,7 +290,7 @@ jobs:
       # log, which shows the bundle at `<repo-root>\target\debug\bundle\nsis\...`.
       - name: Upload Windows bundle (inspection only)
         if: matrix.ga
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-debug-bundle
           path: target/debug/bundle/
