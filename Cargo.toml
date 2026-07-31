@@ -36,7 +36,7 @@ repository = "https://github.com/prisant-labs/audiobook-organizer"
 # v2 is a release candidate and a silent RC bump would break IPC codegen
 # (Phase 5). Pins copied verbatim from repo-sync-tool's working, already
 # resolved (Cargo.lock present there) Cargo.toml.
-tauri = "=2.11.3"
+tauri = "=2.11.5"
 tauri-build = "=2.6.3"
 specta = "=2.0.0-rc.25"
 specta-typescript = "=0.0.12"
@@ -76,7 +76,7 @@ tracing = "0.1.44"
 # frontend does not log through the plugin (this phase's brief item 3). This
 # crate is a `log::Log` implementation; it captures the `log` facade, which is
 # how abo-core's tracing events (via tracing's `log` feature) reach the log file.
-tauri-plugin-log = "=2.8.0"
+tauri-plugin-log = "=2.9.0"
 
 # tauri-plugin-single-instance (v0.5.0 P3, AC-8 single-writer): makes the app a
 # single desktop instance so a second launch focuses the existing window and exits,
@@ -96,7 +96,7 @@ tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }
 # is added to package.json at the same pinned 2.7.1 so the Rust plugin and the JS
 # `open()` binding agree. Backend-mediated: the picked path is handed to the
 # backend via settings_set; the WebView never gains a standing filesystem scope.
-tauri-plugin-dialog = "=2.7.1"
+tauri-plugin-dialog = "=2.7.2"
 
 # Per-push CI / default release profile (FD-24). Tuned for a small bundle but
 # with THIN LTO and parallel codegen so per-push CI builds stay fast (the
