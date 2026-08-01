@@ -168,7 +168,7 @@ Suggested Owner: LLM (Sonnet) for scripts and mechanics; human (jp) for the cere
 
 ## Branch/PR Plan
 
-Short-lived branches per phase cluster, merged into `main` via green PRs (agent self-merge while private, D-11 governance / EXECUTION.md):
+Short-lived branches per phase cluster, merged into `main` via green PRs. **Merging is a human decision**: the repo went public on 2026-07-31 (FD-38), which lapsed D-11's agent self-merge allowance (EXECUTION.md governance). Green CI remains required before any merge.
 
 - `rel/v0.9.0-release-workflow` (P1)
 - `rel/v0.9.0-docs` (P2)

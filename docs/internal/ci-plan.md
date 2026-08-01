@@ -323,7 +323,7 @@ jobs:
             The macOS build is UNSIGNED and beta (compiles + bundles honesty only).
 ```
 
-Unsigned posture (FD-22): the installer ships unsigned through v0.9.0 for private/family distribution; the install doc explains the SmartScreen "More info, then Run anyway" path. Code signing (Azure Trusted Signing on Windows; notarization on macOS) is decided with the public flip at v0.9.0+ (D-13), and no signing secrets live in CI while the repo is private (Section 9). No auto-update in v1 (FD-22, fully offline posture); users download new installers manually.
+Unsigned posture (FD-22): the installer ships unsigned through v0.9.0 for private/family distribution; the install doc explains the SmartScreen "More info, then Run anyway" path. Code signing (Azure Trusted Signing on Windows; notarization on macOS) remains an open human-only decision: the repo went public on 2026-07-31 (FD-38) WITHOUT settling it, so signing is now tracked independently of the flip rather than bundled with it. No signing secrets live in CI (Section 9). No auto-update in v1 (FD-22, fully offline posture); users download new installers manually.
 
 ## 4. Workflow: scheduled.yml (honesty cron, from v0.3.0)
 
@@ -444,7 +444,7 @@ Revisit condition (FD-24): adopt it only if GUI divergence appears - specificall
 Explicit non-goals, so their absence is never read as a gap:
 
 - No telemetry or analytics upload. The product is fully offline (FD-22); CI collects no usage data and uploads none.
-- No signing secrets while private. Code-signing custody is on the D-10 human-only allowlist; no signing certificate or notarization credential lives in CI through v0.9.0 (FD-22, D-13). macOS and Windows artifacts are unsigned by design until the public-flip decision.
+- No signing secrets in CI. Code-signing custody is on the D-10 human-only allowlist; no signing certificate or notarization credential lives in CI through v0.9.0 (FD-22, D-13). macOS and Windows artifacts are unsigned by design. The flip has happened (FD-38) without a signing decision, so signing is now its own open item.
 - No publish step. release.yml creates a DRAFT only; a human publishes the GitHub Release and pushes the tag (D-11). CI never publishes, never flips the repo public, never spends money.
 - No Real apply against the actual library, ever, from CI. The executor is exercised only against fixtures and temp-dir copies (D-09, D-10). The 297 GB library is a human-operated campaign target (M-1), never a CI target.
 - No auto-update channel (FD-22): no update-manifest generation, no update endpoint. Users download new installers manually.

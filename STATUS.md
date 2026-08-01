@@ -37,7 +37,7 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 | v0.5.0 | acting | yes | yes | no | tag, AC-17, FD-33/34 |
 | v0.6.0 | hardening | in progress | P0/P1 yes | no | P1c crit, AC-8 walk |
 | M-1 | campaign | planned | - | - | - |
-| v0.9.0 | packaged | planned | - | - | public flip decision |
+| v0.9.0 | packaged | planned | - | - | installer, signing decision |
 
 ## In flight right now
 
