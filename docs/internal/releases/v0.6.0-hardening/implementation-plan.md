@@ -53,8 +53,8 @@ recorded in the P1 status note.
 
 | Phase | Goal | Fulfills AC | Owner | Status |
 |---|---|---|---|---|
-| P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | Landed, unmerged |
-| P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | P1a/P1b/P1d landed; P1c parked |
+| P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | MERGED 2026-07-31 |
+| P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | P1a/P1b/P1d MERGED 2026-07-31; P1c parked |
 | P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | Not started |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
@@ -138,8 +138,7 @@ Verification:
   offers no one-click reversal, and that the partial path forwards exactly the op ids the
   engine supplied.
 
-**Status: landed** on `feat/v0.6.0-p1-interruption-safety` (10 engine tests, 9 screen
-tests). Deliberately NOT in scope: per-operation drill-down, verification-discrepancy
+**Status: MERGED to `main` 2026-07-31** (10 engine tests, 9 screen tests). Deliberately NOT in scope: per-operation drill-down, verification-discrepancy
 display, and a contiguous-tail picker. The partial undo offers the whole recorded tail as
 one action; `rollback_prepare_partial` re-checks contiguity itself and refuses a gap.
 
@@ -326,7 +325,7 @@ Per test-strategy Executor layer, the following tests are written before the imp
 
 ## Branch / PR Plan
 
-- One short-lived feature branch per phase (or per P4-P7 surface cluster), PR into `main`, agent self-merge on green while the repo is private (D-11, EXECUTION.md).
+- One short-lived feature branch per phase (or per P4-P7 surface cluster), PR into `main`. **Merging is a human decision**: the repo went public on 2026-07-31 (FD-38), which lapsed D-11's agent self-merge allowance. Green CI is still required before any merge, it is simply no longer sufficient on its own.
 - Required green checks per PR: lint (fmt, clippy -D warnings, core-purity, bindings-drift), test matrix (ubuntu + windows, including the new suites), Windows build+bundle (macOS honesty-only). The RealFs rollback round-trip and, from this release, the kill/resume reconciliation tests run on every merge.
 - P1-P3 merge in order; P4-P7 may merge in any order after P2/P3; P8 merges last and precedes the tag.
 - Tag `v0.6.0` is cut from a green `main`; publishing the tag/release is human-only (D-10, S2 governance).

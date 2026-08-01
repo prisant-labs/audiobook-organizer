@@ -6,7 +6,6 @@ labels: enhancement
 assignees: ""
 ---
 
-<!-- Draft - pending (D-13, OSS posture decided at v0.9.0). -->
 
 ## Problem
 

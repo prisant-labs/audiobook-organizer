@@ -40,7 +40,7 @@ Recorded as D-10 through D-17 in `docs/internal/decision-ledger.md`, alongside t
 | Decision | Your call |
 |---|---|
 | Scope of "go" | Full build to v0.9.0 (packaged); non-blocking reports per release; human-only gates hard-stop |
-| Remote and CI | Existing private repo prisant-labs/audiobook-organizer; EXECUTION.md governance, self-merge green while private |
+| Remote and CI | Public repo prisant-labs/audiobook-organizer (FD-38, republished clean 2026-07-31); EXECUTION.md governance; green CI required, merging is a human decision |
 | Docs home | docs/internal/ tracked in git (corrects the draft release plan's quarantine line) |
 | OSS and license | Private now; license and public flip decided at v0.9.0, human-only |
 | Pack/award provenance | Captured in v1 at flatten time plus exported report (F-507) |
@@ -70,7 +70,7 @@ Verification evidence: every artifact passed its brief-conformance check; the cr
 
 **Orchestration (your directive, encoded in EXECUTION.md Section 5):** Fable does program-level planning, gate reviews, and final verification; Opus subagents own safety-critical implementation (executor, journal/rollback, validation) and adversarial verification; Sonnet subagents own mechanical work. Any agent uncertain about a safety invariant stops and escalates.
 
-**Sequence:** pre-flight (the 1-hour OSS-landscape check, recorded in the roadmap) then v0.1.0 (spine: workspace, first migration, tracer bullet, live CI) through v0.6.0 (hardening), each release on feature branches with PRs self-merged only when the full gate list is green, each ending with a release report to you. v0.9.0 (packaged) produces the installer and user docs and is where you decide license/public flip. M-1 (campaign: your actual library) is entirely yours: the runbook gates it on your recorded backup choice, and every Real apply is human-only regardless of how green CI is.
+**Sequence:** pre-flight (the 1-hour OSS-landscape check, recorded in the roadmap) then v0.1.0 (spine: workspace, first migration, tracer bullet, live CI) through v0.6.0 (hardening), each release on feature branches with PRs merged only when the full gate list is green (and, since FD-38, only by a human), each ending with a release report to you. v0.9.0 (packaged) produces the installer and user docs and is where you decide license/public flip. M-1 (campaign: your actual library) is entirely yours: the runbook gates it on your recorded backup choice, and every Real apply is human-only regardless of how green CI is.
 
 **Safety invariants (contract, not convention):** no audiobook is ever deleted; journal-before-act; never-overwrite; single-writer; dry-run is the same executor against memory; rollback is just another plan; the rollback round-trip (byte-identical restore) runs in CI on every merge from v0.5.0 forward.
 

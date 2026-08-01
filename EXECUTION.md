@@ -35,8 +35,8 @@ Per D-10 (full-ladder go), the release plan Section 2, D-13 (OSS posture), D-17 
 | Any Real (non-dry-run) apply against the actual library at E:\Books - Audio | Irreversible in practice; this is the campaign, and the campaign belongs to jp |
 | The M-1 backup posture choice (D-17) | Nothing Real runs until jp records a backup decision; the M-1 gate stays open until then |
 | Publishing a GitHub Release / cutting a public release tag | Publishing; users will install it; effectively irreversible |
-| Flipping the repo from private to public | Publishing decision; irreversible in practice (D-13) |
-| License choice and public-flip terms at v0.9.0+ (D-13) | Legal identity and licensing commitment |
+| Flipping any repo from private to public | Publishing decision; irreversible in practice (D-13). EXERCISED 2026-07-31 (FD-38) by publishing a fresh clean repo. Still binding for `audiobook-organizer-private-archive`, which must stay private: it holds pull refs carrying the scrubbed name |
+| License choice and public-flip terms (D-13) | Legal identity and licensing commitment. DECIDED 2026-07-31 (FD-38): MIT. Code-signing custody remains open and human-only |
 | Storing signing or notarization secrets in CI | Custody of credentials and legal responsibility for their use |
 | Spending money: code-signing certificate (Azure Trusted Signing), Apple Developer Program enrollment | Money plus organizational/identity validation |
 | Any force-push or history rewrite on a shared branch | Irreversibility; destroys recoverable history |
@@ -46,7 +46,7 @@ Per D-10 (full-ladder go), the release plan Section 2, D-13 (OSS posture), D-17 
 1. Scaffold the Cargo workspace, `crates/abo-core`, `src-tauri` shell, and the React/TS/shadcn frontend.
 2. Write and refactor all Rust and TypeScript source and all unit, integration, UI, and property tests.
 3. Iterate CI locally and in GitHub Actions until the matrix is green.
-4. Create short-lived feature branches, commit, push, open pull requests, and self-merge green PRs while the repo is private (Section 6).
+4. Create short-lived feature branches, commit, push, and open pull requests (Section 6). Self-merge is NO LONGER permitted: the repo is public as of FD-38, which lapsed D-11's private-repo self-merge allowance. Merging is a human decision.
 5. Run fixture campaigns and dry-run applies anywhere.
 6. Run Real applies against fixtures and disposable copies only, never against E:\Books - Audio.
 7. Build unsigned local artifacts for inspection.
@@ -64,7 +64,7 @@ Work is routed by risk and complexity, not by convenience:
 ## 6. Governance: branches, merges, CI gates
 
 1. Branching: trunk-based; `main` is the default branch; all work on short-lived feature branches; PRs into `main`. Branch first, always.
-2. Merge policy, tiered by visibility (D-11, private-repo self-merge): while the repo is private, an agent may self-merge a PR once every required check is green; CI is the substitute for code review. The moment the repo is public (a human-only action), merges to `main` require human review.
+2. Merge policy, tiered by visibility (D-11, private-repo self-merge). **The repo is PUBLIC as of 2026-07-31 (FD-38), so the second tier is the operative one: merges to `main` require a human decision and an agent must not self-merge.** The first tier is retained as the record of how v0.1.0 through v0.5.0 were built: while the repo was private, an agent could self-merge a PR once every required check was green, with CI as the substitute for code review. Green CI is still necessary before any merge; it is simply no longer sufficient.
 3. Required green checks before any merge are exactly the ci-plan gate list, per release plan Section 6.1 and FD-24 (CI shape fixes):
    - `cargo fmt --all --check`
    - `cargo clippy --workspace --all-targets -- -D warnings`

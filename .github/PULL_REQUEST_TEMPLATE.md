@@ -1,4 +1,3 @@
-<!-- Draft - pending (D-13, OSS posture decided at v0.9.0). -->
 <!-- Thanks for contributing to Audiobook Organizer. Please fill out the checklist below. -->
 
 ## What this PR does
