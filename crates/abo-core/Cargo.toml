@@ -139,7 +139,7 @@ lofty = "=0.24.0"
 tokio = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
-winreg = "0.55"
+winreg = "0.56"
 
 [features]
 # v0.2.0 Phase 1: gates the `fixtures` module (see src/fixtures/mod.rs doc
