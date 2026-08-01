@@ -250,7 +250,7 @@ Design invariants (D-09 safety invariants): never overwrite; never delete audio;
 | D-08 (rename-first executor) | 2026-07-02 | Same-volume rename primary; copy+verify+delete only cross-volume; the full copy is better spent as a backup |
 | D-09 (safety invariants) | 2026-07-02 | Quarantine-only, journal-before-act, single-writer, Vfs seam, rollback-as-a-plan, never-overwrite |
 | D-10 (scope of go) | 2026-07-03 | On approval, execute the full ladder; hard stops only at human-only gates |
-| D-11 (remote and governance) | 2026-07-03 | Existing private repo; trunk-based, short-lived branches, PRs; CI substitutes for code review while private |
+| D-11 (remote and governance) | 2026-07-03 | Trunk-based, short-lived branches, PRs; CI substitutes for code review. Public since FD-38, so self-merge has lapsed and merging is a human decision |
 | D-12 (docs tracked) | 2026-07-03 | `docs/internal/` is tracked in git; only `_local/`, `.memsearch/`, tool caches are gitignored |
 | D-13 (OSS posture) | 2026-07-03 | Private now; license and public flip decided at v0.9.0 (human-only); docs written public-ready |
 | D-14 (provenance in v1) | 2026-07-03 | Pack/award provenance captured as durable data plus report at plan/flatten time; ABS-side push deferred |

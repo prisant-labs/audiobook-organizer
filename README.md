@@ -75,7 +75,11 @@ Three tiers, all real: a technical owner who runs campaigns and wants full detai
 
 ## Contributing
 
-This repository is private during the planning and early build phases. There is no external contribution process yet; that decision, along with the license, is made at the public flip (see `docs/internal/program-roadmap.md`).
+This repository is public, but it is a single-maintainer build in progress rather than an open project looking for contributors. There is no formal external contribution process yet.
+
+Issues are welcome, especially bug reports against the read-and-rehearse path, which is the part that works today. Please read the "What works today, and what does not" section above before filing: a report about real-change behaviour is almost certainly describing something deliberately unreachable.
+
+If you do want to send a change, [CONTRIBUTING.md](CONTRIBUTING.md) covers local setup and the quality gates every change has to pass.
 
 ## License
 

@@ -23,7 +23,7 @@ Per D-10 (scope of "go"), the full ladder (v0.1.0 through v0.6.0, plus v0.9.0) r
 
 ## Preconditions
 
-- Clean working tree, on the release branch (or `main` once the repo is public and the merge policy flips per D-11, existing private repo governance).
+- Clean working tree, on `main`. The repo is public (FD-38), so the D-11 merge policy has flipped: merges are human-decided, and a release is cut from merged `main` rather than from a release branch.
 - The release's own readiness (its `spec.md` acceptance criteria and `implementation-plan.md` definition of done) has been reviewed and you understand what is red.
 
 ## G0: Pre-tag readiness
@@ -62,7 +62,7 @@ Per D-10 (scope of "go"), the full ladder (v0.1.0 through v0.6.0, plus v0.9.0) r
 - [ ] Push the tag: `git push origin vX.Y.Z`.
 - [ ] The release workflow fires on the `v*` tag: builds Windows with the `dist` profile (full LTO per FD-24 CI fixes) and creates a DRAFT GitHub Release with the Windows artifacts attached.
 
-**Windows-first, one artifact set.** The product ships an unsigned NSIS/MSI installer through v0.9.0 (private and household distribution; FD-22). Attach the installer plus a `SHA256SUMS` file. Code signing (Azure Trusted Signing) is decided together with the public flip at v0.9.0-plus (D-13); until then, the install doc explains the SmartScreen "More info, then Run anyway" flow. There is no macOS artifact: macOS compiles-in-CI only, with no behavioral claim (standing rule 7).
+**Windows-first, one artifact set.** The product ships an unsigned NSIS/MSI installer through v0.9.0 (private and household distribution; FD-22). Attach the installer plus a `SHA256SUMS` file. Code signing (Azure Trusted Signing) is still an open human-only decision, now tracked separately from the flip (which happened on 2026-07-31 without settling it, FD-38); until it is settled, the install doc explains the SmartScreen "More info, then Run anyway" flow. There is no macOS artifact: macOS compiles-in-CI only, with no behavioral claim (standing rule 7).
 
 ## G4: Post-tag hygiene [HUMAN]
 

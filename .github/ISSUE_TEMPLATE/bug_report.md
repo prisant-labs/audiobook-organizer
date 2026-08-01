@@ -6,7 +6,6 @@ labels: bug
 assignees: ""
 ---
 
-<!-- Draft - pending (D-13, OSS posture decided at v0.9.0). -->
 
 ## What happened
 

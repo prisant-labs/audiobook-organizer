@@ -17,6 +17,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   the one honest action available for it. Undo is prepared as a reviewable plan, not
   executed by a button.
 - `history_list` command; `AppError::HistoryUnavailable` with family-safe copy.
+- Kill-process recovery tests: a feature-gated binary runs a real apply against a
+  real temp library and then calls `abort()` mid-operation, so recovery is proven
+  against a genuinely killed process rather than a hand-built journal state. Covers
+  intent-then-kill (the source is still in place) and act-then-kill (the rename
+  landed, so the journal is repaired as done, not failed).
 
 ### Fixed
 
@@ -28,11 +33,39 @@ and this project follows [Semantic Versioning](https://semver.org/).
   run is stranded.
 - The `reconcile-failed` error reached the frontend with no plain-language copy,
   breaking the type check and the error-copy exhaustiveness test.
+- Interruption recovery treated a failed filesystem probe as evidence. Checking
+  existence with a boolean answers "false" for a permission denial exactly as it
+  does for a genuine absence, so a cross-volume move whose source was momentarily
+  unreadable could be recorded as completed. Probing now separates "not there" from
+  "could not tell", and anything unreadable is treated as ambiguous.
+- A recovery that refused to act could not be retried. Refusing left the run marked
+  as running, the startup reclaim then marked every running run failed, and the
+  sweep only looked at running runs, so the refusal erased its own retry condition.
+  The disposition is now recorded durably before the reclaim.
+- History could offer to put back a run that was still going, one recovery had
+  refused to explain, one with an operation whose outcome was never recorded, or one
+  whose undo file says it is not fully reversible. All four now say the run needs a
+  look instead.
+- Preparing an undo left the review screen pinned to it, so navigating away and back
+  reopened the undo and "build the plan again" rebuilt the undo rather than a fresh
+  forward plan.
 
 ### Changed
 
 - README states plainly which parts of the app work today and which are aspiration.
   Real changes remain unreachable from the UI by design.
+- The project is now a public, MIT-licensed repository (FD-38). It was republished as
+  a new repository from clean history rather than switching visibility, because
+  server-side pull-request refs on the original could not be rewritten. The previous
+  repository is archived and stays private.
+- Documentation reconciled with that change: the governance docs no longer tell an
+  agent it may self-merge, and a SECURITY.md records the disclosure path along with
+  the four known safety gaps.
+- Dependencies updated across the Rust, JavaScript, and GitHub Actions groups.
+  TypeScript is held on 6.x: typescript-eslint 8.x refuses to run against TypeScript 7
+  and exits rather than degrading, which takes the whole lint gate down while every
+  other check still passes. The constraint and its removal condition are recorded in
+  `.github/dependabot.yml`.
 
 ## [0.5.0] - unreleased
 
