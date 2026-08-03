@@ -35,7 +35,7 @@ Per D-10 (full-ladder go), the release plan Section 2, D-13 (OSS posture), D-17 
 | Any Real (non-dry-run) apply against the actual library at E:\Books - Audio | Irreversible in practice; this is the campaign, and the campaign belongs to jp |
 | The M-1 backup posture choice (D-17) | Nothing Real runs until jp records a backup decision; the M-1 gate stays open until then |
 | Publishing a GitHub Release / cutting a public release tag | Publishing; users will install it; effectively irreversible |
-| Flipping any repo from private to public | Publishing decision; irreversible in practice (D-13). EXERCISED 2026-07-31 (FD-38) by publishing a fresh clean repo. Still binding for `audiobook-organizer-private-archive`, which must stay private: it holds pull refs carrying the scrubbed name |
+| Flipping any repo from private to public | Publishing decision; irreversible in practice (D-13). EXERCISED 2026-07-31 (FD-38) by publishing a fresh clean repo rather than changing an existing repo's visibility. Still binding for any future repo. |
 | License choice and public-flip terms (D-13) | Legal identity and licensing commitment. DECIDED 2026-07-31 (FD-38): MIT. Code-signing custody remains open and human-only |
 | Storing signing or notarization secrets in CI | Custody of credentials and legal responsibility for their use |
 | Spending money: code-signing certificate (Azure Trusted Signing), Apple Developer Program enrollment | Money plus organizational/identity validation |
