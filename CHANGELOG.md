@@ -56,8 +56,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
   Real changes remain unreachable from the UI by design.
 - The project is now a public, MIT-licensed repository (FD-38). It was republished as
   a new repository from clean history rather than switching visibility, because
-  server-side pull-request refs on the original could not be rewritten. The previous
-  repository is archived and stays private.
+  server-side pull-request refs on the original could not be rewritten. That original
+  was deleted on 2026-08-02 once a verified local backup existed, which removed the
+  last server-side copy of those refs.
 - Documentation reconciled with that change: the governance docs no longer tell an
   agent it may self-merge, and a SECURITY.md records the disclosure path along with
   the four known safety gaps.

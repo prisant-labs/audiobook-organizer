@@ -3,7 +3,7 @@ title: "Audiobook Organizer - Status and Decision Queue"
 type: status
 project: audiobook-organizer
 created: 2026-07-20
-updated: 2026-07-31
+updated: 2026-08-02
 status: active
 ---
 
@@ -25,9 +25,8 @@ The full version of this list, including one item that is deliberately not spell
 - [ ] **Crit the 13 UI mockups** in `_local/gui/2026-07-22/` (open `index.html`). Highest-stakes: tidy-up and resume-rollback. P1c (the resume-or-rollback surface) is parked awaiting your direction on `resume-rollback.html`.
 - [ ] **AC-8 hand walkthrough.** Cancel a tidy-up mid-run in the app and confirm it stops at an operation boundary and stays resumable. The engine behaviour is tested; this is the manual-QA half, and it is the last open P1 item besides P1c.
 - [ ] **FD-36 / FD-37 / FD-38 veto window.** Three decisions made this session that stand unless you object: History and undo pulled into v0.6.0; reconciliation gated on the recorded run mode and failing closed; the early public flip via a fresh repo, with MIT ratified. Detail: `docs/internal/decision-ledger.md`.
-- [ ] **Optional: ask GitHub Support to purge the archived repo's pull refs.** They are the reason that repo can never be made public. Support can delete them; nobody else can. A support ticket, not engineering work, and not urgent while the archive stays private and archived.
 
-**This repo is now PUBLIC** (FD-38, executed 2026-07-31). It is a NEW repository built from verified-clean history, not a visibility change: the old private repo still holds 38 `refs/pull/*` refs carrying the scrubbed family name, which only GitHub Support can purge. That repo is renamed to `audiobook-organizer-private-archive`, archived, and **must stay private forever**. Do not un-archive it into public visibility, and do not delete it casually if you still want the old PR record. Verified at publication: 0 pull refs on the new repo, 0 name-bearing blobs across all 214 published commits.
+**This repo is now PUBLIC** (FD-38, executed 2026-07-31). It is a NEW repository built from verified-clean history rather than a visibility change, because the original could not safely be flipped. That original was renamed aside and **deleted on 2026-08-02**, which removed the last server-side copy of the refs that made flipping unsafe. A full local backup of it, including its pull request record, is kept under gitignored `_local/backups/`. Verified at publication: 0 pull refs on this repo carrying anything from before it, and 0 name-bearing blobs across all published commits.
 
 Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "not a final license grant" header that would have published a licence disclaiming itself.
 
@@ -69,10 +68,10 @@ Real changes are still not reachable from the UI, by design. The engine can exec
 
 ## Cleanup when convenient
 
-- `E:\tmp\abo-rt\` (~1.5 GB of AC-17 round-trip copies) once AC-17 is ratified.
-- `E:\tmp\abo-rewrite*.git` working mirrors (keep `abo-backup.git` until fully satisfied).
-- `_local/runbooks/replacements.txt` contains the real family name; safe to delete now the scrub is done.
-- `git fetch --prune` for stale local branches whose remotes are gone.
+- `E:\tmp\abo-rt\` (~1.5 GB of AC-17 round-trip copies) once AC-17 is ratified. The only one still outstanding.
+- `E:\tmp\abo-tracer`, left over from the v0.1.0 tracer-bullet work and almost certainly dead weight.
+
+Done 2026-08-02: the four `E:\tmp\abo-*.git` mirrors and the FD-35 scrub input were deleted after their contents were checked against the backup, and the stale local branches were pruned. The one surviving copy of the pre-rewrite history is `_local/backups/archived-repo/`.
 
 ## Where the real detail lives
 
