@@ -3,7 +3,7 @@ title: "Audiobook Organizer - Status and Decision Queue"
 type: status
 project: audiobook-organizer
 created: 2026-07-20
-updated: 2026-07-31
+updated: 2026-08-02
 status: active
 ---
 
@@ -68,10 +68,10 @@ Real changes are still not reachable from the UI, by design. The engine can exec
 
 ## Cleanup when convenient
 
-- `E:\tmp\abo-rt\` (~1.5 GB of AC-17 round-trip copies) once AC-17 is ratified.
-- `E:\tmp\abo-rewrite*.git` working mirrors (keep `abo-backup.git` until fully satisfied).
-- `_local/runbooks/replacements.txt` contains the real family name; safe to delete now the scrub is done.
-- `git fetch --prune` for stale local branches whose remotes are gone.
+- `E:\tmp\abo-rt\` (~1.5 GB of AC-17 round-trip copies) once AC-17 is ratified. The only one still outstanding.
+- `E:\tmp\abo-tracer`, left over from the v0.1.0 tracer-bullet work and almost certainly dead weight.
+
+Done 2026-08-02: the four `E:\tmp\abo-*.git` mirrors and the FD-35 scrub input were deleted after their contents were checked against the backup, and the stale local branches were pruned. The one surviving copy of the pre-rewrite history is `_local/backups/archived-repo/`.
 
 ## Where the real detail lives
 
