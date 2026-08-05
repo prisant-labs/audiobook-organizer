@@ -373,4 +373,50 @@ export const STRINGS = {
       running: "Interrupted",
     },
   },
+
+  // The interruption recovery surface (v0.6.0 P1c, F-606 interruption safety).
+  // Shown when a prior session was killed mid-tidy-up and the startup
+  // reconciler repaired the record before the app opened.
+  //
+  // Copy register notes. "Stopped early" rather than "crashed" or "aborted",
+  // matching history.state.failed; "practice run" never "dry run", matching
+  // history.practiceRun. The engine words this surface sits closest to -
+  // reconcile, journal, operation - never appear.
+  //
+  // Order is deliberate: the heading says what happened, the next line says
+  // what is safe. A reader who stops after one sentence still learns the thing
+  // that matters most, which on this screen is that nothing was left broken.
+  interruption: {
+    // State 1: an interrupted practice run. The real shelves were never
+    // touched, so there is nothing to carry on from and nothing to put back.
+    practiceHeading: "The practice run stopped early",
+    practiceBody:
+      "Your computer stopped before the practice run finished. Nothing on your shelves was touched: a practice run only shows you what would happen.",
+    practiceAction: "Back to your library",
+
+    // State 2: a real tidy-up stopped early, and the app confirmed where it
+    // got to before it stopped.
+    stoppedHeading: "The tidy-up stopped early",
+    stoppedBody:
+      "Your computer stopped partway through. Nothing was left half-done, and every book that was moved is safe.",
+    booksMoved: (n: number) => (n === 1 ? "1 book was moved" : `${n} books were moved`),
+    nothingMoved: "No books had been moved yet.",
+    carryOn: "Carry on tidying up",
+    carryOnNote:
+      "The app takes a fresh look at your library first, so books that were already tidied stay where they are.",
+
+    // State 3: a real tidy-up stopped early and one step could not be
+    // confirmed, so carrying on is not offered.
+    ambiguousHeading: "The tidy-up stopped early, and one book needs a look",
+    ambiguousBody:
+      "The app could not tell for certain what happened to one book when it stopped, so it will not carry on by itself.",
+    openHistory: "Open History",
+
+    // Shared details disclosure (FD-13): plain facts only, no paths and no ids.
+    showDetails: "Show details",
+    detailStarted: (when: string) => `Started: ${when}`,
+    detailChanges: (n: number) => (n === 1 ? "Recorded: 1 change" : `Recorded: ${n} changes`),
+    detailLastStepChecked: "The last step was checked and the record was put right.",
+    detailNothingInDoubt: "No step was left in doubt.",
+  },
 } as const;
