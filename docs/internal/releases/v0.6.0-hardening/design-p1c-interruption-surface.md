@@ -143,20 +143,39 @@ terminal row. This renders as state 2 without the in-doubt detail line.
 
 ### Where it mounts
 
-`AppRoot`, between the first-run check and `AppShell`:
+`AppShell`, as a third short-circuit ahead of `activeJob` and `startError`. It
+replaces the main screen area; the sidebar stays visible and navigation stays
+live, exactly as the Apply screen already behaves.
 
 ```
-loading -> settings error -> no library root (FirstRun) -> INTERRUPTION -> AppShell
+AppShell
+  interruption ? InterruptionNotice
+  : activeJob  ? Apply
+  : startError ? ErrorCallout
+  : RouteContent
 ```
 
-`AppRoot` already renders pre-shell screens inside `Frame` (titlebar plus theme
-toggle, no sidebar), which is exactly option B's chrome. Mounting inside
-`AppShell` instead would leave the sidebar live and navigation clickable, which
-would contradict "this decision comes before anything else" while pretending to
-enforce it.
+**Why not a hard gate before the shell.** An earlier draft mounted this in
+`AppRoot`, ahead of `AppShell`, so the notice blocked the whole app until
+answered. That was rejected on three grounds.
 
-The interruption check sits after the first-run check because a stranded apply
-job implies a library was already configured.
+First, it is disproportionate to the states that will actually occur. Carrying
+on is dangerous in exactly one of the three states, the ambiguous one, and it is
+the only state that is unreachable today. In state 1 a hard gate traps a
+non-technical reader in a screen they cannot leave in order to tell them nothing
+happened. In state 2 carrying on is precisely what the app wants to encourage,
+and browsing is useful, because History is where the undo lives.
+
+Second, the dangerous action is starting a new tidy-up, not using the app.
+Blocking every route to prevent one action is a blunt instrument aimed at the
+wrong target.
+
+Third, and decisively: a navigation block is a **procedural** gate. It holds only
+while the surface is the sole way in, and it stops nothing an IPC caller can
+reach. This project already carries one open finding of exactly that shape, the
+real-apply mode that the frontend pins and the command still accepts. If an
+unresolved interruption must stop a new tidy-up, that belongs in the engine.
+See "The gate that belongs in the engine" below.
 
 ### Components
 
@@ -165,7 +184,7 @@ job implies a library was already configured.
 | `src/hooks/useStartupInterruption.ts` | NEW. Fetches `startup_interruption` once, pairs it with the matching `history_list` entry, exposes `dismiss()` |
 | `src/components/states/InterruptionNotice.tsx` | NEW. The presentational surface; three states, offer-driven actions |
 | `src/lib/strings.ts` | Add `STRINGS.interruption` (FD-23: all user-facing copy centralized) |
-| `src/AppRoot.tsx` | Add the branch |
+| `src/components/shell/AppShell.tsx` | Add the branch ahead of `activeJob` |
 | `docs/internal/design-system.md` | Add the state to Section 5 |
 
 `InterruptionNotice` takes data and callbacks only, no IPC. That keeps it
@@ -186,18 +205,22 @@ mount
   result present         -> render InterruptionNotice(result, entry)
 
 user acts
-  carry on   -> dismiss(), AppShell opens on the library route
-  put back   -> rollbackPreparePartial(jobId, opIds) -> dismiss()
-                -> AppShell opens the prepared undo on the review surface
-  open History -> dismiss(), AppShell opens on the history route
-  back        -> dismiss()
+  carry on     -> dismiss(), navigate("library")
+  put back     -> rollbackPreparePartial(jobId, opIds)
+                  -> dismiss(), openUndoPlan(planId)
+  open History -> dismiss(), navigate("history")
+  back         -> dismiss(), navigate("library")
 ```
 
-The undo path reuses the machinery `History` already uses: prepare a partial
-rollback, then open the prepared plan on the same review surface a forward
-tidy-up uses (`D-09`). `AppShell` already accepts an `openPlanId` for exactly
-this, so the interruption surface hands `AppRoot` an initial route and optional
-plan id rather than inventing a second path to the same screen.
+Every action ends in `dismiss()` plus a normal navigation, so the surface adds no
+new routing concept. The undo path reuses the machinery `History` already uses:
+prepare a partial rollback, then open the prepared plan on the same review
+surface a forward tidy-up uses (`D-09`). `AppShell.openUndoPlan` exists for
+exactly this and is reused rather than duplicated.
+
+Because the sidebar stays live, the user can also simply navigate away without
+choosing. That is deliberate; see the limitations section for what is and is not
+lost when they do.
 
 ### Error handling
 
@@ -215,14 +238,43 @@ plan id rather than inventing a second path to the same screen.
   never renders a carry-on action.
 - Vitest tests for `useStartupInterruption`: null result, result with a matching
   History row, result with no matching row, `history_list` failing.
-- `AppRoot` routing test: an interruption preempts `AppShell`; dismissing shows
-  the shell.
+- `AppShell` routing test: an interruption preempts the route content and takes
+  precedence over `activeJob`; dismissing restores the route; the sidebar stays
+  rendered throughout.
 - axe-core smoke on the surface in all three states, and a mechanical contrast
   check on the `--warn` and `--danger` pairs in both themes (`FD-21`).
 - Keyboard walkthrough added to the manual QA checklist (`FD-21`).
 - Manual walkthrough covers state 1 only, because it is the only state reachable
   while apply is pinned to rehearsal. States 2 and 3 are covered by tests until
   real applies are enabled.
+
+## The gate that belongs in the engine
+
+Carrying on is unsafe in exactly one state: the ambiguous one, where a
+cross-volume copy killed mid-write can leave a target file that exists but may be
+truncated, and a fresh scan would read it as a tidy book. The surface refuses to
+offer carry-on there, but a surface refusing to offer something is not a gate.
+
+The engine already has the right pattern. `ensure_forward_tidying_allowed`
+([exec/verify.rs:787](../../../../crates/abo-core/src/exec/verify.rs)) blocks a
+forward apply when a previous run left an unacknowledged discrepancy, exempts
+inverse plans explicitly ("Undo is the remedy for a discrepancy"), and returns
+`AppError::TidyingBlocked`; `acknowledge_check` is the un-blocking half. An
+unresolved ambiguous interruption is the same shape of problem and belongs in the
+same gate.
+
+**This is deliberately NOT built in this phase.** The ambiguous state cannot occur
+while apply is pinned to rehearsal, so building the gate now would be building for
+an unreachable condition. Instead it joins the list of preconditions that must all
+close before real changes are enabled, recorded in `STATUS.md`:
+
+1. Power-loss threat model decided
+2. Cross-volume move policy decided
+3. A mechanical authorization boundary for real applies
+4. Forward tidying blocked while an interruption is unresolved (new, from this design)
+
+Putting it on that list rather than in this phase keeps the requirement where it
+will be enforced instead of where it would merely look enforced.
 
 ## Copy
 
@@ -243,13 +295,17 @@ footer line is used verbatim or not at all.
    History carrying `reconcile-failed`, so the state is not lost, but the app
    does not raise it. Worth a follow-up: History should distinguish that row.
 
-2. **Quitting without deciding loses the prominent offer.** The reclaim already
+2. **Leaving without deciding loses the prominent offer.** The user can navigate
+   away (the sidebar stays live) or quit. Either way the notice does not return:
+   the surface clears its own copy on navigation, and the startup reclaim already
    moved the row out of `running`, so the next launch's reconciler will not find
    it. This is much smaller than it first appears: `list_history`
    ([exec/history.rs:99](../../../../crates/abo-core/src/exec/history.rs)) filters
    on `kind = 'apply'` with no state filter, so the run still appears in History
    with its change count and a resolved undo offer. The user loses prominence,
-   not the ability to act.
+   not the ability to act. Whether the notice should persist for the session
+   rather than clear on navigation is a reasonable refinement, deferred until
+   there is a reachable state where it matters.
 
 3. **States 2 and 3 cannot be walked by hand yet.** They need a real apply, which
    is gated behind the power-loss threat model, the cross-volume move policy, and
