@@ -5,6 +5,7 @@ import { useHistory } from "@/hooks/useHistory";
 import { ErrorCallout } from "@/components/states/ErrorCallout";
 import { ERROR_COPY } from "@/lib/errorCopy";
 import { codeOf, formatAppError } from "@/lib/appError";
+import { formatWhen } from "@/lib/format";
 import { STRINGS } from "@/lib/strings";
 
 // The History screen (v0.6.0): the record of past tidy-ups and the way back from
@@ -232,16 +233,4 @@ function stateLabel(state: string): string {
     default:
       return state;
   }
-}
-
-// A short, local, human date. Deliberately not a relative time ("2 days ago"):
-// the record is a durable log, and an absolute date stays true when re-read.
-function formatWhen(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
 }
