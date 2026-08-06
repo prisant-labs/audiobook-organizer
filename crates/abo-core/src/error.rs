@@ -317,6 +317,18 @@ pub enum AppError {
     #[error("the undo could not be prepared: {detail}")]
     RollbackPrepareFailed { detail: String },
 
+    // ---- Duplicate verification family (v0.6.0 P2: F-702 hash verification) ----
+    /// Checking whether two copies really are the same book could not finish.
+    /// `detail` is the developer-facing cause (a database failure, or a group
+    /// that no longer exists).
+    ///
+    /// This is the JOB-level failure only. A single file that could not be READ
+    /// is not this error: that outcome is recorded against the member and the
+    /// job carries on with the rest of the group, because one unreadable file
+    /// must not abandon the others (F-702, AC-12).
+    #[error("the copies could not be checked: {detail}")]
+    DuplicateVerifyFailed { detail: String },
+
     // ---- Post-apply check family (v0.5.0 Phase 6: F-604 after-the-fact check) ----
     /// A previous tidy-up's after-the-fact check found a difference between what
     /// was planned and what is on disk, and that difference has not been
@@ -412,6 +424,7 @@ impl AppError {
             AppError::RollbackNotReversible => "rollback-not-reversible",
             AppError::RollbackSelectionNotContiguous => "rollback-selection-not-contiguous",
             AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
+            AppError::DuplicateVerifyFailed { .. } => "duplicate-verify-failed",
             // Post-apply check family
             AppError::TidyingBlocked => "tidying-blocked",
             // Apply control family
@@ -598,6 +611,10 @@ impl AppError {
                 "The undo could not be prepared. The undo file may be missing or the tidy-up it \
                  refers to may be gone. Scan your library again, then build and review a fresh \
                  plan instead."
+            }
+            AppError::DuplicateVerifyFailed { .. } => {
+                "The check on your duplicate copies could not finish, so nothing was decided \
+                 about them. Your books are untouched. You can run the check again."
             }
             // Post-apply check family
             AppError::TidyingBlocked => {

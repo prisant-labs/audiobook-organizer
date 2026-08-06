@@ -34,6 +34,48 @@ pub struct DuplicateMemberRow {
     pub entry_id: i64,
     pub path: String,
     pub size: i64,
+    /// BLAKE3 hex of this member's content (F-702, migration 0007), or `None`
+    /// when it has never been hashed.
+    ///
+    /// Read together with [`hash_error`](Self::hash_error): the pair encodes
+    /// three states with no separate enum that could disagree with them. Both
+    /// `None` means never hashed; a hash means verified; an error means tried
+    /// and failed. See [`Self::verification`].
+    pub content_hash: Option<String>,
+    /// Why hashing this member failed, when it did.
+    pub hash_error: Option<String>,
+}
+
+/// What is known about one member's content, derived from the stored pair.
+///
+/// Exists so callers ask a question rather than interpret two `Option`s at every
+/// call site. AC-12's gate turns on the difference between `Failed` and
+/// `Unhashed`, and a site that got that backwards would let an unreadable file
+/// count toward an automatic set-aside.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MemberVerification {
+    /// Nobody has hashed this member yet. Work not done, not a problem.
+    Unhashed,
+    /// Read end to end. Carries the hash.
+    Verified(String),
+    /// Read was attempted and failed. Carries why.
+    Failed(String),
+}
+
+impl DuplicateMemberRow {
+    /// The member's verification state.
+    ///
+    /// A stored hash wins over a stored error: if both are somehow present, the
+    /// file WAS read successfully at some point, and the hash is the more
+    /// specific fact. That ordering is stated here rather than left to whichever
+    /// branch a reader writes first.
+    pub fn verification(&self) -> MemberVerification {
+        match (&self.content_hash, &self.hash_error) {
+            (Some(h), _) => MemberVerification::Verified(h.clone()),
+            (None, Some(e)) => MemberVerification::Failed(e.clone()),
+            (None, None) => MemberVerification::Unhashed,
+        }
+    }
 }
 
 /// Persist every detected duplicate group and its members for `scan_id` in one
@@ -114,7 +156,7 @@ pub async fn get_duplicate_members(
     group_id: i64,
 ) -> Result<Vec<DuplicateMemberRow>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, group_id, entry_id, path, size \
+        "SELECT id, group_id, entry_id, path, size, content_hash, hash_error \
          FROM duplicate_members WHERE group_id = ? ORDER BY id",
     )
     .bind(group_id)
@@ -128,7 +170,55 @@ pub async fn get_duplicate_members(
             entry_id: r.get("entry_id"),
             path: r.get("path"),
             size: r.get("size"),
+            content_hash: r.get("content_hash"),
+            hash_error: r.get("hash_error"),
         })
+        .collect())
+}
+
+/// Record the outcome of hashing ONE duplicate group member (F-702, AC-15).
+///
+/// Writes exactly one of the two columns and clears the other, so the pair can
+/// never carry a stale error beside a fresh hash, or the reverse. A retry that
+/// succeeds must leave no trace of the previous failure, because a surface
+/// showing both would have to invent a rule for which one wins.
+///
+/// This is the ONLY statement that writes those columns. Keeping it single is
+/// what lets the verification job wrap N of these in one transaction without a
+/// second code path drifting from this one.
+pub async fn set_member_hash(
+    pool: &SqlitePool,
+    member_id: i64,
+    outcome: &crate::dupes::MemberHash,
+) -> Result<(), sqlx::Error> {
+    let (hash, error) = match outcome {
+        crate::dupes::MemberHash::Hashed(h) => (Some(h.as_str()), None),
+        crate::dupes::MemberHash::Failed(e) => (None, Some(e.as_str())),
+    };
+    sqlx::query("UPDATE duplicate_members SET content_hash = ?, hash_error = ? WHERE id = ?")
+        .bind(hash)
+        .bind(error)
+        .bind(member_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// The members of a group that still need hashing (AC-15): never hashed, and
+/// not previously failed.
+///
+/// A previous FAILURE is deliberately not returned. Re-reading a file that just
+/// failed, every time the surface opens, turns one permission error into an
+/// endless retry loop the user cannot see the cause of. Retrying is a thing the
+/// user asks for, not something the job does on its own.
+pub async fn get_unhashed_members(
+    pool: &SqlitePool,
+    group_id: i64,
+) -> Result<Vec<DuplicateMemberRow>, sqlx::Error> {
+    Ok(get_duplicate_members(pool, group_id)
+        .await?
+        .into_iter()
+        .filter(|m| matches!(m.verification(), MemberVerification::Unhashed))
         .collect())
 }
 
