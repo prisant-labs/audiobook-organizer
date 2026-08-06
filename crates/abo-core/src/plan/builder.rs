@@ -1164,6 +1164,29 @@ fn pass_split_multibook(b: &mut Builder) {
     }
 }
 
+/// True only when EVERY direct child of `path` is scheduled to leave its
+/// current location, so `rmdir-empty` on that folder will actually succeed.
+///
+/// `leaving` holds the source paths of ops that REMOVE a child from where it
+/// sits: `move` and `quarantine`. `rename` is deliberately excluded, because a
+/// renamed file stays in the same folder under a new name and would still make
+/// the directory non-empty.
+///
+/// Conservative by construction. An unresolvable path, or any child we cannot
+/// prove leaves, returns `false` and the folder is kept. That bias is the whole
+/// point: leaving a stray folder behind costs the user nothing, while emitting
+/// an `rmdir-empty` that fails halts a partially applied run.
+fn folder_will_be_empty(b: &Builder, path: &str, leaving: &HashSet<String>) -> bool {
+    let Some(folder_id) = b.nodes.iter().find(|n| n.path == path).map(|n| n.id) else {
+        return false;
+    };
+    match b.children.get(&folder_id) {
+        // No children recorded at scan time: genuinely empty.
+        None => true,
+        Some(kids) => kids.iter().all(|&c| leaving.contains(&b.node(c).path)),
+    }
+}
+
 // ---- pass: flatten-packs ----
 
 fn pass_flatten_packs(b: &mut Builder) {
@@ -1650,8 +1673,34 @@ fn pass_empty_cleanup(b: &mut Builder) {
     }
 
     // 4. Remove folders emptied by a split (deterministic; BTreeSet is sorted).
+    //
+    // `emptied_sources` is populated by `pass_split_multi_book` when every
+    // AUDIO child of a folder was placed. That is not the same as the folder
+    // being empty, and since FD-40 made `Keep` the default for non-audio
+    // clutter it is routinely false: a multi-book folder holding a `.nfo` has
+    // all its books moved out and still has the `.nfo` sitting in it.
+    //
+    // Emitting `rmdir-empty` for such a folder is not a cosmetic error. The
+    // executor refuses to remove a non-empty directory and turns that into a
+    // HALT (`exec::op_rmdir` -> `target-appeared`), which lands AFTER the book
+    // moves in this same run have already been applied. The user gets a
+    // half-finished tidy-up on the most ordinary library layout there is.
+    //
+    // So re-check against EVERY direct child, not just the audio ones, and be
+    // conservative: if we cannot prove a child leaves, keep the folder. A stray
+    // empty folder left behind is harmless; a halted run is not.
     if b.ruleset.structure.empty_folder_removal {
         let emptied = std::mem::take(&mut b.emptied_sources);
+        let leaving: HashSet<String> = b
+            .ops
+            .iter()
+            .filter(|o| matches!(o.kind.as_str(), "move" | "quarantine"))
+            .map(|o| o.source_path.clone())
+            .collect();
+        let emptied: Vec<String> = emptied
+            .into_iter()
+            .filter(|p| folder_will_be_empty(b, p, &leaving))
+            .collect();
         for path in emptied {
             b.ops.push(PlannedOp {
                 op_group: pass.as_str().to_string(),
@@ -1920,6 +1969,28 @@ mod tests {
     fn build(nodes: &[PlanNode]) -> BuiltPlan {
         let (cs, merged) = analyze(nodes);
         build_plan(nodes, &cs, &merged, &default_ruleset(), ROOT)
+    }
+
+    /// Build with every clutter kind set to `Quarantine`.
+    ///
+    /// FD-40 flipped the DEFAULT clutter policy to Keep, so the clutter tests
+    /// below can no longer lean on `default_ruleset()`. That is the point: they
+    /// test where a clutter set-aside op is ROUTED once one is emitted, not
+    /// whether the default emits one. Asking for the policy explicitly makes
+    /// each test say what it is actually about, and means a future change to
+    /// the default cannot silently turn these into no-op assertions.
+    fn build_clutter_quarantined(nodes: &[PlanNode]) -> BuiltPlan {
+        let (cs, merged) = analyze(nodes);
+        let mut rs = default_ruleset();
+        rs.structure.clutter = crate::ruleset::ClutterPolicy {
+            ebook: crate::ruleset::ClutterAction::Keep,
+            cover: crate::ruleset::ClutterAction::Keep,
+            nfo: crate::ruleset::ClutterAction::Quarantine,
+            sfv: crate::ruleset::ClutterAction::Quarantine,
+            playlist: crate::ruleset::ClutterAction::Quarantine,
+            weblink: crate::ruleset::ClutterAction::Quarantine,
+        };
+        build_plan(nodes, &cs, &merged, &rs, ROOT)
     }
 
     fn ops_of<'a>(plan: &'a BuiltPlan, group: &str) -> Vec<&'a PlannedOp> {
@@ -2646,7 +2717,7 @@ mod tests {
                 9_000,
             ),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         let clutter: Vec<&PlannedOp> = plan
             .ops
             .iter()
@@ -2659,6 +2730,118 @@ mod tests {
         // ebook + cover are kept: never a quarantine source.
         assert!(!plan.ops.iter().any(|o| o.kind == "quarantine"
             && (o.source_path.ends_with(".jpg") || o.source_path.ends_with(".epub"))));
+    }
+
+    /// FD-40 regression, found by the Codex adversarial review on 2026-08-05.
+    ///
+    /// A multi-book folder whose books all move out but which still holds a
+    /// KEPT clutter file must NOT get an `rmdir-empty`.
+    ///
+    /// `pass_split_multi_book` decides a folder was emptied by counting only its
+    /// AUDIO children. Before FD-40 that was almost always right, because the
+    /// default set the other file kinds aside. With Keep as the default it is
+    /// routinely wrong, and the consequence is not cosmetic: the executor
+    /// refuses to remove a non-empty directory and turns that into a HALT,
+    /// which lands AFTER the book moves in the same run have already been
+    /// applied. A half-finished tidy-up, on the most ordinary layout there is.
+    ///
+    /// Runs every kept clutter kind, because the bug is in the counting rather
+    /// than in any one extension, and a single-extension test would pass while
+    /// three other kinds still broke.
+    #[test]
+    fn kept_clutter_prevents_rmdir_of_the_emptied_multibook_folder_fd40() {
+        for clutter in ["release.nfo", "check.sfv", "playlist.m3u", "link.url"] {
+            let nodes =
+                vec![
+                dir(0, None, "lib/C.S. Lewis - Narnia Collection"),
+                aud(
+                    1,
+                    Some(0),
+                    "lib/C.S. Lewis - Narnia Collection/The Lion, the Witch and the Wardrobe.m4b",
+                    90_000,
+                ),
+                aud(
+                    2,
+                    Some(0),
+                    "lib/C.S. Lewis - Narnia Collection/Prince Caspian.m4b",
+                    75_000,
+                ),
+                aud(
+                    3,
+                    Some(0),
+                    "lib/C.S. Lewis - Narnia Collection/The Voyage of the Dawn Treader.m4b",
+                    80_000,
+                ),
+                file(4, Some(0), &format!("lib/C.S. Lewis - Narnia Collection/{clutter}"), 500),
+            ];
+
+            // Default ruleset: FD-40 means the clutter file stays put.
+            let plan = build(&nodes);
+
+            // Precondition, so a fixture drift cannot turn this into a vacuous
+            // pass: the books really do move out.
+            let moved_books: std::collections::BTreeSet<&str> = plan
+                .ops
+                .iter()
+                .filter(|o| o.kind == "move" && o.source_path.ends_with(".m4b"))
+                .map(|o| o.source_path.as_str())
+                .collect();
+            assert_eq!(
+                moved_books.len(),
+                3,
+                "{clutter}: all three books should move out, saw {moved_books:?}"
+            );
+
+            // The clutter file is left alone.
+            assert!(
+                !plan
+                    .ops
+                    .iter()
+                    .any(|o| o.source_path.ends_with(clutter) && o.kind != "no-op"),
+                "{clutter}: FD-40 keeps it, so nothing should act on it"
+            );
+
+            // And therefore the folder must NOT be scheduled for removal.
+            assert!(
+                !plan.ops.iter().any(|o| o.kind == "rmdir-empty"
+                    && o.source_path == "lib/C.S. Lewis - Narnia Collection"),
+                "{clutter}: folder still holds it, so rmdir-empty would halt the run"
+            );
+        }
+    }
+
+    /// The other half of the same rule: with NO clutter left behind, the
+    /// emptied folder is still removed. Without this, the fix above could be
+    /// "never emit rmdir-empty" and the test above would still pass.
+    #[test]
+    fn a_genuinely_emptied_multibook_folder_is_still_removed() {
+        let nodes = vec![
+            dir(0, None, "lib/C.S. Lewis - Narnia Collection"),
+            aud(
+                1,
+                Some(0),
+                "lib/C.S. Lewis - Narnia Collection/The Lion, the Witch and the Wardrobe.m4b",
+                90_000,
+            ),
+            aud(
+                2,
+                Some(0),
+                "lib/C.S. Lewis - Narnia Collection/Prince Caspian.m4b",
+                75_000,
+            ),
+            aud(
+                3,
+                Some(0),
+                "lib/C.S. Lewis - Narnia Collection/The Voyage of the Dawn Treader.m4b",
+                80_000,
+            ),
+        ];
+        let plan = build(&nodes);
+        assert!(
+            plan.ops.iter().any(|o| o.kind == "rmdir-empty"
+                && o.source_path == "lib/C.S. Lewis - Narnia Collection"),
+            "nothing remains, so the folder should still be removed"
+        );
     }
 
     // ---- FD-31: clutter set-aside ops inherit the owning pass's group -------
@@ -2721,7 +2904,7 @@ mod tests {
             // Clutter directly in the pack container.
             file(7, Some(0), "lib/Hugo Collection/release.nfo", 500),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         let op = only_clutter_op(&plan);
         assert_eq!(op.op_group, "flatten-packs");
         assert_eq!(
@@ -2747,28 +2930,28 @@ mod tests {
     #[test]
     fn multibook_internal_clutter_rides_box_sets() {
         let nodes = vec![
-            dir(0, None, "lib/Chronicles of Narnia"),
+            dir(0, None, "lib/C.S. Lewis - Narnia Collection"),
             aud(
                 1,
                 Some(0),
-                "lib/Chronicles of Narnia/The Lion, the Witch and the Wardrobe.m4b",
+                "lib/C.S. Lewis - Narnia Collection/The Lion, the Witch and the Wardrobe.m4b",
                 90_000,
             ),
             aud(
                 2,
                 Some(0),
-                "lib/Chronicles of Narnia/Prince Caspian.m4b",
+                "lib/C.S. Lewis - Narnia Collection/Prince Caspian.m4b",
                 75_000,
             ),
             aud(
                 3,
                 Some(0),
-                "lib/Chronicles of Narnia/The Voyage of the Dawn Treader.m4b",
+                "lib/C.S. Lewis - Narnia Collection/The Voyage of the Dawn Treader.m4b",
                 80_000,
             ),
             file(4, Some(0), "lib/Chronicles of Narnia/release.nfo", 500),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         // Precondition: the folder really is a multi-book suspect (so this test
         // exercises the SplitMultiBook inheritance branch, not a fallback).
         let (cs, _) = analyze(&nodes);
@@ -2793,7 +2976,7 @@ mod tests {
             aud(0, None, "lib/Sapiens by Yuval Noah Harari.m4b", 180_000),
             file(1, None, "lib/notes.nfo", 500),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         let op = only_clutter_op(&plan);
         assert_eq!(op.op_group, "loose-root-books");
         assert_eq!(
@@ -2816,7 +2999,7 @@ mod tests {
             dir(3, None, "lib/Book Two"),
             aud(4, Some(3), "lib/Book Two/Book Two.m4b", 100_000),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         // Precondition: Book One is a plain book leaf, not a container/pack.
         let (cs, _) = analyze(&nodes);
         assert_eq!(

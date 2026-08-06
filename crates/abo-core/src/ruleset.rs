@@ -34,8 +34,11 @@
 //!     a `leave-in-place` toggle (FD-01, the decision-gate default this phase
 //!     confirms);
 //!   - sidecars (ebook/cover/description) **keep-with-book**;
-//!   - non-audio clutter: **keep** ebook + cover, **quarantine**
-//!     nfo/sfv/playlist/weblink;
+//!   - non-audio clutter: **keep everything** (FD-40). Every kind - ebook,
+//!     cover, nfo, sfv, playlist, weblink - defaults to leaving the file where
+//!     it was found. The policy can still express `Quarantine` per kind; only
+//!     the starting point is Keep, on the principle that the tool should never
+//!     move a file the user did not ask it to touch;
 //!   - preferred canonical format **m4b** (the parallel-format loser is
 //!     quarantined, never deleted - the never-delete-audio invariant);
 //!   - empty-folder removal ON (`rmdir-empty` only ever targets verified-empty
@@ -239,14 +242,27 @@ impl Default for NamingPolicy {
 }
 
 impl Default for ClutterPolicy {
+    /// Every clutter kind defaults to [`Keep`](ClutterAction::Keep): a fresh
+    /// install leaves non-audio files exactly where it found them (FD-40).
+    ///
+    /// This reverses the original default, under which `nfo`/`sfv`/`playlist`/
+    /// `weblink` were set aside. The reasoning is asymmetry of harm: setting a
+    /// `.nfo` aside is the tool touching something the user never asked about,
+    /// in a product whose whole promise is that it does not surprise you. A user
+    /// who wants those files gone can turn each kind on; a user who does not
+    /// should never have to discover a setting in order to prevent it.
+    ///
+    /// The policy is unchanged in what it can EXPRESS - all six kinds remain
+    /// independently settable to `Keep` or `Quarantine`. Only the starting point
+    /// moved.
     fn default() -> Self {
         ClutterPolicy {
             ebook: ClutterAction::Keep,
             cover: ClutterAction::Keep,
-            nfo: ClutterAction::Quarantine,
-            sfv: ClutterAction::Quarantine,
-            playlist: ClutterAction::Quarantine,
-            weblink: ClutterAction::Quarantine,
+            nfo: ClutterAction::Keep,
+            sfv: ClutterAction::Keep,
+            playlist: ClutterAction::Keep,
+            weblink: ClutterAction::Keep,
         }
     }
 }
@@ -474,13 +490,15 @@ mod tests {
         assert!(rs.structure.empty_folder_removal);
         assert!(rs.cleanup.strip_noise);
 
-        // AC-6 clutter defaults: keep ebook + cover, quarantine the rest.
+        // FD-40 clutter defaults: keep EVERYTHING. The shipped ruleset never
+        // moves a non-audio file the user did not ask it to touch.
+        assert_eq!(rs.structure.clutter, ClutterPolicy::default());
         assert_eq!(rs.structure.clutter.ebook, ClutterAction::Keep);
         assert_eq!(rs.structure.clutter.cover, ClutterAction::Keep);
-        assert_eq!(rs.structure.clutter.nfo, ClutterAction::Quarantine);
-        assert_eq!(rs.structure.clutter.sfv, ClutterAction::Quarantine);
-        assert_eq!(rs.structure.clutter.playlist, ClutterAction::Quarantine);
-        assert_eq!(rs.structure.clutter.weblink, ClutterAction::Quarantine);
+        assert_eq!(rs.structure.clutter.nfo, ClutterAction::Keep);
+        assert_eq!(rs.structure.clutter.sfv, ClutterAction::Keep);
+        assert_eq!(rs.structure.clutter.playlist, ClutterAction::Keep);
+        assert_eq!(rs.structure.clutter.weblink, ClutterAction::Keep);
     }
 
     /// The default ruleset's series-index width equals the templates default
@@ -630,29 +648,55 @@ mod tests {
 
     // ---- AC-6: clutter action lookup follows the policy. ----------------
 
-    /// The default clutter policy quarantines nfo/sfv/playlist/weblink and
-    /// keeps ebook/cover, looked up by category.
+    /// FD-40: EVERY clutter kind defaults to Keep, so a fresh install leaves
+    /// non-audio files exactly where it found them.
+    ///
+    /// This asserts the whole set rather than the four that changed, because
+    /// the property that matters is "the default never moves a file the user
+    /// did not ask about", not "these particular four are Keep".
     #[test]
-    fn default_clutter_actions_match_ac6() {
+    fn default_clutter_actions_are_all_keep_fd40() {
         let clutter = ClutterPolicy::default();
-        assert_eq!(clutter.action_for(ClutterKind::Ebook), ClutterAction::Keep);
-        assert_eq!(clutter.action_for(ClutterKind::Cover), ClutterAction::Keep);
-        assert_eq!(
-            clutter.action_for(ClutterKind::Nfo),
-            ClutterAction::Quarantine
-        );
-        assert_eq!(
-            clutter.action_for(ClutterKind::Sfv),
-            ClutterAction::Quarantine
-        );
-        assert_eq!(
-            clutter.action_for(ClutterKind::Playlist),
-            ClutterAction::Quarantine
-        );
-        assert_eq!(
-            clutter.action_for(ClutterKind::Weblink),
-            ClutterAction::Quarantine
-        );
+        for kind in [
+            ClutterKind::Ebook,
+            ClutterKind::Cover,
+            ClutterKind::Nfo,
+            ClutterKind::Sfv,
+            ClutterKind::Playlist,
+            ClutterKind::Weblink,
+        ] {
+            assert_eq!(
+                clutter.action_for(kind),
+                ClutterAction::Keep,
+                "{kind:?} must default to Keep (FD-40)"
+            );
+        }
+    }
+
+    /// The policy can still EXPRESS quarantine for every kind: FD-40 moved the
+    /// starting point, it did not remove the capability. Without this, a future
+    /// change could quietly drop `Quarantine` support and only the default test
+    /// would still pass.
+    #[test]
+    fn clutter_policy_can_still_express_quarantine_for_every_kind() {
+        let clutter = ClutterPolicy {
+            ebook: ClutterAction::Quarantine,
+            cover: ClutterAction::Quarantine,
+            nfo: ClutterAction::Quarantine,
+            sfv: ClutterAction::Quarantine,
+            playlist: ClutterAction::Quarantine,
+            weblink: ClutterAction::Quarantine,
+        };
+        for kind in [
+            ClutterKind::Ebook,
+            ClutterKind::Cover,
+            ClutterKind::Nfo,
+            ClutterKind::Sfv,
+            ClutterKind::Playlist,
+            ClutterKind::Weblink,
+        ] {
+            assert_eq!(clutter.action_for(kind), ClutterAction::Quarantine);
+        }
     }
 
     /// AC-6 mapping: extensions resolve to their clutter category, `.txt` is
