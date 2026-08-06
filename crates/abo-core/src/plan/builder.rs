@@ -1922,6 +1922,28 @@ mod tests {
         build_plan(nodes, &cs, &merged, &default_ruleset(), ROOT)
     }
 
+    /// Build with every clutter kind set to `Quarantine`.
+    ///
+    /// FD-40 flipped the DEFAULT clutter policy to Keep, so the clutter tests
+    /// below can no longer lean on `default_ruleset()`. That is the point: they
+    /// test where a clutter set-aside op is ROUTED once one is emitted, not
+    /// whether the default emits one. Asking for the policy explicitly makes
+    /// each test say what it is actually about, and means a future change to
+    /// the default cannot silently turn these into no-op assertions.
+    fn build_clutter_quarantined(nodes: &[PlanNode]) -> BuiltPlan {
+        let (cs, merged) = analyze(nodes);
+        let mut rs = default_ruleset();
+        rs.structure.clutter = crate::ruleset::ClutterPolicy {
+            ebook: crate::ruleset::ClutterAction::Keep,
+            cover: crate::ruleset::ClutterAction::Keep,
+            nfo: crate::ruleset::ClutterAction::Quarantine,
+            sfv: crate::ruleset::ClutterAction::Quarantine,
+            playlist: crate::ruleset::ClutterAction::Quarantine,
+            weblink: crate::ruleset::ClutterAction::Quarantine,
+        };
+        build_plan(nodes, &cs, &merged, &rs, ROOT)
+    }
+
     fn ops_of<'a>(plan: &'a BuiltPlan, group: &str) -> Vec<&'a PlannedOp> {
         plan.ops.iter().filter(|o| o.op_group == group).collect()
     }
@@ -2646,7 +2668,7 @@ mod tests {
                 9_000,
             ),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         let clutter: Vec<&PlannedOp> = plan
             .ops
             .iter()
@@ -2721,7 +2743,7 @@ mod tests {
             // Clutter directly in the pack container.
             file(7, Some(0), "lib/Hugo Collection/release.nfo", 500),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         let op = only_clutter_op(&plan);
         assert_eq!(op.op_group, "flatten-packs");
         assert_eq!(
@@ -2768,7 +2790,7 @@ mod tests {
             ),
             file(4, Some(0), "lib/Chronicles of Narnia/release.nfo", 500),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         // Precondition: the folder really is a multi-book suspect (so this test
         // exercises the SplitMultiBook inheritance branch, not a fallback).
         let (cs, _) = analyze(&nodes);
@@ -2793,7 +2815,7 @@ mod tests {
             aud(0, None, "lib/Sapiens by Yuval Noah Harari.m4b", 180_000),
             file(1, None, "lib/notes.nfo", 500),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         let op = only_clutter_op(&plan);
         assert_eq!(op.op_group, "loose-root-books");
         assert_eq!(
@@ -2816,7 +2838,7 @@ mod tests {
             dir(3, None, "lib/Book Two"),
             aud(4, Some(3), "lib/Book Two/Book Two.m4b", 100_000),
         ];
-        let plan = build(&nodes);
+        let plan = build_clutter_quarantined(&nodes);
         // Precondition: Book One is a plain book leaf, not a container/pack.
         let (cs, _) = analyze(&nodes);
         assert_eq!(
