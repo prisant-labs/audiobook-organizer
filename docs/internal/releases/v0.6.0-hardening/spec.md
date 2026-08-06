@@ -160,6 +160,20 @@ Added 2026-08-05 from the UI round 2 crit pass. jp asked for clickable paths in 
 - **AC-49** Inline folder affordances appear throughout the tidy-up and review surfaces wherever a path is displayed, not only in the sidebar. [UI round 2 crit, jp explicit]
 - **AC-50** The sidebar carries two permanent quick links, to the library root and to the set-aside root, so the action does not require finding a row that happens to show a path. [UI round 2 crit]
 
+### F-1110 (book-level duplicate comparison) - P1
+
+Added 2026-08-05 per `FD-44`, from the duplicates approach audit. Every criterion in `F-702` to `F-905` assumes **one book is one file**. A book split across twelve mp3s is twelve unrelated files to the detector, so two copies of it are never grouped, and one m4b versus a folder of mp3s is never compared either.
+
+- **AC-51** A book FOLDER carries a fingerprint derived from data the scan already holds: count of audio files, total bytes across them, and the normalised title. No new scan pass and no filesystem read is required to compute it. [FD-44; duplicates audit]
+- **AC-52** Two folders whose fingerprints match are duplicate CANDIDATES, in exactly the sense single-file candidates already are: recorded, counted, never acted on. [FD-08 group canon]
+- **AC-53** A structural match tier compares the ordered multiset of file sizes across two candidate folders. A twelve-part book copied twice matches on twelve sizes in sequence; two different books do not. This tier reads no file contents. [duplicates audit]
+- **AC-54** A content match tier hashes pairwise using `F-702`, on request only, never as part of detection. [AC-10 candidates-only rule]
+- **AC-55** A single-file copy and a multi-file copy of the same title group together but **never auto-resolve**: they fail structural matching by construction, so the surface presents them as needing a human decision. Choosing between one file and twelve is a preference, not a mechanical ranking. [FD-44]
+
+**Ordering (FD-44).** After `P2`, because AC-54 is `P2`'s hashing applied to a set. Before `P3`, because `keep-m4b` means "prefer the .m4b" against files and "prefer the copy that is one file over the copy that is twelve" against books, and writing `P3` first means writing it twice.
+
+**Descope path.** `AC-51` and `AC-52` alone (find and count multi-file duplicate candidates, resolve none) still remove the silent under-reporting, which is the worst property of shipping without this.
+
 ### Long-path battle testing (FD-19) - release gate item
 
 - **AC-40** The full pipeline (scan, plan, validate, dry-run apply, rollback) runs green over runtime-generated fixture paths beyond 260 characters using extended-length (`\\?\`) semantics; these fixtures are generated at test time and never committed. [decision-ledger FD-19; S2 v0.6.0 scope; S2 CI notes]
