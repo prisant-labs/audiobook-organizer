@@ -54,7 +54,7 @@ recorded in the P1 status note.
 | Phase | Goal | Fulfills AC | Owner | Status |
 |---|---|---|---|---|
 | P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | MERGED 2026-07-31 |
-| P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | P1a/P1b/P1d MERGED 2026-07-31; P1c parked |
+| P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | **COMPLETE.** P1a/P1b/P1d MERGED 2026-07-31; P1c MERGED 2026-08-05 (PR #11). AC-8 hand walkthrough still owed by jp |
 | P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | Not started |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
@@ -62,6 +62,16 @@ recorded in the P1 status note.
 | P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | Not started |
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
 | P8 | Long-path battle testing + release gate | AC-40, AC-41 | LLM (Opus) + Fable | Not started |
+| P9 | Library freshness: scan triggers + on-entry check (F-609) | AC-42..AC-46 | LLM (Sonnet) | **NEW 2026-08-05**, from the UI round 2 crit. Not started |
+| P10 | Open a folder in the OS file manager (F-610) | AC-47..AC-50 | LLM (Sonnet) | **NEW 2026-08-05**, from the UI round 2 crit. Not started |
+
+**Two phases added 2026-08-05** from jp's crit of the UI round 2 prototypes, both P1 and both descopable.
+
+`P9` (`F-609`) closes a real trust gap rather than adding a feature: a plan is built from a stored scan, so it can describe a library that no longer exists, and today the app only notices at apply time, where the refusal reads as a failure at the worst moment. `AC-42` alone (scan age visible plus a manual re-scan) delivers most of the value and is trivial; `AC-43` to `AC-46` can move to v0.7.0 without blocking the tag.
+
+`P10` (`F-610`) is jp's request for clickable folder paths, which cannot be a link because `FD-29` gives the web layer no shell access. A narrow backend command that refuses any path outside the library and set-aside roots keeps the capability model unchanged. Inline affordances throughout the tidy-up and review surfaces, plus two permanent sidebar quick links.
+
+**Ordering note.** `F-1110` (multi-file book duplicate comparison, in the backlog) is recommended between `P2` and `P3` if it is scheduled, because `P3`'s resolution policies should be written against books rather than files. Doing it after `P3` means writing those policies twice. Not scheduled; awaiting the duplicates audit.
 
 **P1 status detail (2026-07-30).** P1a (reconcile primitives), P1b-1 (per-kind outcome
 classification), P1b-2 (orchestration + journal repair), and P1b-3 (startup hook + IPC)
