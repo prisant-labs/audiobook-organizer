@@ -8,6 +8,9 @@
 //! [`detect`] for the FD-08 counting and byte-figure rules.
 
 pub mod detect;
+pub mod hash;
+
+pub use hash::{group_is_verified_identical, hash_member, ContentSource, MemberHash};
 
 pub use detect::{
     detect_duplicates, detect_exact_duplicates, detect_version_candidates,

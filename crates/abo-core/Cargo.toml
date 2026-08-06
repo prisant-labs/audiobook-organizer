@@ -125,6 +125,25 @@ csv = "1"
 # reader was tested over.
 lofty = "=0.24.0"
 
+# blake3 computes the content hash that turns a duplicate CANDIDATE into a
+# proven duplicate (F-702, v0.6.0 P2). Chosen over SHA-256 for throughput: this
+# runs over multi-gigabyte audio files on a desktop, and the security properties
+# of a cryptographic hash are not what is wanted here - only that two different
+# files reliably produce different digests.
+#
+# Scope discipline (AC-10): hashing is CANDIDATES-ONLY. Nothing in the scan path
+# hashes, and no full-snapshot hash-everything code path exists. The only caller
+# is the duplicate verification job, over members of an already-detected group.
+#
+# Pure computation with no I/O of its own: the bytes are fed to it by the caller
+# through a narrow read seam, which is what keeps the executor's Vfs trait free
+# of a read method it does not need. No network (tests/no_network.rs covers the
+# whole default feature set), no tauri.
+#
+# EXACT-pinned per the workspace convention, so a silent bump cannot change what
+# a persisted hash means.
+blake3 = "=1.8.6"
+
 # v0.2.0 Phase 2 (FD-19 LongPathsEnabled detection): read the registry value
 # HKLM SYSTEM\CurrentControlSet\Control\FileSystem LongPathsEnabled to decide
 # whether a warning is warranted when a recorded path exceeds the legacy 260-char
