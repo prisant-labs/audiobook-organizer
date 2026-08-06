@@ -275,6 +275,22 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "danger",
   },
 
+  // -- Checking duplicate copies (v0.6.0 P2, F-702) ---------------------------
+  // The JOB failing, not a single file. One unreadable file is recorded against
+  // that copy and the check carries on, so it never reaches this surface.
+  //
+  // Tone is `warn` rather than `danger` on purpose: nothing was attempted on the
+  // library, so nothing can be in a bad state. The reassurance is the second
+  // sentence and it is the true one, which is what keeps this from reading as an
+  // alarm about the books themselves.
+  "duplicate-verify-failed": {
+    sentence: "The check on your duplicate copies couldn't finish.",
+    nextStep:
+      "Nothing was decided about them and your books are untouched. You can run the check again.",
+    retryable: true,
+    tone: "warn",
+  },
+
   // -- The record of past tidy-ups (v0.6.0 History) ---------------------------
   // A read-only failure: the record could not be SHOWN. Past tidy-ups and their
   // undo files are untouched, and an undo file is self-contained (AC-11), so it
