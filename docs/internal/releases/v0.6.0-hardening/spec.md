@@ -131,6 +131,35 @@ Hash verification (F-702 (hash verification)) uses BLAKE3 over candidate members
 - **AC-38** Each row shows source and target behind "Show file details," extended for tier 1 with matched pattern and confidence (FD-13 tier-1 content, F-504). [decision-ledger FD-13; S1 F-504]
 - **AC-39** Tree presentation is optional and behind a toggle; its absence never blocks the release (its own descope trigger, see Release Gate). [decision-ledger FD-06; S2 Section 5]
 
+### F-609 (library freshness: scan triggers and the on-entry check) - P1
+
+Added 2026-08-05 from the UI round 2 crit pass. jp: *"This seems like a pretty important feature/function. Perhaps showing a summary popup of changes. spec this and add it to the release plan and sample mockups."*
+
+**The problem.** A plan is built from a stored scan snapshot, not a live read of disk. Starting a tidy-up uses the scan you already have, deliberately: silently re-reading 297 GB on a button press would make the app feel broken. But it means the plan can describe a library that no longer exists, and today the interface never says how old the scan is. The app catches the mismatch at apply time and refuses, which is safe but reads as a failure at the worst possible moment.
+
+**The shape.** Scanning is **event-triggered, never watched.** A filesystem watcher running for the life of the app is a background process, a source of bugs, and unnecessary for the actual risk (jp, same crit pass: *"there should just be key natural triggers when a folder is automatically scanned"*).
+
+- **AC-42** The library screen displays the age of the current scan in plain language ("last looked: 6 minutes ago") beside a manual re-scan control, so staleness is visible before it becomes a surprise. [UI round 2 crit; F-902]
+- **AC-43** A scan is triggered by exactly these events, and by nothing else: (a) the user asks for one; (b) the user enters the tidy-up flow, subject to AC-44; (c) an undo completes; (d) a tidy-up completes; (e) app start, only when the stored scan is older than a configured threshold. No filesystem watcher exists in any build. [UI round 2 crit]
+- **AC-44** On entering the tidy-up flow, the app compares the library against the stored scan using a **cheap** check (directory listing plus modification times, never a full content re-read). If nothing changed, the user is not interrupted and the flow proceeds. [UI round 2 crit]
+- **AC-45** If the cheap check finds changes, the user is shown a summary before the plan is built, naming what changed by count and kind ("4 books added, 1 removed, 2 renamed"), with two choices: re-scan and rebuild the plan, or proceed with the plan as it stands. Neither choice is preselected as safe; both are legitimate. [UI round 2 crit]
+- **AC-46** Proceeding with a stale plan does not bypass the existing apply-time `snapshot-stale` refusal. AC-45 is an earlier and friendlier surface for the same hazard, never a replacement for the safety check. [D-09 safety invariants]
+
+**Implementation note.** The app already has an incremental rescan used by the after-the-fact verification pass; AC-44's cheap check should build on it rather than introduce a second mechanism.
+
+**Descope path.** AC-42 alone (scan age visible, manual re-scan) delivers most of the value and is trivial. AC-43 to AC-46 can move to v0.7.0 without blocking the tag.
+
+### F-610 (open a folder in the OS file manager) - P1
+
+Added 2026-08-05 from the UI round 2 crit pass. jp asked for clickable paths in three separate places, then confirmed: *"I am not trying to surface file and folder manager in this application. I just want to open the OS file manager/explorer to the clicked folder."* And: *"i still think in-line folder references throughout the tidying and review process should open to the folder."*
+
+**Why this needs a feature rather than a link.** `FD-29` gives the web layer no filesystem and no shell access; its capability allowlist is seven permissions and its own description says "no fs, and no shell". Making a path a hyperlink would mean granting shell access to the entire frontend, forever, to serve a convenience.
+
+- **AC-47** A backend command opens the OS file manager at a given path. The frontend never opens anything itself; it asks. The capability allowlist is unchanged. [FD-29]
+- **AC-48** The command **refuses any path not inside the library root or the set-aside root**, and refuses rather than silently doing nothing. The check exists because the path arrives from the untrusted half: without it, the command is a general "open any path on this machine" primitive reachable from the web layer. [FD-29]
+- **AC-49** Inline folder affordances appear throughout the tidy-up and review surfaces wherever a path is displayed, not only in the sidebar. [UI round 2 crit, jp explicit]
+- **AC-50** The sidebar carries two permanent quick links, to the library root and to the set-aside root, so the action does not require finding a row that happens to show a path. [UI round 2 crit]
+
 ### Long-path battle testing (FD-19) - release gate item
 
 - **AC-40** The full pipeline (scan, plan, validate, dry-run apply, rollback) runs green over runtime-generated fixture paths beyond 260 characters using extended-length (`\\?\`) semantics; these fixtures are generated at test time and never committed. [decision-ledger FD-19; S2 v0.6.0 scope; S2 CI notes]
