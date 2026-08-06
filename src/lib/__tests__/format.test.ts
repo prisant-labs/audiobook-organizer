@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBytes } from "../format";
+import { formatBytes, formatWhen } from "../format";
 
 describe("formatBytes", () => {
   it("renders a whole GB figure at 100 GB and above", () => {
@@ -22,5 +22,17 @@ describe("formatBytes", () => {
   it("renders a bare byte count below 1 KB, comma-grouped at 1000+", () => {
     expect(formatBytes(500)).toBe("500 bytes");
     expect(formatBytes(1000)).toBe("1,000 bytes");
+  });
+});
+
+describe("formatWhen", () => {
+  it("formats an ISO timestamp as a readable date", () => {
+    expect(formatWhen("2026-08-04T00:18:15Z")).not.toBe("");
+    expect(formatWhen("2026-08-04T00:18:15Z")).toMatch(/2026/);
+  });
+
+  it("returns an empty string for an unparseable value rather than 'Invalid Date'", () => {
+    expect(formatWhen("not a date")).toBe("");
+    expect(formatWhen("")).toBe("");
   });
 });

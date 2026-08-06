@@ -25,3 +25,23 @@ export function formatBytes(bytes: number): string {
   }
   return `${bytes.toLocaleString()} bytes`;
 }
+
+// A past timestamp as a family-readable date. Shared by History (the record of
+// past tidy-ups) and the interruption recovery surface's details disclosure, so
+// the same run reads the same way on both screens.
+//
+// Deliberately not a relative time ("2 days ago"): the record is a durable log,
+// and an absolute date stays true when re-read.
+//
+// Returns "" rather than "Invalid Date" for an unparseable value: a bad or
+// missing timestamp should degrade to a blank line, never shout at a reader who
+// opened a disclosure expecting reassurance.
+export function formatWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}

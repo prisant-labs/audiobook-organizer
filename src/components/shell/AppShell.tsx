@@ -9,6 +9,8 @@ import { commands, type AppError } from "@/lib/bindings";
 import { appErrorCode, formatAppError } from "@/lib/appError";
 import { copyForCode } from "@/lib/errorCopy";
 import { ErrorCallout } from "@/components/states/ErrorCallout";
+import { InterruptionNotice } from "@/components/states/InterruptionNotice";
+import { useStartupInterruption } from "@/hooks/useStartupInterruption";
 import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
 import { ScreenContainer } from "./ScreenContainer";
@@ -83,6 +85,17 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   // completes (`Library` calls `health.reload()`; see useNavCounts.ts).
   const health = useHealthMetrics();
   const counts = navCountsFrom(health.overview);
+
+  // A tidy-up a previous session was killed in the middle of (v0.6.0 P1c,
+  // F-606). It takes the screen area ahead of everything else, but the sidebar
+  // stays live and navigation stays open: the dangerous action is starting a
+  // NEW tidy-up, not using the app, and blocking navigation would be a
+  // procedural gate that stops nothing an IPC caller can reach. The gate that
+  // matters belongs in the engine, beside ensure_forward_tidying_allowed, and
+  // is recorded in STATUS.md as a precondition for enabling real changes.
+  // See docs/internal/releases/v0.6.0-hardening/design-p1c-interruption-surface.md.
+  const interruption = useStartupInterruption();
+  const [preparingUndo, setPreparingUndo] = useState(false);
   const theme: Theme = isTheme(settings.theme) ? settings.theme : DEFAULT_THEME;
   const onThemeChange = (next: Theme) => void onUpdate({ ...settings, theme: next });
 
@@ -115,6 +128,44 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
     setActiveJob({ jobId: result.data.job_id, mode: "dry-run" });
   }, []);
 
+  // Carrying on is a fresh scan and a fresh plan, not a replay of the
+  // interrupted job (FD-39): books already tidied produce no operation the
+  // second time, so the next plan covers exactly the work that remains. That
+  // makes this plain navigation to where the tidy-up action already lives.
+  // Deliberately does not start a scan: work should not begin off the back of
+  // a recovery screen.
+  const onInterruptionGoToLibrary = useCallback(() => {
+    interruption.dismiss();
+    navigate("library");
+  }, [interruption, navigate]);
+
+  const onInterruptionOpenHistory = useCallback(() => {
+    interruption.dismiss();
+    navigate("history");
+  }, [interruption, navigate]);
+
+  // The same two-step History uses (D-09): prepare the inverse plan, then hand
+  // the user to the review surface a forward tidy-up uses. Nothing moves on
+  // this click. The op ids come from the engine's UndoOffer, never recomputed
+  // here. A failed prepare leaves the notice up rather than dismissing it,
+  // because dismissing would strand the user with nothing undone and no
+  // surface left to act from.
+  const onInterruptionUndo = useCallback(async () => {
+    const offer = interruption.entry?.undo;
+    if (offer?.kind !== "put-recent-changes-back") return;
+    const jobId = interruption.entry!.jobId;
+    setPreparingUndo(true);
+    try {
+      const result = await commands.rollbackPreparePartial(jobId, offer.op_ids);
+      if (result.status === "ok") {
+        interruption.dismiss();
+        openUndoPlan(result.data.plan_id);
+      }
+    } finally {
+      setPreparingUndo(false);
+    }
+  }, [interruption, openUndoPlan]);
+
   // When the user finishes with the Apply screen (Done/acknowledge/stopped),
   // return to the tidy-up route so they can see the plan or start again. Goes
   // through `navigate` so a just-run undo plan is cleared: after running one, the
@@ -131,7 +182,16 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
       <div className="grid min-h-0 flex-1 grid-cols-[212px_1fr]">
         <Sidebar active={route} onNavigate={navigate} counts={counts} />
         <ScreenContainer>
-          {activeJob ? (
+          {interruption.interruption ? (
+            <InterruptionNotice
+              interruption={interruption.interruption}
+              entry={interruption.entry}
+              preparing={preparingUndo}
+              onGoToLibrary={onInterruptionGoToLibrary}
+              onUndo={() => void onInterruptionUndo()}
+              onOpenHistory={onInterruptionOpenHistory}
+            />
+          ) : activeJob ? (
             <Apply jobId={activeJob.jobId} mode={activeJob.mode} onDone={onApplyDone} />
           ) : startError ? (
             <ErrorCallout

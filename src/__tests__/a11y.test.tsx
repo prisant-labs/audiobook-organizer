@@ -4,11 +4,12 @@ import axe from "axe-core";
 import { Library } from "@/routes/Library";
 import { Review } from "@/routes/Review";
 import { Apply } from "@/routes/Apply";
+import { InterruptionNotice } from "@/components/states/InterruptionNotice";
 import { commands } from "@/lib/bindings";
 import { getCover } from "@/lib/covers";
 import { usePlanReview } from "@/hooks/usePlanReview";
 import { useApplyJob, type UseApplyJob } from "@/hooks/useApplyJob";
-import type { LibraryOverview, PlanGroupView, PlanOpView } from "@/lib/bindings";
+import type { HistoryEntry, LibraryOverview, PlanGroupView, PlanOpView } from "@/lib/bindings";
 import type { UseHealthMetrics } from "@/hooks/useHealthMetrics";
 import type { UsePlanReview } from "@/hooks/usePlanReview";
 
@@ -225,6 +226,54 @@ describe("axe-core accessibility smoke (T-36, AC-41)", () => {
       applyJobState({ phase: "blocked", feed: [], blocked: true, discrepancyCount: 2 }),
     );
     const { container } = render(<Apply jobId={1} onDone={vi.fn()} />);
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+});
+
+// The interruption recovery surface (v0.6.0 P1c, F-606). All THREE states, not
+// just the calm one: the ambiguous state uses a different token pair and a
+// different action set, so passing on the decisive state proves nothing about
+// it. This is the mechanical half of FD-21 for this surface; the keyboard
+// walkthrough is the human half, in docs/internal/qa/v0.6.0-manual-qa.md.
+describe("InterruptionNotice a11y", () => {
+  const BASE = {
+    job_id: 14,
+    mode: "real" as const,
+    interrupted: true,
+    outcome: "completed" as const,
+    in_doubt_op_id: 142,
+    resume_offered: true,
+    done_count: 142,
+  };
+
+  const ROW: HistoryEntry = {
+    jobId: 14,
+    mode: "real",
+    state: "failed",
+    startedAt: "2026-08-04T00:18:15Z",
+    finishedAt: null,
+    changesMade: 142,
+    undo: { kind: "put-recent-changes-back", op_ids: [140, 141, 142] },
+  };
+
+  it.each([
+    ["a practice run stopped early", { ...BASE, mode: "dry-run" as const, resume_offered: false }],
+    ["a real run stopped early, decisive", BASE],
+    ["a real run stopped early, ambiguous", { ...BASE, resume_offered: false }],
+  ])("has zero serious/critical violations: %s", async (_label, interruption) => {
+    const { container } = render(
+      <InterruptionNotice
+        interruption={interruption}
+        entry={ROW}
+        preparing={false}
+        onGoToLibrary={vi.fn()}
+        onUndo={vi.fn()}
+        onOpenHistory={vi.fn()}
+      />,
+    );
     const results = await axe.run(container);
     expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
       [],
