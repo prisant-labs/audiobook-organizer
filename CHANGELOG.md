@@ -9,6 +9,53 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The interruption recovery surface (`P1c`): after a tidy-up is cut short, the app
+  now says so on next launch instead of recovering in silence. Three states from one
+  reconciler result: an interrupted practice run (nothing on the shelves was touched),
+  a real run stopped early with a verified outcome (carry on, or put the changes back),
+  and one whose last step could not be confirmed (carrying on is not offered). The
+  surface renders the engine's own answers and derives none of them.
+- `docs/internal/backlog/`: deferred, raised, and answered, with a README stating that
+  nothing leaves the backlog by being forgotten. Created because "I will add it to the
+  backlog" had been said when there was nowhere to add it.
+- `F-609` (library freshness): the age of the current scan on the library screen, five
+  explicit scan triggers, and a cheap change check when entering the tidy-up flow that
+  summarises what moved before the plan is built. Event-triggered by design; the app
+  never watches the filesystem.
+- `F-610` (open a folder in the OS file manager): a backend command that opens Explorer
+  at a path and refuses anything outside the library or archive roots. The web layer
+  still has no filesystem or shell access.
+- The duplicates approach audit (`docs/internal/audits/`), which re-derives P2 through
+  P5 against the shipped code and finds the specs sound for single-file books and
+  silently narrow for multi-file ones.
+
+### Changed
+
+- **Non-audio leftovers now stay where they are** (`FD-40`). `.nfo`, `.sfv`, playlist
+  and web-link files join ebooks and cover art in defaulting to Keep. The per-type
+  setting was always there; only the starting point moved. The reason: a library is not
+  only an Audiobookshelf feed, it is also the owner's filing system, and companion
+  material is often sitting beside a book on purpose.
+- **"Set Aside" is now "Archive"** (`FD-42`), with the folder on disk named
+  "Audiobook Archive". Two names for two contexts: short enough for a button inside an
+  app that is entirely about audiobooks, and self-explanatory as a directory sitting
+  beside your library with no app running. "Backup" was considered and rejected: it
+  implies the original is still on your shelf and this is a spare, which invites
+  deleting the one folder that makes undo possible.
+- `keep-higher-bitrate` is cut from v1 (`F-1108`). Not because bitrate cannot be read,
+  but because file size already tells you the same thing for free: for the same book, a
+  higher-bitrate copy is a larger file.
+
+### Fixed
+
+- A tidy-up no longer halts partway through on an ordinary multi-book folder. The
+  planner decided a folder had been emptied by counting only its audio files, so once
+  leftovers began being kept, it would ask to remove a folder that still had one in it.
+  The executor refuses that and stops the run, after earlier moves have already been
+  applied. Found by an adversarial review before release; the planner now checks every
+  child and keeps the folder whenever it cannot prove otherwise.
+
+
 - F-606 (interruption safety): after a process kill mid-tidy-up, startup finds the
   single in-doubt operation, verifies what actually happened on disk, repairs the
   journal with the terminal record the kill prevented, and reports what can be done

@@ -3,7 +3,7 @@ title: "Audiobook Organizer - Status and Decision Queue"
 type: status
 project: audiobook-organizer
 created: 2026-07-20
-updated: 2026-08-04
+updated: 2026-08-05
 status: active
 ---
 
@@ -22,7 +22,7 @@ The fuller version of this list lives in the "What needs you" section of the lat
 - [ ] **Cancel-mid-tidy-up hand walkthrough** (`AC-8`, v0.6.0 hardening). Cancel a run in the app and confirm it stops between operations, never mid-file-move, and stays resumable. The automated half passes; this is the by-hand half. Last open P1 item besides the resume surface. Detail: [v0.6.0 spec, AC-8](docs/internal/releases/v0.6.0-hardening/spec.md)
 - [ ] **Approve a plan in the app** (`G-1`, the v0.4.0 seeing gate). The installer you have predates the v0.5.0 apply surface; a fresh build can be made so you walk the whole flow. Detail: [v0.4.0 spec](docs/internal/releases/v0.4.0-seeing/spec.md)
 - [ ] **A non-engineer reads the dry-run report** (`G-6`, the v0.3.0 planning gate) and confirms it makes sense without help. Detail: [v0.3.0 spec](docs/internal/releases/v0.3.0-planning/spec.md)
-- [x] **Crit the UI mockups** - DONE 2026-08-04, captured in `_local/gui/2026-07-22/feedback.md` (11 of 13 files). Round 2 is being built from it in `_local/gui/2026-08-04/`; the collaboration surface is that folder's `MASTER.md`. Two things still need you there: one truncated feedback line on `history.html`, and the scope call on per-action opt-out.
+- [x] **Crit the UI mockups** - DONE. Round 1 closed 2026-08-05 with a full closing record in `_local/gui/2026-08-04/feedback_round1.md`. Round 2 is live in `_local/gui/2026-08-04/round2/`, with its own `feedback_round2.md`. Four decisions closed there (duplicates stays in v1, keep-higher-bitrate cut, "practice run", `reveal_in_folder`); four still open as `D-1` to `D-4`.
 - [ ] **Power-loss durability: decide the threat model** (from the [2026-07-30 audit](_local/audit/2026-07-30_audit_codex-56.md)). Is the promise process-kill recovery only, or power loss too? The journal runs `synchronous = NORMAL`, which survives a process kill (now proven by the kill tests) but is not proven to survive a power cut before the write reaches the platter. Recommendation: include power loss for real changes, using a durable barrier on the journal connection only. **Blocks any real-library run.**
 - [ ] **Cross-volume move policy: decide** (from the same audit). A move between drives copies, compares byte length, then deletes the source. Equal length is not equal content. Recommendation: prohibit cross-volume real moves until content hashing lands in P2 (hash verification). **Blocks any real-library run**, and is now a public promise in [SECURITY.md](SECURITY.md).
 - [ ] **Veto window: journal durability and set-aside placement** (`FD-33`, `FD-34`, from v0.5.0). Both stand unless you object: the journal durability boundary, and set-aside living beside the library rather than inside it. Detail: [decision ledger](docs/internal/decision-ledger.md)
@@ -42,26 +42,21 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 | v0.3.0 | planning | yes | yes | no | tag, G-6 |
 | v0.4.0 | seeing | yes | yes | no | tag, G-1 |
 | v0.5.0 | acting | yes | yes | no | tag, AC-17, FD-33/34 |
-| v0.6.0 | hardening | in progress | P0/P1 yes | no | P1c round-2 crit, AC-8 walk |
+| v0.6.0 | hardening | in progress | P0/P1 **complete** | no | AC-8 walk, practice-run walk |
 | M-1 | campaign | planned | - | - | - |
 | v0.9.0 | packaged | planned | - | - | installer, signing decision |
 
 ## In flight right now
 
-**UI round 2** in `_local/gui/2026-08-04/`, built from your 2026-08-04 crit. Prototypes only, nothing in the tracked tree, no code changes. It exists to settle the `P1c` resume-or-rollback surface and the tidy-up interaction model before either gets built.
+Nothing unmerged. `main` is at the merge of PR #13.
 
-Everything below merged to `main` on 2026-07-31 (PRs #1 to #4), all four checks green on each.
+**Merged 2026-08-05:**
 
-Landed in v0.6.0 so far:
+- **PR #11** - `P1c`, the interruption recovery surface. **`P1` is now complete**; only the `AC-8` hand walkthrough is owed on it.
+- **PR #12** - the `docs/internal/backlog/` structure, `F-609` (library freshness), `F-610` (open a folder in the OS file manager), `FD-40` and `FD-41`.
+- **PR #13** - `FD-42` (the Archive rename), the duplicates approach audit, and the `FD-40` clutter-default implementation.
 
-- **P1a/P1b (interruption safety, F-606)** - the reconciler: after a kill, find the single in-doubt operation, verify what actually happened on disk, repair the journal, and report what can be done next.
-- **Mode-aware reconciliation (FD-37)** - the startup sweep was probing the REAL library to classify jobs that may have been rehearsals. Because the UI pins dry-run, every stranded job in practice WAS a rehearsal. Now gated on `jobs.mode`, failing closed on an unreadable mode and on more than one stranded run.
-- **P0: History and undo (FD-36)** - the screen, its engine read model, and the wiring that makes v0.5.0's undo machinery reachable at last.
-- **Kill-process recovery tests** - a real binary that runs a real apply and then calls `abort()` mid-operation, so recovery is proven against a genuinely killed process rather than a hand-built journal state. Covers AC-4 (intent-then-kill) and AC-5 (act-then-kill).
-- **Four review-found defects fixed**, including probes that turned I/O failures into evidence of completion, and fail-closed paths that erased their own retry condition.
-- Three dependency groups updated. TypeScript is held at 6.x because typescript-eslint 8.x refuses to run against TS 7 and takes the whole lint gate down; `.github/dependabot.yml` records the constraint and its removal condition.
-
-Still open on v0.6.0: **P1c** (resume-or-rollback surface, awaiting your mockup crit) and the **AC-8 hand walkthrough**, then P2 hash verification, P3 policies, P4-P7 surfaces, P8 long-path and gate. OQ-1 (bitrate source) blocks P3 keep-higher-bitrate; OQ-2 (ruleset schema mismatch) blocks P6.
+**UI round 2** lives in `_local/gui/2026-08-04/round2/`. Prototypes only, nothing in the tracked tree. Round 1 is closed with a full traceability record.
 
 ## Scope change on v0.6.0 (decision recorded, vetoable)
 
@@ -74,7 +69,7 @@ Real changes are still not reachable from the UI, by design. The engine can exec
 1. **Power-loss threat model decided** (`FD-33`, journal durability boundary)
 2. **Cross-volume move policy decided** (content verification before a cross-volume real move)
 3. **A mechanical authorization boundary for real applies** (today the frontend pins dry-run but the command still accepts either mode, so the gate is procedural)
-4. **Forward tidying blocked while an interruption is unresolved** (added 2026-08-04 by the P1c interruption-surface design; the engine pattern already exists as `ensure_forward_tidying_allowed`)
+4. **Forward tidying blocked while an interruption is unresolved** (added 2026-08-04 by the P1c interruption-surface design; the engine pattern already exists as `ensure_forward_tidying_allowed`, and P1c has since merged without it, so this remains genuinely open)
 
 The README states this plainly rather than implying a finished write path.
 
