@@ -27,24 +27,108 @@ const BANNED_WORDS = [
 
 const BANNED_PATTERN = new RegExp(`(${BANNED_WORDS.join("|")})`, "i");
 
-/** Recursively collect every string leaf of a nested copy object (skips
- * functions like `review.moreOps`, which are copy TEMPLATES, not literal
- * copy - their own call sites are covered by the component tests that render
- * them). */
-function collectStrings(value: unknown, path: string, out: Map<string, string>): void {
+/**
+ * Argument tuples used to render copy TEMPLATES so their output can be swept.
+ *
+ * Templates take either counts or labels, and several call `.toLocaleString()`
+ * on their argument, which throws for a string. So there is no single probe that
+ * renders all of them: we try each tuple and keep every result that renders.
+ *
+ * `1` and `2` exist as separate probes deliberately. Several templates branch on
+ * singular versus plural (`n === 1 ? "1 book moved" : ...`), and probing only one
+ * side would sweep only one of the two sentences a reader can actually see.
+ */
+const TEMPLATE_PROBES: readonly unknown[] = [1, 2, "Dune"];
+
+/**
+ * Recursively collect every user-visible string in a copy object.
+ *
+ * Includes copy TEMPLATES (function-valued entries such as
+ * `review.moreOps`) by rendering them. This closes a real hole: the sweep
+ * previously skipped functions on the grounds that "their own call sites are
+ * covered by the component tests that render them", which is a weaker guarantee
+ * than a mechanical sweep and depends on a component test both rendering the
+ * template AND asserting on its text. Four templates were carrying retired
+ * vocabulary that no sweep could see (FD-42's "set aside" and FD-47's "shelf").
+ *
+ * A template that renders under no probe is reported to `unrenderable` rather
+ * than dropped. Silently skipping what cannot be swept is exactly the failure
+ * this function exists to prevent.
+ */
+function collectStrings(
+  value: unknown,
+  path: string,
+  out: Map<string, string>,
+  unrenderable: string[] = [],
+): void {
   if (typeof value === "string") {
     out.set(path, value);
+  } else if (typeof value === "function") {
+    const fn = value as (...args: unknown[]) => unknown;
+    const arity = Math.max(fn.length, 1);
+    let rendered = 0;
+    for (const probe of TEMPLATE_PROBES) {
+      try {
+        const result = fn(...(Array.from({ length: arity }, () => probe) as unknown[]));
+        if (typeof result === "string") {
+          out.set(`${path}(${String(probe)})`, result);
+          rendered += 1;
+        }
+      } catch {
+        // This probe's type is wrong for this template (e.g. a string passed to
+        // a template that calls .toLocaleString()). Another probe may still work.
+      }
+    }
+    if (rendered === 0) unrenderable.push(path);
   } else if (Array.isArray(value)) {
-    value.forEach((v, i) => collectStrings(v, `${path}[${i}]`, out));
+    value.forEach((v, i) => collectStrings(v, `${path}[${i}]`, out, unrenderable));
   } else if (value && typeof value === "object") {
     for (const [key, v] of Object.entries(value)) {
-      collectStrings(v, path ? `${path}.${key}` : key, out);
+      collectStrings(v, path ? `${path}.${key}` : key, out, unrenderable);
     }
   }
-  // functions, numbers, booleans: not literal copy, skip.
+  // numbers, booleans, null: not copy, skip.
 }
 
 describe("copy sweep (T-33, AC-37/AC-38, design-system Section 6)", () => {
+  // The sweep is only as good as its coverage, so prove the coverage first.
+  // These two tests guard the COLLECTOR; the ones after them use it.
+  it("renders every copy template, leaving none unswept", () => {
+    const strings = new Map<string, string>();
+    const unrenderable: string[] = [];
+    collectStrings(STRINGS, "", strings, unrenderable);
+
+    expect(
+      unrenderable,
+      `these copy templates rendered under no probe, so nothing sweeps them. ` +
+        `Add a probe to TEMPLATE_PROBES that matches their argument types: ` +
+        `${JSON.stringify(unrenderable)}`,
+    ).toEqual([]);
+
+    // A template's rendered output is keyed `path(probe)`, so their presence is
+    // observable rather than assumed.
+    const rendered = [...strings.keys()].filter((k) => k.includes("("));
+    expect(rendered.length, "no copy templates were rendered at all").toBeGreaterThan(0);
+  });
+
+  it("catches a banned word hidden inside a copy template", () => {
+    // The regression test for the hole this collector was changed to close.
+    // Before, a function-valued entry was skipped outright, so a banned word
+    // inside one passed the sweep. This fixture fails if that ever regresses.
+    const fixture = {
+      innocent: "Books and shelves",
+      sneaky: (label: string) => `Running dedupe on ${label}.`,
+    };
+    const strings = new Map<string, string>();
+    collectStrings(fixture, "", strings);
+
+    const offenders = [...strings.entries()].filter(([, text]) => BANNED_PATTERN.test(text));
+    expect(
+      offenders.length,
+      "a banned word inside a copy template escaped the sweep",
+    ).toBeGreaterThan(0);
+  });
+
   it("STRINGS carries no Section 6.1 banned vocabulary", () => {
     const strings = new Map<string, string>();
     collectStrings(STRINGS, "", strings);
