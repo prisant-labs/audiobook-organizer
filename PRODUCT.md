@@ -28,7 +28,7 @@ Calm, bookish, trustworthy. The tool feels like caring for a collection, not ope
 
 ## Design Principles
 
-1. **Plain language first.** Books, shelves, copies, tidy-up. Never operations, ops, dedupe, manifest in a primary surface. Technical detail exists behind one consistent "show file details" disclosure.
+1. **Plain language first.** Books, library, duplicates, tidy-up, Archive. Never operations, ops, dedupe, manifest in a primary surface. Technical detail exists behind one consistent "show file details" disclosure.
 2. **Preview before touch.** Every destructive-adjacent flow runs scan -> review -> confirm. The review screen and the HTML report are the product's trust ceremony.
 3. **Nothing irreversible.** No deletions exist in the UI vocabulary. Duplicates are "set aside," changes are "undoable," and the interface says so where the anxiety happens.
 4. **The books are the interface.** Covers and spines carry the visual warmth and recognition; app chrome stays quiet and neutral so the collection is the color.
