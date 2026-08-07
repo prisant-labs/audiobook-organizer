@@ -213,7 +213,7 @@ fn group_headline(group: CampaignGroup, n: u64) -> String {
         CampaignGroup::MessyNames => format!("Clean up {n} messy folder names"),
         CampaignGroup::BoxSets => format!("Split {n} books out of their box-set folders"),
         CampaignGroup::Bundles => format!("Unpack {n} books out of collection bundles"),
-        CampaignGroup::Copies => format!("Set aside {n} duplicate copies"),
+        CampaignGroup::Copies => format!("Move {n} duplicate copies to the Archive"),
         CampaignGroup::EmptyFolders => format!("Sweep out {n} empty folders"),
     }
 }
@@ -243,9 +243,9 @@ fn group_reason(group: CampaignGroup) -> &'static str {
              the collection they came from is remembered in the report."
         }
         CampaignGroup::Copies => {
-            "Exact copies of the same book, found in more than one place. Before anything is set \
-             aside, every pair is double-checked byte by byte so a near-miss is never mistaken \
-             for a copy."
+            "Exact copies of the same book, found in more than one place. Before anything \
+             moves to the Archive, every pair is double-checked byte by byte so a near-miss \
+             is never mistaken for a copy."
         }
         CampaignGroup::EmptyFolders => {
             "These folders hold no audio at all - leftover placeholders from an earlier \

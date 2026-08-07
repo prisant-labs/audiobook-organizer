@@ -1046,7 +1046,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
 
         let specs = build_fixture(&library_root, &set_aside_root);
@@ -1131,7 +1131,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1208,7 +1208,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1334,7 +1334,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1444,7 +1444,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1492,7 +1492,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {

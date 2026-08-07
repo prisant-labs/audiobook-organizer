@@ -662,8 +662,8 @@ expression: plan.to_canonical_json()
       "op_group": "empty-cleanup",
       "kind": "mkdir",
       "source_path": "",
-      "target_path": "Set Aside/{job-id}",
-      "rationale": "Create the \"Set Aside\" folder so items can be set aside without deleting anything.",
+      "target_path": "Audiobook Archive/{job-id}",
+      "rationale": "Create the \"Audiobook Archive\" folder so items can be moved there without deleting anything.",
       "rule_id": "empty-cleanup-mkdir",
       "confidence": "high",
       "byte_size": 0
@@ -672,7 +672,7 @@ expression: plan.to_canonical_json()
       "op_group": "empty-cleanup",
       "kind": "quarantine",
       "source_path": "library/Genre - Business",
-      "target_path": "Set Aside/{job-id}/Genre - Business",
+      "target_path": "Audiobook Archive/{job-id}/Genre - Business",
       "rationale": "The collection bundle \"Genre - Business\" is empty after its books were extracted; set the empty shell aside (never deleted).",
       "rule_id": "flatten-packs-shell",
       "confidence": "high",
@@ -682,7 +682,7 @@ expression: plan.to_canonical_json()
       "op_group": "empty-cleanup",
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books",
-      "target_path": "Set Aside/{job-id}/Genre - SciFI/Top 100 Sci-Fi Books",
+      "target_path": "Audiobook Archive/{job-id}/Genre - SciFI/Top 100 Sci-Fi Books",
       "rationale": "The collection bundle \"Top 100 Sci-Fi Books\" is empty after its books were extracted; set the empty shell aside (never deleted).",
       "rule_id": "flatten-packs-shell",
       "confidence": "high",
@@ -692,8 +692,8 @@ expression: plan.to_canonical_json()
       "op_group": "dedupe-quarantine",
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Parallel Format Example/track01.mp3",
-      "target_path": "Set Aside/{job-id}/Genre - SciFI/Parallel Format Example/track01.mp3",
-      "rationale": "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy is set aside (never deleted).",
+      "target_path": "Audiobook Archive/{job-id}/Genre - SciFI/Parallel Format Example/track01.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track01.mp3\" copy moves to the Archive (never deleted).",
       "rule_id": "parallel-format-quarantine",
       "confidence": "high",
       "byte_size": 40000
@@ -702,8 +702,8 @@ expression: plan.to_canonical_json()
       "op_group": "dedupe-quarantine",
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Parallel Format Example/track02.mp3",
-      "target_path": "Set Aside/{job-id}/Genre - SciFI/Parallel Format Example/track02.mp3",
-      "rationale": "This book keeps a preferred m4b copy, so the extra \"track02.mp3\" copy is set aside (never deleted).",
+      "target_path": "Audiobook Archive/{job-id}/Genre - SciFI/Parallel Format Example/track02.mp3",
+      "rationale": "This book keeps a preferred m4b copy, so the extra \"track02.mp3\" copy moves to the Archive (never deleted).",
       "rule_id": "parallel-format-quarantine",
       "confidence": "high",
       "byte_size": 40000
@@ -744,7 +744,7 @@ expression: plan.to_canonical_json()
         "ops": 41
       },
       {
-        "group": "copies",
+        "group": "duplicates",
         "ops": 2
       },
       {

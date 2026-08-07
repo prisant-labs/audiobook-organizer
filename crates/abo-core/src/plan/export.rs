@@ -18,7 +18,7 @@
 //! target path (P6 FIX 3), but three STRUCTURED fields still carry the word
 //! as internal data: the `kind` value `"quarantine"`, and the rule ids
 //! `"parallel-format-quarantine"` / `"clutter-quarantine"` (F-205/F-402).
-//! [`scrub_internal_vocab`] rewrites the substring to `"set-aside"` wherever
+//! [`scrub_internal_vocab`] rewrites the substring to `"archive"` wherever
 //! it appears, and [`ExportOp::group`] is always the FD-26 user-facing label
 //! (never the raw `op_group`, which can be the internal pass name
 //! `"dedupe-quarantine"`). No exported field can carry "quarantine" as a
@@ -49,12 +49,13 @@ pub const FD10_GUARANTEE_LINE: &str =
     "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone.";
 
 /// Rewrite every occurrence of the internal-only word "quarantine" to the
-/// plain-language "set-aside" (FD-31). A plain substring replace is complete
+/// plain-language "archive" (FD-42, superseding FD-31's "set-aside"). A plain
+/// substring replace is complete
 /// because the only field values that ever carry the word are the `kind`
 /// value `"quarantine"` and the two rule ids named in the module doc; none of
 /// them embed it as part of an unrelated word.
 fn scrub_internal_vocab(s: &str) -> String {
-    s.replace("quarantine", "set-aside")
+    s.replace("quarantine", "archive")
 }
 
 /// One exported operation row: the FD-31-scrubbed, spreadsheet/JSON-safe
