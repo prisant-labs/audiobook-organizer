@@ -192,7 +192,7 @@ Design invariants (D-09 safety invariants): never overwrite; never delete audio;
 | F-701 (duplicate candidate detection) | Name+size exact grouping across the snapshot | P0 | v0.3.0 | Counts GROUPS (FD-08); version candidates labeled distinctly, never auto-resolved |
 | F-702 (hash verification) | Opt-in content hash before any set-aside action | P1 | v0.6.0 | BLAKE3 over candidates only; never hash-everything |
 | F-703 (duplicate review + report) | Grouped review UI plus CSV export | P1 | v0.6.0 | Dedupe is just another campaign group |
-| F-704 (resolution policies) | keep-larger / keep-higher-bitrate / keep-m4b / flag-only | P1 | v0.6.0 | Default policy `flag-only` |
+| F-704 (resolution policies) | keep-larger / keep-m4b / flag-only | P1 | v0.6.0 | Default policy `flag-only`. keep-higher-bitrate cut 2026-08-05 as `F-1108`, see the deferred row below. Written against BOOKS not files per `FD-44` |
 
 ### E-08 (rulesets and settings)
 

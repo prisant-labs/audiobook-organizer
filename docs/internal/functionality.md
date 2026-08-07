@@ -212,7 +212,7 @@ Every feature ID from the PRD registry (docs/internal/product-requirements.md Se
 | F-701 (duplicate candidate detection) | Name+size exact grouping across the snapshot | v0.3.0 | BUILT | 406 groups / 856 copy files on the real library; version candidates never auto-resolved |
 | F-702 (hash verification) | Opt-in content hash before any set-aside action | v0.6.0 | SPEC-READY | BLAKE3 over candidates only, never hash-everything |
 | F-703 (duplicate review + report) | Grouped review UI plus CSV export | v0.6.0 | SPEC-READY | Dedupe is just another campaign group |
-| F-704 (resolution policies) | keep-larger / keep-higher-bitrate / keep-m4b / flag-only | v0.6.0 | SPEC-READY | Default policy is flag-only |
+| F-704 (resolution policies) | keep-larger / keep-m4b / flag-only | v0.6.0 | SPEC-READY | Default policy is flag-only. keep-higher-bitrate cut as `F-1108` |
 | F-801 (ruleset model + persistence) | Named rulesets bundling templates, policies, toggles | v0.3.0 | BUILT | JSON body against a versioned schema; invalid bodies rejected on save |
 | F-802 (ruleset import/export) | Portable JSON ruleset files | v0.6.0 | SPEC-READY | - |
 | F-803 (app settings) | Library roots, set-aside root, reports folder, theme, retention | v0.4.0 | BUILT | Hosts theme default `day`, snapshot retention default 10 |

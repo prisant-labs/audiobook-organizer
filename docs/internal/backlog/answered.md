@@ -56,8 +56,9 @@ answer is findable. Newest first. See [`README.md`](README.md).
 
 - **Asked:** UI round 2 crit.
 - **Answer:** find the duplicates, show them, **take no action**. It is the
-  default of the four policies precisely because it is the one that cannot be
-  wrong. The other three pick a keeper automatically.
+  default of the three policies precisely because it is the one that cannot be
+  wrong. The other two pick a keeper automatically. (Was four until
+  keep-higher-bitrate was cut as `F-1108`.)
 - **Surfacing note (jp, 2026-08-05):** in the app this reads as "do nothing",
   which is accurate but sounds like a failure. Better user-facing framing:
   **"Just show me the duplicates"**, with the doing-nothing part stated as
