@@ -178,7 +178,7 @@ audit.
 | Detection is candidate-only, no hashing, no auto-set-aside | `dupes/mod.rs` module doc; `plan/builder.rs:886` |
 | The group is the canonical unit, N members not 2 | `DuplicateGroup` / `DuplicateMember` in `dupes/detect.rs`; `FD-08` |
 | Parallel-format only catches same-stem siblings | `plan/builder.rs:1425-1432` |
-| Four policies, flag-only default | v0.6.0 spec `AC-23` |
+| Three policies, flag-only default (keep-higher-bitrate cut as `F-1108`) | v0.6.0 spec `AC-23` |
 | `lofty` ships and already reads these files | `crates/abo-core/Cargo.toml:100-126` |
 
 ## Outputs

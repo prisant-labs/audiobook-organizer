@@ -205,9 +205,9 @@ Suggested Owner: LLM (Opus) - safety-adjacent (gates a destructive-adjacent acti
 **Goal:** four resolution policies feeding set-aside operations through the standard plan/apply/rollback pipeline. **Addresses:** AC-23, AC-24, AC-25, AC-26, AC-27.
 
 Steps:
-1. Implement the four policies in `crates/abo-core/src/dupes/` (e.g. `policy.rs`): keep-larger, keep-higher-bitrate, keep-m4b, flag-only (default). Each takes a group and returns a proposed keeper (flag-only returns a suggestion only).
-2. For keep-higher-bitrate, resolve OQ-1 (spec Open Questions): if bitrate is unavailable without embedded-tag reading (F-1101 deferred), fall back to keep-larger and note it, or add a bounded lofty-subset read per FD-14 precedent. Await decision gate.
-3. On user confirmation, emit set-aside operations into the user-facing "Copies" campaign group (FD-26 (seven campaign groups)), which maps to the internal `dedupe-quarantine` F-403 plan-pass id (an internal id only, never a UI or report label), via F-403 (plan builder); they flow through F-404 (plan validation) and F-601 (executor) unchanged (AC-25). flag-only emits no operations (AC-26).
+1. Implement the three policies in `crates/abo-core/src/dupes/` (e.g. `policy.rs`): keep-larger, keep-m4b, flag-only (default). Each takes a group and returns a proposed keeper (flag-only returns a suggestion only). Amended 2026-08-06: keep-higher-bitrate was cut as `F-1108`, which also closed `OQ-1` as moot.
+2. Write these policies against BOOKS, not files, per `FD-44`. `keep-m4b` means "prefer the .m4b" against files but "prefer the copy that is one file over the copy that is twelve" against books, which is a materially different rule. This is why `P2b` (`F-1110`) is sequenced before this phase: building it after would mean writing the policies twice.
+3. On user confirmation, emit Archive operations into the user-facing "Duplicates" campaign group (FD-26 (seven campaign groups), renamed by FD-46; the action is renamed by FD-42), which maps to the internal `dedupe-quarantine` F-403 plan-pass id (an internal id only, never a UI or report label), via F-403 (plan builder); they flow through F-404 (plan validation) and F-601 (executor) unchanged (AC-25). flag-only emits no operations (AC-26).
 4. Ensure set-aside losers go through F-605 (quarantine) preserving relative paths and provenance, so F-603 (rollback) restores them (AC-27).
 
 Verification:
@@ -215,7 +215,7 @@ Verification:
 - flag-only emits zero operations (AC-26).
 - Dedupe round-trip test on fixtures: resolve -> set aside -> rollback -> tree byte-identical (AC-27); the real-data-copy version is exercised in Phase 8 / campaign log.
 
-Decision Gate: OQ-1 (keep-higher-bitrate bitrate source). Resolve before implementing that policy; the other three do not depend on it.
+Decision Gate: NONE remaining. `OQ-1` (keep-higher-bitrate bitrate source) was CLOSED as moot on 2026-08-05 when the policy itself was cut as `F-1108`. The three surviving policies never depended on it.
 
 Output Artifacts: `crates/abo-core/src/dupes/policy.rs`; plan-builder `dedupe-quarantine` wiring; policy test suite.
 
@@ -346,7 +346,7 @@ Per test-strategy Executor layer, the following tests are written before the imp
 - Hash performance unacceptable on real data -> dedupe runs flag-only; set-aside-by-hash is post-campaign (spec AC-16). Flag-only path (P3) must be complete regardless.
 - F-501 (everything view) not responsive/stable by end of window -> slip it (and, first, the tree toggle) without blocking the tag (spec AC-39).
 - Any executor invariant test flaky -> freeze the release until deflaked; the one accepted slippage point (S2 Section 5).
-- OQ-1 (bitrate source) and OQ-2 (ruleset schema mismatch) unresolved -> block only their own phase steps (keep-higher-bitrate; import version handling), not the release.
+- OQ-2 (ruleset schema mismatch) unresolved -> blocks only its own phase step (import version handling), not the release. `OQ-1` (bitrate source) is closed as moot: `F-1108` cut the policy that needed it.
 
 ## Definition of Done
 
