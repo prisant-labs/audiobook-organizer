@@ -16,7 +16,7 @@ Before any planning or code work, read in this order:
 
 - Never use em-dashes (U+2014) or en-dashes (U+2013) anywhere: chat, docs, code, commits. Use " - ", a comma, a colon, or a sentence break. Numeric ranges use plain hyphens (2-5).
 - Every reference ID carries its handle on first use per section: "F-506 (dry-run HTML report)", "D-14 (provenance in v1)", never a bare ID.
-- Plain-language register in all user-facing copy: books, shelves, copies, tidy-up, set aside. Never operations, ops, dedupe, manifest, or dashboard in anything a user sees.
+- Plain-language register in all user-facing copy: books, library, duplicates, tidy-up, Archive. Never operations, ops, dedupe, manifest, or dashboard in anything a user sees. (Revised by FD-47: "shelves" retired for "library", "copies" for "duplicates" per FD-46, "set aside" for "Archive" per FD-42.)
 - Branch-first: work happens on short-lived feature branches off `main`, per `EXECUTION.md`. Do not commit directly to `main`.
 - Acceptance criteria live only in release specs (`docs/internal/releases/<version>/spec.md`). The roadmap and release plans aggregate and reference AC; they never author it.
 - Human-only gates (never cross without explicit approval): any Real, non-dry-run apply against the actual library; publishing releases or tags; the public-repo flip; spending money; rewriting history. See `EXECUTION.md` for the full allowlist.
@@ -39,7 +39,7 @@ This is a Windows 11 desktop product; write examples with Windows paths. macOS s
 
 ## Vocabulary discipline
 
-The product-facing vocabulary is deliberate and narrow: books, shelves, copies, tidy up, set aside, undo. Internal engineering terms (operations, ops, dedupe, manifest, journal, quarantine, dashboard) belong in code, ADRs, and `docs/internal/`, never in a screen, dialog, toast, or exported report a user reads. If a spec or a prototype uses one of these terms on a user-facing surface, that is a defect to flag, not a pattern to copy.
+The product-facing vocabulary is deliberate and narrow: books, library, duplicates, tidy up, Archive, undo. Internal engineering terms (operations, ops, dedupe, manifest, journal, quarantine, dashboard) belong in code, ADRs, and `docs/internal/`, never in a screen, dialog, toast, or exported report a user reads. If a spec or a prototype uses one of these terms on a user-facing surface, that is a defect to flag, not a pattern to copy.
 
 ## When sources disagree
 

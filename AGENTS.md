@@ -21,7 +21,7 @@ Stack: Tauri v2, Rust, React, TypeScript, shadcn/ui, SQLite via sqlx, tauri-spec
 
 - Never use em-dashes (U+2014) or en-dashes (U+2013) anywhere: docs, code, commits. Use " - ", a comma, a colon, or a sentence break. Numeric ranges use plain hyphens (2-5).
 - Every reference ID carries its handle on first use per section: "F-506 (dry-run HTML report)", not a bare ID.
-- Plain-language register in all user-facing copy: books, shelves, copies, tidy-up, set aside. Never operations, ops, dedupe, manifest, or dashboard in anything a user sees.
+- Plain-language register in all user-facing copy: books, library, duplicates, tidy-up, Archive. Never operations, ops, dedupe, manifest, or dashboard in anything a user sees. (Revised by FD-47: "shelves" retired for "library", "copies" for "duplicates" per FD-46, "set aside" for "Archive" per FD-42.)
 - Branch-first: short-lived feature branches off `main`, opened as PRs, per `EXECUTION.md`. Do not commit directly to `main`.
 - Acceptance criteria live only in release specs (`docs/internal/releases/<version>/spec.md`). Roadmap and release plans aggregate and reference AC; they never author it.
 - Use conventional commits (`feat:`, `fix:`, `docs:`, `chore:`).
@@ -49,7 +49,7 @@ This is a Windows 11 desktop product first. Write examples with Windows paths. m
 
 ## Vocabulary discipline
 
-The product-facing vocabulary is narrow and deliberate: books, shelves, copies, tidy up, set aside, undo. Internal engineering terms such as operations, dedupe, manifest, journal, quarantine, or dashboard belong in code and internal docs, never on a screen, dialog, toast, or exported report a user reads.
+The product-facing vocabulary is narrow and deliberate: books, library, duplicates, tidy up, Archive, undo. Internal engineering terms such as operations, dedupe, manifest, journal, quarantine, or dashboard belong in code and internal docs, never on a screen, dialog, toast, or exported report a user reads.
 
 ## When sources disagree
 
