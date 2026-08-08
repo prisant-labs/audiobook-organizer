@@ -33,7 +33,7 @@ export const STRINGS = {
   },
 
   // Settings (F-803 + F-909 re-selection). Calm maintenance surface; the
-  // library folder is the focal control. "Set aside" is the plain-language
+  // library folder is the focal control. "Archive" is the plain-language
   // vocabulary for the quarantine root (FD-31); "dashboard" and engine jargon
   // never appear (design-system Section 6.1).
   settings: {
@@ -43,8 +43,8 @@ export const STRINGS = {
     libraryHelp: "The folder the app reads your audiobooks from.",
     libraryChange: "Change folder",
     libraryChoose: "Choose a folder",
-    setAsideLabel: "Set-aside folder",
-    setAsideHelp: "Where duplicate copies and clutter are moved when you tidy up. Leave as the default to keep it beside your library.",
+    setAsideLabel: "Archive folder",
+    setAsideHelp: "Where duplicates and clutter are moved when you tidy up. Leave as the default to keep it beside your library.",
     reportsLabel: "Reports folder",
     reportsHelp: "Where saved tidy-up reports are written. Leave as the default to keep it beside the app's data.",
     defaultLocation: "Default location",
@@ -57,21 +57,21 @@ export const STRINGS = {
 
   // Set-aside retention (F-904 history/undo surface and the dry-run report).
   // FD-34 + FD-10 + AC-23: the product NEVER auto-deletes anything in the
-  // set-aside area; the user empties it themselves. Plain-language register:
-  // "set aside", never "quarantine" (FD-31).
+  // Archive; the user empties it themselves. Plain-language register: "Archive"
+  // (FD-42, superseding FD-31's "set aside"), never "quarantine".
   setAside: {
     retentionNote:
-      "Set-aside items stay where they are until you empty the Set Aside folder yourself. The app never deletes anything there.",
+      "Archived items stay where they are until you empty the Archive yourself. The app never deletes anything there.",
   },
 
   // The ruleset editor (F-906, v0.4.0 Phase 6, AC-32/AC-33): "how your
-  // shelves get organized", hosted inside Settings. Deliberately never says
+  // library gets organized", hosted inside Settings. Deliberately never says
   // "ruleset" - plain-language register per design-system Section 6.1 and the
   // vocabulary-discipline standing rule. Naming-style/policy copy paraphrases
   // the F-401/F-402 spec behaviors in family-facing words.
   rulesetEditor: {
-    loading: "Loading how your shelves are organized...",
-    heading: "How your shelves get organized",
+    loading: "Loading how your library is organized...",
+    heading: "How your library gets organized",
     intro: "Choose a naming style and a few safety options. Changing something here shows you what it would affect before you save it.",
     presetHeading: "Naming style",
     presets: {
@@ -84,8 +84,8 @@ export const STRINGS = {
         description: "One flat folder per book, named for its title and author.",
       },
       "hybrid-genre": {
-        label: "Genre shelves",
-        description: "Adds a genre shelf on top of the author-first style, when a genre is known.",
+        label: "Genre folders",
+        description: "Adds a genre folder on top of the author-first style, when a genre is known.",
       },
     } as const,
     policiesHeading: "Safety and tidiness options",
@@ -102,7 +102,7 @@ export const STRINGS = {
     sidecars: {
       label: "Ebook and cover files that travel with a book",
       keepWithBook: "Keep with the book",
-      quarantine: "Set aside instead",
+      quarantine: "Move to the Archive instead",
     },
     preferredFormat: {
       label: "When a book has both an M4B and an MP3 copy, keep",
@@ -133,7 +133,7 @@ export const STRINGS = {
     heading: "Your library",
     worthALookHeading: "Worth a look first",
     worthALookSubline: "a few examples of what the tidy-up would fix",
-    seriesHeading: "Series on your shelves",
+    seriesHeading: "Series in your library",
     seriesSubline: "the tidy-up keeps each series together",
     scanAgain: "Scan again",
     startTidyUp: "Start a tidy-up",
@@ -214,12 +214,12 @@ export const STRINGS = {
     // Heading while running (dry-run mode adds the badge below separately).
     heading: "Tidying up your books",
     // Sub-line shown while a REAL walk is running (it moves books for real).
-    subline: "Moving books to their new shelves. This may take a little while.",
+    subline: "Moving books to their new folders. This may take a little while.",
     // Sub-line shown while a REHEARSAL (dry-run) is running: a rehearsal moves
     // nothing, so it never claims to (the surface must never present a rehearsal
     // as real moves - Critical 1).
     rehearsalSubline:
-      "Checking each book against its new shelf. This may take a little while.",
+      "Checking each book against its new folder. This may take a little while.",
     // Badge shown for a rehearsal (dry-run) apply - NOT a real move.
     rehearsalBadge: "Rehearsal",
     // Pause / resume labels (AC-28): the label toggles depending on state.
@@ -276,16 +276,16 @@ export const STRINGS = {
       "Your books are safe. No book was moved only partway - every change either completed or was left as it was.",
     // Sentence templates for the scrolling feed of completed ops on a REAL apply.
     // Called with the op's `label` (the book or folder name, no path).
-    opMovedSentence: (label: string) => `Moved ${label} to its new shelf.`,
-    opSetAsideSentence: (label: string) => `Set aside ${label}.`,
+    opMovedSentence: (label: string) => `Moved ${label} to its new folder.`,
+    opSetAsideSentence: (label: string) => `Moved ${label} to the Archive.`,
     opRemovedEmpty: "Removed an empty folder.",
     opCreatedFolder: "Created a new folder.",
     // Feed sentences for a REHEARSAL (dry-run): nothing actually moved, so every
     // sentence says what was CHECKED, never what was moved (Critical 1).
     rehearsalOpMovedSentence: (label: string) =>
-      `Checked ${label} - ready for its new shelf.`,
+      `Checked ${label} - ready for its new folder.`,
     rehearsalOpSetAsideSentence: (label: string) =>
-      `Checked ${label} - ready to set aside.`,
+      `Checked ${label} - ready for the Archive.`,
     rehearsalOpRemovedEmpty: "Checked an empty folder - ready to remove.",
     rehearsalOpCreatedFolder: "Checked the spot for a new folder.",
     // Dry-run framing (never presented as real moves).
@@ -387,11 +387,11 @@ export const STRINGS = {
   // what is safe. A reader who stops after one sentence still learns the thing
   // that matters most, which on this screen is that nothing was left broken.
   interruption: {
-    // State 1: an interrupted practice run. The real shelves were never
+    // State 1: an interrupted practice run. The real library was never
     // touched, so there is nothing to carry on from and nothing to put back.
     practiceHeading: "The practice run stopped early",
     practiceBody:
-      "Your computer stopped before the practice run finished. Nothing on your shelves was touched: a practice run only shows you what would happen.",
+      "Your computer stopped before the practice run finished. Nothing in your library was touched: a practice run only shows you what would happen.",
     practiceAction: "Back to your library",
 
     // State 2: a real tidy-up stopped early, and the app confirmed where it

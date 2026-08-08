@@ -2,14 +2,28 @@ import { describe, expect, it } from "vitest";
 import { STRINGS } from "@/lib/strings";
 import { ERROR_COPY } from "@/lib/errorCopy";
 
-// T-33 (v0.4.0 Phase 8, AC-37/AC-38): the copy sweep. FD-23 centralizes ALL
-// user-facing copy in `strings.ts` (nav, screens) and `errorCopy.ts` (the
-// AppError -> plain-language map), so a mechanical sweep of these two modules
-// covers every rendered sentence in the app - there is no third place a
-// user-facing string could hide. The exported HTML report (F-506, v0.3.0) is
-// a separate Rust-generated artifact with its own `no_banned_vocabulary` test
-// (crates/abo-core/src/plan/report.rs); this suite is this module's half of
-// the same gate (design-system Section 6, standing rule 3).
+// T-33 (v0.4.0 Phase 8, AC-37/AC-38): the copy sweep over `strings.ts` (nav,
+// screens) and `errorCopy.ts` (the AppError -> plain-language map).
+//
+// SCOPE, stated honestly. This file used to claim that sweeping these two modules
+// "covers every rendered sentence in the app - there is no third place a
+// user-facing string could hide". That was false, and believing it cost real
+// defects: an adversarial review found FD-47's retired "shelf" still live in TWO
+// Rust-side surfaces that render in this app and are swept by nothing here.
+//
+// User-facing text is produced in at least four places, each gated separately:
+//
+//   1. strings.ts / errorCopy.ts        -> this file
+//   2. the exported HTML report          -> report.rs `no_banned_vocabulary`
+//   3. AppError::remediation             -> error.rs `no_remediation_carries_retired_vocabulary`
+//   4. campaign group headlines/reasons  -> query.rs `no_group_copy_carries_retired_vocabulary`
+//      (plus stored rationale sentences from builder.rs, which reach the review
+//      surface through the plan itself)
+//
+// The lesson behind that list: these gates are keyed on WHICH FILE text lives in,
+// when the property that matters is whether the text REACHES A USER. Adding a
+// fifth producer would silently be ungated again. Anyone adding one should add its
+// sweep in the same change.
 
 // Design-system Section 6.1 "Forbidden on primary surfaces" list, plus the
 // "Not this" column terms from the vocabulary map. Word-boundary matched,
@@ -25,7 +39,36 @@ const BANNED_WORDS = [
   "batch(?:es)?",
 ] as const;
 
-const BANNED_PATTERN = new RegExp(`(${BANNED_WORDS.join("|")})`, "i");
+/**
+ * Words RETIRED by a ledger decision, kept deliberately separate from
+ * `BANNED_WORDS` above.
+ *
+ * The distinction is worth preserving: `BANNED_WORDS` are engineering terms that
+ * were never allowed on a user-facing surface, while these were the *approved*
+ * word until a decision replaced them. A reader hitting a failure needs to know
+ * which kind they have, because the fix differs: banned jargon is rewritten,
+ * a retired word is swapped for its successor.
+ *
+ * This list is the half of the vocabulary contract a machine can check. Its
+ * existence is why FD-46 and FD-47 could sit unimplemented for a day: the guard
+ * only knew forbidden words and had no opinion about retired ones.
+ *
+ * NOT retired: "copies". FD-46 renamed the GROUP to "Duplicates" but kept
+ * "copies" for the members inside one, which reads naturally ("this book has
+ * four copies, and they are duplicates of each other"). Banning it would be
+ * wrong.
+ */
+const RETIRED_WORDS = [
+  // FD-42 (2026-08-05): the product term is "Archive"; "quarantine" stays
+  // internal-only and is already covered by BANNED_WORDS above.
+  "\\bset[- ]aside\\b",
+  // FD-47 (2026-08-06): the word for where books live is "library". The word
+  // boundary matters: it must NOT fire on "Audiobookshelf", the product this
+  // app complements.
+  "\\bshel(?:f|ves)\\b",
+] as const;
+
+const BANNED_PATTERN = new RegExp(`(${[...BANNED_WORDS, ...RETIRED_WORDS].join("|")})`, "i");
 
 /**
  * Argument tuples used to render copy TEMPLATES so their output can be swept.
@@ -115,8 +158,11 @@ describe("copy sweep (T-33, AC-37/AC-38, design-system Section 6)", () => {
     // The regression test for the hole this collector was changed to close.
     // Before, a function-valued entry was skipped outright, so a banned word
     // inside one passed the sweep. This fixture fails if that ever regresses.
+    // `innocent` must contain NO banned or retired word. If it did, this test
+    // would pass on that string alone and would keep passing even if templates
+    // were skipped again, which is the exact regression it exists to catch.
     const fixture = {
-      innocent: "Books and shelves",
+      innocent: "Books and duplicates",
       sneaky: (label: string) => `Running dedupe on ${label}.`,
     };
     const strings = new Map<string, string>();
@@ -127,6 +173,23 @@ describe("copy sweep (T-33, AC-37/AC-38, design-system Section 6)", () => {
       offenders.length,
       "a banned word inside a copy template escaped the sweep",
     ).toBeGreaterThan(0);
+  });
+
+  // FD-47's pattern is the one most likely to be made wrong by a later edit:
+  // "Audiobookshelf" is the product this app complements, it appears throughout
+  // the docs, and a pattern without word boundaries would flag it forever. This
+  // pins both directions so a well-meaning simplification to /shelf/i fails here
+  // rather than in someone's PR description.
+  it("flags a retired word without flagging Audiobookshelf", () => {
+    expect(BANNED_PATTERN.test("Nothing on your shelves was touched")).toBe(true);
+    expect(BANNED_PATTERN.test("ready for its new shelf")).toBe(true);
+    expect(BANNED_PATTERN.test("Set aside 3 copies")).toBe(true);
+    expect(BANNED_PATTERN.test("the set-aside folder")).toBe(true);
+
+    expect(BANNED_PATTERN.test("imports cleanly into Audiobookshelf")).toBe(false);
+    expect(BANNED_PATTERN.test("your Audiobookshelf library")).toBe(false);
+    // FD-46 kept "copies" for the members of a group; only the group was renamed.
+    expect(BANNED_PATTERN.test("this book has four copies")).toBe(false);
   });
 
   it("STRINGS carries no Section 6.1 banned vocabulary", () => {
