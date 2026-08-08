@@ -259,7 +259,15 @@ impl PlanExport {
 
         for group in CampaignGroup::ALL {
             let label = group.label();
-            let in_group: Vec<&ExportOp> = self.ops.iter().filter(|o| o.group == label).collect();
+            // Resolve the stored token rather than string-matching the CURRENT label:
+            // an export written before FD-46 stores "copies", and a raw comparison
+            // would file none of its operations under any heading while the summary
+            // table above still counted them. See CampaignGroup::from_stored_token.
+            let in_group: Vec<&ExportOp> = self
+                .ops
+                .iter()
+                .filter(|o| CampaignGroup::from_stored_token(&o.group) == Some(*group))
+                .collect();
             out.push_str(&format!("## {}\n\n", title_case(label)));
             if in_group.is_empty() {
                 out.push_str("No changes in this group.\n\n");
@@ -547,9 +555,23 @@ mod tests {
             ("json", export.to_json()),
             ("markdown", export.to_markdown()),
         ] {
+            let lower = text.to_lowercase();
             assert!(
-                !text.to_lowercase().contains("quarantine"),
+                !lower.contains("quarantine"),
                 "{name} export must never contain the internal word \"quarantine\": {text}"
+            );
+            // Absence alone is a weak assertion: it passes for ANY replacement,
+            // including one that silently drops the word or substitutes a term the
+            // ledger has retired. Pin the value the scrub is contracted to produce.
+            assert!(
+                lower.contains("archive"),
+                "{name} export must carry the plain-language replacement \"archive\" \
+                 (FD-42, superseding FD-31's \"set-aside\"): {text}"
+            );
+            // The retired term must not come back, in either spelling.
+            assert!(
+                !lower.contains("set-aside") && !lower.contains("set aside"),
+                "{name} export must not carry FD-42's retired \"set aside\": {text}"
             );
         }
     }

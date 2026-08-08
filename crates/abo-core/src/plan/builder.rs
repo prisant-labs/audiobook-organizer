@@ -97,7 +97,7 @@ use crate::scan::typing::FileClass;
 /// MOVED here, not removed.
 ///
 /// The on-disk name is **"Audiobook Archive"** (FD-42, superseding FD-31's
-/// "Audiobook Archive"). Two names deliberately, for two contexts: the product says
+/// "Set Aside"). Two names deliberately, for two contexts: the product says
 /// **Archive** on every surface, short enough for a button and unambiguous inside
 /// an app that is entirely about audiobooks, while the FOLDER says "Audiobook
 /// Archive" because FD-34 places it beside the library at the drive root, where a
@@ -107,21 +107,36 @@ use crate::scan::typing::FileClass;
 /// kind, type names) and never appears on disk or in a stored rationale sentence.
 ///
 /// **On the migration FD-42 asks for.** Its entry requires that an install with an
-/// existing `Audiobook Archive` folder keeps resolving it rather than orphaning it. That
-/// is satisfied without migration code, verified three ways: undo replays the
-/// FROZEN absolute paths in `plan_ops` and never reconstructs them (see
-/// `rollback::resolve_set_aside_root`, whose own doc notes it affects "a defensive
-/// out-of-scope verdict, never the paths"); teardown derives its boundary from the
-/// per-job folder's own mkdir via `rollback::effective_set_aside_root`, which was
-/// built for the P4 settings race and covers a changed root unchanged; and
-/// teardown ops are `rmdir-empty`, which `validate::creates_target` excludes from
-/// the scope check entirely.
+/// existing `Set Aside` folder keeps resolving it rather than being orphaned. No
+/// migration code implements that, and the reasons are recorded here because an
+/// adversarial review corrected an earlier, WRONG version of this comment.
+///
+/// **What actually preserves a legacy root.** There are TWO undo paths, not one,
+/// and they differ:
+///
+/// - **Completed undo** ([`crate::exec::rollback::rollback_prepare`]) reads the
+///   real executed paths out of the exported manifest.
+/// - **Partial undo** ([`crate::exec::rollback::rollback_prepare_partial`]) reads
+///   the FROZEN `plan_ops` and substitutes [`QUARANTINE_JOB_PLACEHOLDER`] itself.
+///
+/// Both therefore act on the root as it was at apply time, so a first undo of a
+/// pre-rename job restores from `Set Aside` regardless of what this constant now
+/// says. `rollback::resolve_set_aside_root` never contributes a path; its own doc
+/// notes it affects "a defensive out-of-scope verdict, never the paths".
+///
+/// Teardown of the emptied folder is separate, and it needed a fix: see
+/// [`crate::exec::rollback::effective_set_aside_root`], which now derives the root
+/// from the frozen target's own placeholder rather than only from a selected
+/// `mkdir`. Teardown ops are `rmdir-empty`, which `validate::creates_target`
+/// excludes from the target-scope check, so a legacy-rooted teardown is never
+/// refused as out of scope.
 ///
 /// **The ordering is load-bearing, so do not reorder it.** This rename lands while
-/// real applies are still unreachable (the frontend hardcodes `"dry-run"` and a
-/// dry run executes against `MemFs`), so no install can hold a `Audiobook Archive` folder
-/// this app created. Were real applies enabled FIRST and the rename done after,
-/// migration code WOULD be required.
+/// real applies are still unreachable (the frontend hardcodes `"dry-run"` and a dry
+/// run executes against `MemFs`), so no install can hold a `Set Aside` folder this
+/// app created. Were real applies enabled FIRST and the rename done after, the
+/// above would be load-bearing in production rather than a belt-and-braces
+/// argument, and migration code WOULD be required.
 ///
 /// FD-34: the Archive ROOT this names is a SIBLING of the library, resolved
 /// OUTSIDE the library root (default `<library-parent>\Audiobook Archive\`), not a
@@ -301,6 +316,39 @@ impl CampaignGroup {
             CampaignGroup::Copies => "copies",
             CampaignGroup::EmptyFolders => "empty-folders",
         }
+    }
+
+    /// Recover a [`CampaignGroup`] from ANY token that has ever identified it in a
+    /// stored artifact: the stable [`CampaignGroup::slug`], the current
+    /// [`CampaignGroup::label`], or a label some decision has since retired.
+    ///
+    /// Exists because exported plans store the LABEL, not the slug, and a label can
+    /// change. `FD-46` renamed the Copies group to "duplicates", which made the
+    /// Markdown renderer's `o.group == group.label()` filter silently stop matching
+    /// operations in every export written before the rename: the summary table
+    /// (read from stored stats) still counted them while the section below it said
+    /// "No changes in this group". One document, contradicting itself.
+    ///
+    /// Resolving tolerantly beats rewriting the export format: the format has no
+    /// version field and `group` is an unversioned machine value, so changing what
+    /// is WRITTEN would break any external reader, whereas widening what is READ
+    /// breaks nobody. Every future rename adds one line to `RETIRED_LABELS`.
+    pub fn from_stored_token(s: &str) -> Option<Self> {
+        /// (retired label, the group it named). Append, never edit: an entry here
+        /// is the only thing that keeps old artifacts readable.
+        const RETIRED_LABELS: &[(&str, CampaignGroup)] = &[("copies", CampaignGroup::Copies)]; // FD-46, 2026-08-06
+
+        let needle = s.trim().to_ascii_lowercase();
+        CampaignGroup::ALL
+            .iter()
+            .copied()
+            .find(|g| g.slug() == needle || g.label() == needle)
+            .or_else(|| {
+                RETIRED_LABELS
+                    .iter()
+                    .find(|(old, _)| *old == needle)
+                    .map(|(_, g)| *g)
+            })
     }
 
     /// Recover a [`CampaignGroup`] from its [`CampaignGroup::slug`]. `None`
@@ -1639,7 +1687,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             source_path: shell_path,
             target_path: target,
             rationale: format!(
-                "The collection bundle \"{name}\" is empty after its books were extracted; set the empty shell aside (never deleted)."
+                "The collection bundle \"{name}\" is empty after its books were extracted; the empty shell moves to the Archive (never deleted)."
             ),
             rule_id: "flatten-packs-shell".to_string(),
             confidence: "high".to_string(),
@@ -2165,6 +2213,40 @@ mod tests {
             Some(CampaignGroup::Copies),
             "an existing client's stored group id still resolves"
         );
+    }
+
+    /// Artifacts written before FD-46 store the label "copies". They must still
+    /// resolve, or a re-rendered old export files none of its duplicate operations
+    /// under any heading while its own summary table still counts them.
+    #[test]
+    fn a_retired_label_in_a_stored_artifact_still_resolves() {
+        // The retired label, which is the whole point of the resolver.
+        assert_eq!(
+            CampaignGroup::from_stored_token("copies"),
+            Some(CampaignGroup::Copies),
+            "a pre-FD-46 export must still resolve its own group"
+        );
+        // The current label and the stable slug both resolve too.
+        assert_eq!(
+            CampaignGroup::from_stored_token("duplicates"),
+            Some(CampaignGroup::Copies)
+        );
+        assert_eq!(
+            CampaignGroup::from_stored_token("loose-books"),
+            Some(CampaignGroup::LooseBooks)
+        );
+        assert_eq!(
+            CampaignGroup::from_stored_token("loose books"),
+            Some(CampaignGroup::LooseBooks)
+        );
+        // Tolerant of casing and padding, since these come out of stored text.
+        assert_eq!(
+            CampaignGroup::from_stored_token("  Duplicates "),
+            Some(CampaignGroup::Copies)
+        );
+        // Never fabricates a group.
+        assert_eq!(CampaignGroup::from_stored_token("not-a-group"), None);
+        assert_eq!(CampaignGroup::from_stored_token(""), None);
     }
 
     /// SPEC guard (PR-B regression): the EXACT pass-to-group fold for every

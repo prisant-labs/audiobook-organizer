@@ -32,6 +32,69 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The project register forbids em-dashes (U+2014) and en-dashes (U+2013)
+      # everywhere: docs, code, comments, commit messages. Until now that rule was
+      # held ONLY by a local PreToolUse hook on one machine, so any commit made
+      # without that hook, or from anywhere else, could introduce one and CI would
+      # not notice. The tree is at zero; this keeps it there mechanically.
+      #
+      # The matching form is load-bearing and was chosen by testing, not by taste.
+      # `grep -P '\xe2\x80\x94'` looks correct and is BLIND: it silently matches
+      # nothing, so a gate built on it passes forever while catching nothing.
+      # `LC_ALL=C` plus bash ANSI-C quoting ($'...') compares raw bytes and does
+      # find them. Verified in both directions before this was committed: it
+      # detects a planted dash AND reports this tree clean.
+      #
+      # The characters are written as byte escapes rather than literally, because a
+      # literal one here would be an offender in the file that bans them.
+      - name: Assert zero em-dashes and en-dashes
+        run: |
+          set -eu
+          offenders=$(git ls-files -z | LC_ALL=C xargs -0 grep -lI $'\xe2\x80\x94\|\xe2\x80\x93' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::em-dash (U+2014) or en-dash (U+2013) found. Use ' - ', a comma, a colon, or a sentence break; numeric ranges use a plain hyphen."
+            echo "$offenders" | while read -r f; do echo "  $f"; done
+            exit 1
+          fi
+          echo "OK: no em-dashes or en-dashes in $(git ls-files | wc -l) tracked files."
+
+      # PRODUCT.md, CLAUDE.md and AGENTS.md restate the sanctioned plain-language
+      # vocabulary in prose. Nothing checked those copies against what the code
+      # actually enforces, which is exactly how FD-46 ("copies" -> "duplicates") and
+      # FD-47 ("shelves" -> "library") both sat unimplemented for a day: the copy
+      # guard knew only FORBIDDEN words and had no opinion about RETIRED ones, and
+      # the prose naming the approved words was checked by nobody. On the day this
+      # was added it immediately caught PRODUCT.md's own design principle 3 still
+      # teaching "set aside".
+      #
+      # Lines that ANNOTATE a supersession are exempt: naming the old word is how a
+      # retirement gets recorded, so banning it outright would make the ledger
+      # unwritable.
+      #
+      # Keep `retired` in step with RETIRED_WORDS in
+      # src/lib/__tests__/vocabulary.test.ts, which enforces the same words in app
+      # copy. If the two drift, this gate checks a subset: weaker, never wrong.
+      #
+      # Verified in four directions before being committed: clean on the real files,
+      # detects a planted offender, exempts an annotation, and does NOT fire on
+      # "Audiobookshelf" (the product this app complements).
+      - name: Assert governance files teach no retired vocabulary
+        run: |
+          set -eu
+          retired='set[- ]aside|\bshelf\b|\bshelves\b'
+          annotates='[Rr]evised by|[Ss]upersed|[Rr]etired|[Rr]enamed|formerly|no longer|FD-4[2-7]'
+          bad=0
+          for f in PRODUCT.md CLAUDE.md AGENTS.md; do
+            hits=$(grep -nEi "$retired" "$f" | grep -vE "$annotates" || true)
+            if [ -n "$hits" ]; then
+              echo "::error file=$f::teaches vocabulary a decision has retired"
+              echo "$hits"
+              bad=1
+            fi
+          done
+          [ "$bad" -eq 0 ] || exit 1
+          echo "OK: governance files carry no retired vocabulary."
+
       # Reality adaptation (Phase 7): ci-plan.md's lint job did not enumerate Linux
       # system packages. `cargo clippy --workspace --all-targets` compiles the
       # src-tauri crate on this Ubuntu runner even though the product never ships a

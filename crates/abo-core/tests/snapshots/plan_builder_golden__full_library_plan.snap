@@ -673,7 +673,7 @@ expression: plan.to_canonical_json()
       "kind": "quarantine",
       "source_path": "library/Genre - Business",
       "target_path": "Audiobook Archive/{job-id}/Genre - Business",
-      "rationale": "The collection bundle \"Genre - Business\" is empty after its books were extracted; set the empty shell aside (never deleted).",
+      "rationale": "The collection bundle \"Genre - Business\" is empty after its books were extracted; the empty shell moves to the Archive (never deleted).",
       "rule_id": "flatten-packs-shell",
       "confidence": "high",
       "byte_size": 0
@@ -683,7 +683,7 @@ expression: plan.to_canonical_json()
       "kind": "quarantine",
       "source_path": "library/Genre - SciFI/Top 100 Sci-Fi Books",
       "target_path": "Audiobook Archive/{job-id}/Genre - SciFI/Top 100 Sci-Fi Books",
-      "rationale": "The collection bundle \"Top 100 Sci-Fi Books\" is empty after its books were extracted; set the empty shell aside (never deleted).",
+      "rationale": "The collection bundle \"Top 100 Sci-Fi Books\" is empty after its books were extracted; the empty shell moves to the Archive (never deleted).",
       "rule_id": "flatten-packs-shell",
       "confidence": "high",
       "byte_size": 0
