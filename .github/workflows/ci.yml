@@ -38,25 +38,17 @@ jobs:
       # without that hook, or from anywhere else, could introduce one and CI would
       # not notice. The tree is at zero; this keeps it there mechanically.
       #
-      # The matching form is load-bearing and was chosen by testing, not by taste.
-      # `grep -P '\xe2\x80\x94'` looks correct and is BLIND: it silently matches
-      # nothing, so a gate built on it passes forever while catching nothing.
-      # `LC_ALL=C` plus bash ANSI-C quoting ($'...') compares raw bytes and does
-      # find them. Verified in both directions before this was committed: it
-      # detects a planted dash AND reports this tree clean.
+      # The check is a script, not inline shell, because the inline version had
+      # FOUR ways to pass while catching nothing: a blind `grep -P` byte pattern, a
+      # trailing `|| true` that turned errors into passes, `grep -I` silently
+      # skipping "binary" (including UTF-16) text, and no `--` before filenames.
+      # scripts/check-dashes.mjs documents each and removes all four by decoding
+      # explicitly. It is runnable locally with the same command.
       #
-      # The characters are written as byte escapes rather than literally, because a
-      # literal one here would be an offender in the file that bans them.
+      # Uses the runner's preinstalled Node so this fails FAST, before the Rust
+      # toolchain and pnpm install.
       - name: Assert zero em-dashes and en-dashes
-        run: |
-          set -eu
-          offenders=$(git ls-files -z | LC_ALL=C xargs -0 grep -lI $'\xe2\x80\x94\|\xe2\x80\x93' || true)
-          if [ -n "$offenders" ]; then
-            echo "::error::em-dash (U+2014) or en-dash (U+2013) found. Use ' - ', a comma, a colon, or a sentence break; numeric ranges use a plain hyphen."
-            echo "$offenders" | while read -r f; do echo "  $f"; done
-            exit 1
-          fi
-          echo "OK: no em-dashes or en-dashes in $(git ls-files | wc -l) tracked files."
+        run: node scripts/check-dashes.mjs
 
       # PRODUCT.md, CLAUDE.md and AGENTS.md restate the sanctioned plain-language
       # vocabulary in prose. Nothing checked those copies against what the code
@@ -75,6 +67,21 @@ jobs:
       # src/lib/__tests__/vocabulary.test.ts, which enforces the same words in app
       # copy. If the two drift, this gate checks a subset: weaker, never wrong.
       #
+      # WHAT THIS DOES NOT GUARANTEE, stated so nobody over-trusts it. It checks
+      # three governance FILES, not the repository. Retired vocabulary reaching a
+      # user from Rust or TypeScript is caught by the per-surface sweeps
+      # (report.rs, error.rs, query.rs, vocabulary.test.ts), not here. An
+      # adversarial review found a live leak in query.rs while this gate was
+      # passing, which is exactly the distinction being drawn.
+      #
+      # The exemption is deliberately NARROW: a line is exempt only if it cites a
+      # decision id (FD-nn). An earlier version exempted any line containing words
+      # like "renamed" or "retired", which let a line both mention a retirement AND
+      # recommend the retired word. Citing a decision is a much stronger signal
+      # that the line is RECORDING a supersession rather than teaching the old term.
+      #
+      # A missing file is a FAILURE, never a silent pass.
+      #
       # Verified in four directions before being committed: clean on the real files,
       # detects a planted offender, exempts an annotation, and does NOT fire on
       # "Audiobookshelf" (the product this app complements).
@@ -82,10 +89,15 @@ jobs:
         run: |
           set -eu
           retired='set[- ]aside|\bshelf\b|\bshelves\b'
-          annotates='[Rr]evised by|[Ss]upersed|[Rr]etired|[Rr]enamed|formerly|no longer|FD-4[2-7]'
+          cites_a_decision='FD-[0-9][0-9]'
           bad=0
           for f in PRODUCT.md CLAUDE.md AGENTS.md; do
-            hits=$(grep -nEi "$retired" "$f" | grep -vE "$annotates" || true)
+            if [ ! -r "$f" ]; then
+              echo "::error::$f is missing or unreadable, so this gate cannot pass"
+              bad=1
+              continue
+            fi
+            hits=$(grep -nEi "$retired" "$f" | grep -vE "$cites_a_decision" || true)
             if [ -n "$hits" ]; then
               echo "::error file=$f::teaches vocabulary a decision has retired"
               echo "$hits"
@@ -93,7 +105,7 @@ jobs:
             fi
           done
           [ "$bad" -eq 0 ] || exit 1
-          echo "OK: governance files carry no retired vocabulary."
+          echo "OK: PRODUCT.md, CLAUDE.md and AGENTS.md carry no retired vocabulary."
 
       # Reality adaptation (Phase 7): ci-plan.md's lint job did not enumerate Linux
       # system packages. `cargo clippy --workspace --all-targets` compiles the

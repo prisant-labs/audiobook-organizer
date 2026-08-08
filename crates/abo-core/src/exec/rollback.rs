@@ -338,6 +338,23 @@ fn is_at_or_under(child: &str, root: &str) -> bool {
 /// deliberate: after substitution the job id is just a path segment, and a book
 /// folder named for that same number would make the cut ambiguous. The placeholder
 /// cannot be spoofed by a real path.
+///
+/// **On keeping only the FIRST recovered prefix.** An adversarial review flagged
+/// this as "mixed roots are not handled". It is unreachable by construction rather
+/// than unhandled, and the reason is worth recording so nobody adds speculative
+/// code for it: [`crate::plan::builder::Builder`] holds ONE `set_aside_root`
+/// field, and every set-aside target is built from it through
+/// `set_aside_job_dir`, so a single plan cannot mix roots. A partial undo takes
+/// one `job_id`, which has one plan. Two roots in one inverse plan would require
+/// ops from two plans, which this path never assembles.
+///
+/// The one shape that genuinely yields `None` here is a set-aside op whose frozen
+/// target carries no placeholder at all, which means a plan built before FD-34
+/// introduced the per-job segment. Those cannot exist in the wild: no real apply
+/// has ever been reachable (the frontend hardcodes `"dry-run"`, and a dry run
+/// executes against `MemFs`), so no pre-FD-34 job was ever written. If real
+/// applies are enabled and old plans could survive a schema migration, this
+/// fallback needs revisiting.
 fn set_aside_root_from_frozen_target(frozen_target: &str) -> Option<String> {
     let idx = frozen_target.find(QUARANTINE_JOB_PLACEHOLDER)?;
     let root = frozen_target[..idx].trim_end_matches(['\\', '/']);

@@ -253,7 +253,14 @@ impl PlanExport {
 
         out.push_str("| Group | Operations |\n|---|---|\n");
         for g in &self.stats.per_group {
-            out.push_str(&format!("| {} | {} |\n", title_case(&g.group), g.ops));
+            // Display the CURRENT label for whatever token was stored, so an old
+            // export cannot show a "Copies" summary row above a "Duplicates"
+            // section heading. An unrecognized token is printed as-is rather than
+            // dropped: showing an unfamiliar group beats hiding one.
+            let label = CampaignGroup::from_stored_token(&g.group)
+                .map(|c| c.label())
+                .unwrap_or(g.group.as_str());
+            out.push_str(&format!("| {} | {} |\n", title_case(label), g.ops));
         }
         out.push('\n');
 
@@ -560,19 +567,37 @@ mod tests {
                 !lower.contains("quarantine"),
                 "{name} export must never contain the internal word \"quarantine\": {text}"
             );
-            // Absence alone is a weak assertion: it passes for ANY replacement,
-            // including one that silently drops the word or substitutes a term the
-            // ledger has retired. Pin the value the scrub is contracted to produce.
-            assert!(
-                lower.contains("archive"),
-                "{name} export must carry the plain-language replacement \"archive\" \
-                 (FD-42, superseding FD-31's \"set-aside\"): {text}"
-            );
             // The retired term must not come back, in either spelling.
             assert!(
                 !lower.contains("set-aside") && !lower.contains("set aside"),
                 "{name} export must not carry FD-42's retired \"set aside\": {text}"
             );
         }
+
+        // Pin the SCRUBBED VALUES directly rather than looking for "archive" in
+        // rendered text.
+        //
+        // An earlier version of this test asserted `rendered.contains("archive")`
+        // and was VACUOUS: the fixture's target path already contains "Audiobook
+        // Archive" and its rationale "moves to the Archive" BEFORE scrubbing runs,
+        // so the assertion passed regardless of what the scrub produced. Asserting
+        // absence was weak; asserting presence in the wrong place was no better.
+        // These check the two fields the scrub actually rewrites.
+        let kinds: Vec<&str> = export.ops.iter().map(|o| o.kind.as_str()).collect();
+        assert!(
+            kinds.contains(&"archive"),
+            "the internal `quarantine` op kind must scrub to exactly \"archive\" \
+             (FD-42, superseding FD-31's \"set-aside\"), got {kinds:?}"
+        );
+
+        let rule_ids: Vec<&str> = export.ops.iter().map(|o| o.rule_id.as_str()).collect();
+        assert!(
+            rule_ids.iter().any(|r| r.ends_with("-archive")),
+            "a `*-quarantine` rule id must scrub to `*-archive`, got {rule_ids:?}"
+        );
+        assert!(
+            !rule_ids.iter().any(|r| r.contains("set-aside")),
+            "no rule id may carry FD-42's retired \"set-aside\", got {rule_ids:?}"
+        );
     }
 }

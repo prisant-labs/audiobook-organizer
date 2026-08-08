@@ -2,14 +2,28 @@ import { describe, expect, it } from "vitest";
 import { STRINGS } from "@/lib/strings";
 import { ERROR_COPY } from "@/lib/errorCopy";
 
-// T-33 (v0.4.0 Phase 8, AC-37/AC-38): the copy sweep. FD-23 centralizes ALL
-// user-facing copy in `strings.ts` (nav, screens) and `errorCopy.ts` (the
-// AppError -> plain-language map), so a mechanical sweep of these two modules
-// covers every rendered sentence in the app - there is no third place a
-// user-facing string could hide. The exported HTML report (F-506, v0.3.0) is
-// a separate Rust-generated artifact with its own `no_banned_vocabulary` test
-// (crates/abo-core/src/plan/report.rs); this suite is this module's half of
-// the same gate (design-system Section 6, standing rule 3).
+// T-33 (v0.4.0 Phase 8, AC-37/AC-38): the copy sweep over `strings.ts` (nav,
+// screens) and `errorCopy.ts` (the AppError -> plain-language map).
+//
+// SCOPE, stated honestly. This file used to claim that sweeping these two modules
+// "covers every rendered sentence in the app - there is no third place a
+// user-facing string could hide". That was false, and believing it cost real
+// defects: an adversarial review found FD-47's retired "shelf" still live in TWO
+// Rust-side surfaces that render in this app and are swept by nothing here.
+//
+// User-facing text is produced in at least four places, each gated separately:
+//
+//   1. strings.ts / errorCopy.ts        -> this file
+//   2. the exported HTML report          -> report.rs `no_banned_vocabulary`
+//   3. AppError::remediation             -> error.rs `no_remediation_carries_retired_vocabulary`
+//   4. campaign group headlines/reasons  -> query.rs `no_group_copy_carries_retired_vocabulary`
+//      (plus stored rationale sentences from builder.rs, which reach the review
+//      surface through the plan itself)
+//
+// The lesson behind that list: these gates are keyed on WHICH FILE text lives in,
+// when the property that matters is whether the text REACHES A USER. Adding a
+// fifth producer would silently be ungated again. Anyone adding one should add its
+// sweep in the same change.
 
 // Design-system Section 6.1 "Forbidden on primary surfaces" list, plus the
 // "Not this" column terms from the vocabulary map. Word-boundary matched,

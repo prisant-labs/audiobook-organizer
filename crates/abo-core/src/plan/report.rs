@@ -319,8 +319,29 @@ fn human_dateline(iso: &str) -> String {
 // ---- per-group display metadata ----
 
 /// The ops belonging to one user-facing group label.
+///
+/// Resolves each op's STORED group token rather than comparing it to the current
+/// label. An export written before a rename stores the old word (FD-46's "copies"),
+/// and raw equality would file none of its operations under any heading while the
+/// summary table, read from stored stats, still counted them.
+///
+/// This helper feeds the counts, the examples, the sizes and the complete table,
+/// so getting it wrong loses a group's operations in four places at once. The same
+/// bug was fixed in `export::to_markdown` first; this is the second occurrence, in
+/// a different function, which is why the resolution now lives in one shared place
+/// ([`CampaignGroup::from_stored_token`]) rather than being re-derived per reader.
 fn group_ops<'a>(export: &'a PlanExport, label: &str) -> Vec<&'a ExportOp> {
-    export.ops.iter().filter(|o| o.group == label).collect()
+    let want = CampaignGroup::from_stored_token(label);
+    export
+        .ops
+        .iter()
+        .filter(|o| match want {
+            // Both sides resolved: a stored "copies" matches a current "duplicates".
+            Some(group) => CampaignGroup::from_stored_token(&o.group) == Some(group),
+            // An unrecognized label is never silently widened to match everything.
+            None => o.group == label,
+        })
+        .collect()
 }
 
 /// Count of user-facing changes in a group (moves/renames/set-asides/removals).
