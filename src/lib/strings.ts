@@ -96,7 +96,7 @@ export const STRINGS = {
     packShell: {
       label: "The leftover collection folder, once its books are unpacked",
       help: "After every book inside moves out safely, this decides what happens to the folder they came from.",
-      quarantine: "Set it aside",
+      quarantine: "Move it to the Archive",
       leaveInPlace: "Leave it where it is",
     },
     sidecars: {

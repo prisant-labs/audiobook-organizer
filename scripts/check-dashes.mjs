@@ -54,11 +54,44 @@ for (const file of trackedFiles()) {
     continue;
   }
 
+  // Encoding handling, corrected after an adversarial review. The first version
+  // treated EVERY decoder exception as proof of binary, which recreated the exact
+  // UTF-16 hole this script claims to close:
+  //
+  //   - UTF-16 WITH a BOM threw during UTF-8 decoding and was skipped entirely.
+  //   - UTF-16 WITHOUT a BOM decoded as mojibake, so it was scanned but the dash
+  //     was never recognized.
+  //
+  // Both are now decoded properly. Anything still undecodable is genuinely binary.
+  // The UTF-16 branch must be decided BEFORE attempting UTF-8, not in a catch.
+  // That was the bug in the first correction: BOM-less UTF-16 is VALID UTF-8
+  // (a NUL byte is legal UTF-8), so it decoded successfully into mojibake and the
+  // catch never fired. The dash became U+0014 U+0020 and went unrecognized, which
+  // is precisely the false negative this script exists to eliminate.
+  //
+  // A NUL byte is the tell: real UTF-8 prose never contains one, while ASCII-range
+  // text encoded as UTF-16 is half NULs.
+  const candidates = [];
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    candidates.push("utf-16le");
+  } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    candidates.push("utf-16be");
+  } else if (bytes.includes(0x00)) {
+    candidates.push("utf-16le", "utf-16be");
+  } else {
+    candidates.push("utf-8");
+  }
+
   let text;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    // Not valid UTF-8, so genuinely binary: prose cannot hide here.
+  for (const encoding of candidates) {
+    try {
+      text = new TextDecoder(encoding, { fatal: true }).decode(bytes);
+      break;
+    } catch {
+      // Try the next candidate; only exhausting them all means binary.
+    }
+  }
+  if (text === undefined) {
     skippedBinary += 1;
     continue;
   }

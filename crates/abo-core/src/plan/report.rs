@@ -1685,8 +1685,8 @@ mod tests {
         // successor. NOT listed: "copies", which FD-46 kept for the members of a
         // group even though the group itself became "Duplicates".
         for (word, decision, successor) in [
-            ("set aside", "FD-42", "Archive"),
-            ("set-aside", "FD-42", "Archive"),
+            // "aside" bare: the adjacent-only form missed "set it aside".
+            ("aside", "FD-42", "Archive"),
             ("shelf", "FD-47", "library"),
             ("shelves", "FD-47", "library"),
         ] {

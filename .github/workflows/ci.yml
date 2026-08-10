@@ -88,8 +88,9 @@ jobs:
       - name: Assert governance files teach no retired vocabulary
         run: |
           set -eu
-          retired='set[- ]aside|\bshelf\b|\bshelves\b'
-          cites_a_decision='FD-[0-9][0-9]'
+          # NOT just the adjacent form: `set[- ]aside` missed "Set it aside" and
+          # "sets the copy aside", both of which were live in shipped copy.
+          retired='set(s|ting)?[^.!?]{0,24}aside|\bshelf\b|\bshelves\b'
           bad=0
           for f in PRODUCT.md CLAUDE.md AGENTS.md; do
             if [ ! -r "$f" ]; then
@@ -97,7 +98,13 @@ jobs:
               bad=1
               continue
             fi
-            hits=$(grep -nEi "$retired" "$f" | grep -vE "$cites_a_decision" || true)
+            # Exempt a MENTION, catch a USE. Quoted spans are stripped first, so
+            # `FD-47 retired "shelves" for "library"` passes while
+            # `Use shelves in app copy, per FD-47` is caught. Requiring a decision
+            # citation was not enough: a line can cite a decision AND recommend the
+            # retired word, which is the exact failure the gate exists to prevent.
+            # sed preserves line structure, so grep -n line numbers stay accurate.
+            hits=$(sed 's/"[^"]*"//g' "$f" | grep -nEi "$retired" || true)
             if [ -n "$hits" ]; then
               echo "::error file=$f::teaches vocabulary a decision has retired"
               echo "$hits"

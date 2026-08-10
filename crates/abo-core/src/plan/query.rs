@@ -719,8 +719,9 @@ mod tests {
                     .to_lowercase()
                     .replace("audiobookshelf", "<the-product>");
                 for (word, decision, successor) in [
-                    ("set aside", "FD-42", "Archive"),
-                    ("set-aside", "FD-42", "Archive"),
+                    // "aside" bare, not "set aside": the adjacent-only pattern
+                    // missed "Set it aside" and "sets the copy aside", both live.
+                    ("aside", "FD-42", "Archive"),
                     ("shelf", "FD-47", "library"),
                     ("shelves", "FD-47", "library"),
                 ] {

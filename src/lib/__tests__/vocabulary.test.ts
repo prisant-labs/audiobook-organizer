@@ -61,7 +61,14 @@ const BANNED_WORDS = [
 const RETIRED_WORDS = [
   // FD-42 (2026-08-05): the product term is "Archive"; "quarantine" stays
   // internal-only and is already covered by BANNED_WORDS above.
-  "\\bset[- ]aside\\b",
+  // NOT just the adjacent form. `\bset[- ]aside\b` missed "Set it aside" and
+  // "sets the copy aside", both of which were LIVE in shipped copy when an
+  // adversarial review found them: the first rendered in the ruleset editor, the
+  // second in a stored rationale on the review surface. This matches
+  // set/sets/setting followed by "aside" within a short window, verified against
+  // the retired phrasings and against safe strings like "Set the theme to
+  // Evening", "a settings page" and "Reset the filter".
+  "\\bset(?:s|ting)?\\b[^.!?]{0,24}\\baside\\b",
   // FD-47 (2026-08-06): the word for where books live is "library". The word
   // boundary matters: it must NOT fire on "Audiobookshelf", the product this
   // app complements.

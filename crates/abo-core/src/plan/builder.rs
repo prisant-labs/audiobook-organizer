@@ -1745,7 +1745,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             source_path: src,
             target_path: target,
             rationale: format!(
-                "\"{name}\" is not an audiobook file; set it aside (never deleted)."
+                "\"{name}\" is not an audiobook file; it moves to the Archive (never deleted)."
             ),
             rule_id: "clutter-quarantine".to_string(),
             confidence: "high".to_string(),

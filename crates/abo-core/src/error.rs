@@ -654,6 +654,13 @@ mod tests {
     /// remediation coverage tests iterate this list.
     fn one_of_each() -> Vec<AppError> {
         vec![
+            // An adversarial review found DuplicateVerifyFailed missing from this
+            // list, which silently narrowed EVERY test that iterates it, including
+            // the remediation vocabulary sweep. A helper named "one of each" that
+            // is not one of each is worse than no helper: callers trust the name.
+            AppError::DuplicateVerifyFailed {
+                detail: "boom".into(),
+            },
             AppError::HistoryUnavailable {
                 detail: "boom".into(),
             },
@@ -796,8 +803,10 @@ mod tests {
                 .to_lowercase()
                 .replace("audiobookshelf", "<the-product>");
             for (word, decision, successor) in [
-                ("set aside", "FD-42", "Archive"),
-                ("set-aside", "FD-42", "Archive"),
+                // "aside" bare, not "set aside": the adjacent-only pattern missed
+                // "Set it aside" and "sets the copy aside", both of which were live.
+                // After FD-42 no user-facing sentence needs the word at all.
+                ("aside", "FD-42", "Archive"),
                 ("shelf", "FD-47", "library"),
                 ("shelves", "FD-47", "library"),
             ] {
