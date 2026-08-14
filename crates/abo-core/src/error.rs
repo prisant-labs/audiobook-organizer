@@ -500,7 +500,7 @@ impl AppError {
                  different one first, then delete this one."
             }
             AppError::RulesetOperationFailed { .. } => {
-                "Your shelf-organizing settings could not be read or saved. Restart the app and \
+                "Your library-organizing settings could not be read or saved. Restart the app and \
                  try again. If this keeps happening, the disk may be full or the app data folder \
                  may be on a synced location (OneDrive); free space or move the app data out of \
                  the synced folder."
@@ -654,6 +654,13 @@ mod tests {
     /// remediation coverage tests iterate this list.
     fn one_of_each() -> Vec<AppError> {
         vec![
+            // An adversarial review found DuplicateVerifyFailed missing from this
+            // list, which silently narrowed EVERY test that iterates it, including
+            // the remediation vocabulary sweep. A helper named "one of each" that
+            // is not one of each is worse than no helper: callers trust the name.
+            AppError::DuplicateVerifyFailed {
+                detail: "boom".into(),
+            },
             AppError::HistoryUnavailable {
                 detail: "boom".into(),
             },
@@ -773,6 +780,44 @@ mod tests {
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), codes.len(), "all codes must be unique");
+    }
+
+    /// Remediation copy is USER-FACING: it crosses IPC and renders in the app's
+    /// error surfaces. It passed through NEITHER vocabulary gate - the TypeScript
+    /// sweep covers `strings.ts` and `errorCopy.ts`, the Rust report gate covers
+    /// only the generated HTML - which is how "Your shelf-organizing settings..."
+    /// survived FD-47's retirement of "shelf" and was found by an adversarial
+    /// review rather than by a test.
+    ///
+    /// The general lesson, and the reason this test exists here rather than being
+    /// folded into one of the others: the gates were keyed on WHICH FILE text lives
+    /// in, when the property that matters is whether the text REACHES A USER.
+    #[test]
+    fn no_remediation_carries_retired_vocabulary() {
+        for err in one_of_each() {
+            // "Audiobookshelf" is the product this app complements and may legitimately
+            // appear. Neutralize it rather than weakening the match, so the exception
+            // stays visible (same treatment as the report gate).
+            let text = err
+                .remediation()
+                .to_lowercase()
+                .replace("audiobookshelf", "<the-product>");
+            for (word, decision, successor) in [
+                // "aside" bare, not "set aside": the adjacent-only pattern missed
+                // "Set it aside" and "sets the copy aside", both of which were live.
+                // After FD-42 no user-facing sentence needs the word at all.
+                ("aside", "FD-42", "Archive"),
+                ("shelf", "FD-47", "library"),
+                ("shelves", "FD-47", "library"),
+            ] {
+                assert!(
+                    !text.contains(word),
+                    "{}: remediation carries {word:?}, retired by {decision} in favour of \
+                     {successor:?}. This copy is read by a user.",
+                    err.code()
+                );
+            }
+        }
     }
 
     #[test]

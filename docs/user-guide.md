@@ -86,9 +86,9 @@ Every tidy-up is built from these seven groups, and only these seven. You can in
 
 - Example: a `Hugo Winners` pack with a dozen novels buried inside becomes a dozen books on the shelf, plus a report line noting each one was a Hugo winner.
 
-**6. Copies.** If the same book exists twice, this group sets the extra copy aside so you are left with one clean shelf entry. Set aside means moved to a holding folder, never deleted. Before it moves anything, the tool double-checks that the copies really are the same book, so you never end up with two folders for one book by accident.
+**6. Copies.** If the same book exists twice, this group moves the extra copy to the Archive so you are left with one clean library entry. Archived means moved to a holding folder, never deleted. Before it moves anything, the tool double-checks that the copies really are the same book, so you never end up with two folders for one book by accident.
 
-- Example: two identical copies of the same novel become one copy on the shelf and one copy waiting in the Set Aside folder for you to review.
+- Example: two identical copies of the same novel become one copy in your library and one copy waiting in the Archive for you to review.
 
 **7. Empty folders.** After everything else settles, some folders are left with no audio in them at all. This group sweeps those empty shells away. These are the only things the tool ever removes, and even that can be undone.
 
@@ -184,7 +184,7 @@ That is the engine and the trust artifact, and they are done.
 
 **Coming next** is the clickable app. The friendly on-screen version, with the shelves of covers, the seven review cards, and the switches described in this guide, is the next piece being built. Today the plan and the report exist; the window you click through is arriving after them.
 
-**Coming after that** is the actual tidying. Moving files, setting copies aside, and the undo that reverses it all come once the app is in place. And that step will be proven on practice copies of real libraries first, with the undo shown to put everything back exactly as it was, before it is ever offered for a real collection.
+**Coming after that** is the actual tidying. Moving files, moving duplicate copies to the Archive, and the undo that reverses it all come once the app is in place. And that step will be proven on practice copies of real libraries first, with the undo shown to put everything back exactly as it was, before it is ever offered for a real collection.
 
 The order is deliberate:
 
@@ -200,7 +200,7 @@ Before any real tidy-up runs, the tool asks you to decide how you want to be pro
 
 - **Copy to another drive.** Make a full copy of your library onto a separate external drive before tidying. This is the most protective and needs the most space and time.
 - **Copy on the same drive.** Make a second copy on the same disk. Faster and simpler, though it does not protect you if the whole drive fails.
-- **Rely on the undo record and the set-aside folder.** Trust the tool's own safety net: the undo record that can reverse every change, and the fact that copies are set aside rather than deleted. This uses no extra space, and leans entirely on the built-in reversibility.
+- **Rely on the undo record and the Archive.** Trust the tool's own safety net: the undo record that can reverse every change, and the fact that copies are set aside rather than deleted. This uses no extra space, and leans entirely on the built-in reversibility.
 
 Pick the one that matches how cautious you feel and how much room you have. The tool records your choice and proceeds only after you make it.
 
@@ -226,11 +226,11 @@ The tool keeps everything it produces in plain, findable places on your own comp
 
 Because these are just ordinary files, you can open them any time, keep them, print them, or delete them yourself. The tool never hides its records from you.
 
-**The Set Aside folder.** When the copies group sets a duplicate aside, the copy moves here, into a folder named "Set Aside" that sits beside your library, not inside it. A few things are worth knowing:
+**The Archive.** When the duplicates group archives a copy, it moves here, into a folder named "Audiobook Archive" that sits beside your library, not inside it. A few things are worth knowing:
 
 - Nothing in this folder is ever deleted by the tool.
 - It waits there until you look through it and empty it yourself, whenever you are ready.
-- It sits outside your library so Audiobookshelf never mistakes a set-aside copy for a real shelf book.
+- It sits outside your library so Audiobookshelf never mistakes an archived copy for a book in your library.
 
 It is your safety holding area, entirely under your control.
 

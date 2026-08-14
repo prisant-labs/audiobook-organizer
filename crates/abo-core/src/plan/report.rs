@@ -35,9 +35,11 @@
 //!
 //! # Plain-language register (PRODUCT.md Design Principle 1, FD-31)
 //!
-//! Books, shelves, copies, tidy-up, set aside - never operations, dedupe,
-//! quarantine, manifest, dashboard. The [`PlanExport`] already scrubbed the one
-//! internal-vocabulary field ("quarantine" -> "set-aside") at the export
+//! Books, library, duplicates, tidy-up, Archive - never operations, dedupe,
+//! quarantine, manifest, dashboard. The list is revised by FD-47 ("shelves" ->
+//! "library"), FD-46 ("copies" -> "duplicates" for the GROUP; members are still
+//! copies) and FD-42 ("set aside" -> "Archive"). The [`PlanExport`] already
+//! scrubbed the one internal-vocabulary field ("quarantine" -> "archive") at the export
 //! boundary; this module adds no banned word of its own, and a test greps the
 //! sample for the whole banned set.
 
@@ -317,8 +319,29 @@ fn human_dateline(iso: &str) -> String {
 // ---- per-group display metadata ----
 
 /// The ops belonging to one user-facing group label.
+///
+/// Resolves each op's STORED group token rather than comparing it to the current
+/// label. An export written before a rename stores the old word (FD-46's "copies"),
+/// and raw equality would file none of its operations under any heading while the
+/// summary table, read from stored stats, still counted them.
+///
+/// This helper feeds the counts, the examples, the sizes and the complete table,
+/// so getting it wrong loses a group's operations in four places at once. The same
+/// bug was fixed in `export::to_markdown` first; this is the second occurrence, in
+/// a different function, which is why the resolution now lives in one shared place
+/// ([`CampaignGroup::from_stored_token`]) rather than being re-derived per reader.
 fn group_ops<'a>(export: &'a PlanExport, label: &str) -> Vec<&'a ExportOp> {
-    export.ops.iter().filter(|o| o.group == label).collect()
+    let want = CampaignGroup::from_stored_token(label);
+    export
+        .ops
+        .iter()
+        .filter(|o| match want {
+            // Both sides resolved: a stored "copies" matches a current "duplicates".
+            Some(group) => CampaignGroup::from_stored_token(&o.group) == Some(group),
+            // An unrecognized label is never silently widened to match everything.
+            None => o.group == label,
+        })
+        .collect()
 }
 
 /// Count of user-facing changes in a group (moves/renames/set-asides/removals).
@@ -381,9 +404,9 @@ fn group_headline(input: &ReportInput, group: CampaignGroup) -> String {
         }
         CampaignGroup::Bundles => {
             let packs = input.provenance.total_packs;
-            format!("Unpack {packs} collection bundles onto the shelves")
+            format!("Unpack {packs} collection bundles into your library")
         }
-        CampaignGroup::Copies => format!("Set aside {n} duplicate copies"),
+        CampaignGroup::Copies => format!("Move {n} duplicate copies to the Archive"),
         CampaignGroup::EmptyFolders => format!("Sweep out {n} empty folders"),
     }
 }
@@ -397,7 +420,7 @@ fn group_description(group: CampaignGroup) -> &'static str {
         CampaignGroup::LooseBooks => "each file moves into a folder named for its author and title",
         CampaignGroup::MessyNames => "removes leftover labels; the books do not move",
         CampaignGroup::BoxSets => "each book in the set gets its own folder",
-        CampaignGroup::Bundles => "books are lifted out of download packages onto the shelves",
+        CampaignGroup::Bundles => "books are lifted out of download packages into your library",
         CampaignGroup::Copies => "held until every group is double-checked byte by byte",
         CampaignGroup::EmptyFolders => "placeholders that hold no audio at all",
     }
@@ -410,8 +433,8 @@ fn group_section_title(group: CampaignGroup) -> &'static str {
         CampaignGroup::LooseBooks => "Loose books get their own folders",
         CampaignGroup::MessyNames => "Messy names come clean",
         CampaignGroup::BoxSets => "Box sets become separate books",
-        CampaignGroup::Bundles => "Collection bundles onto the shelves",
-        CampaignGroup::Copies => "Duplicate copies set aside",
+        CampaignGroup::Bundles => "Collection bundles into your library",
+        CampaignGroup::Copies => "Duplicate copies moved to the Archive",
         CampaignGroup::EmptyFolders => "Empty folders swept out",
     }
 }
@@ -620,7 +643,7 @@ fn push_masthead(h: &mut String, input: &ReportInput) {
         esc(&human_dateline(input.created_at))
     ));
     h.push_str(&format!(
-        "<div class=\"factline\">Library: {} &nbsp;&middot;&nbsp; Shelf layout: {} &nbsp;&middot;&nbsp; Plan {}, scan {}</div>\n",
+        "<div class=\"factline\">Library: {} &nbsp;&middot;&nbsp; Layout: {} &nbsp;&middot;&nbsp; Plan {}, scan {}</div>\n",
         esc(input.library_root),
         esc(input.shelf_layout),
         input.plan_id,
@@ -817,7 +840,7 @@ fn push_warnings(h: &mut String, input: &ReportInput) {
     if !held.is_empty() {
         let copies: usize = held.iter().map(|g| g.copies()).sum();
         h.push_str(&format!(
-            "<p><b>{} group{} of identical copies</b> ({} file{} in all) are held until the byte-by-byte check finishes, so you never end up with two folders for one book. Nothing is set aside until you confirm.</p>\n",
+            "<p><b>{} group{} of identical copies</b> ({} file{} in all) are held until the byte-by-byte check finishes, so you never end up with two folders for one book. Nothing moves to the Archive until you confirm.</p>\n",
             held.len(),
             if held.len() == 1 { "" } else { "s" },
             copies,
@@ -890,7 +913,7 @@ fn push_guarantees(h: &mut String) {
     // The FD-10 canon deletion-guarantee line, verbatim.
     h.push_str(&format!("<p><b>{}</b></p>\n", esc(FD10_GUARANTEE_LINE)));
     h.push_str("<ul class=\"plain\">\n");
-    h.push_str("<li>Duplicate copies would move to a Set Aside folder beside the library, where they stay until you empty it yourself.</li>\n");
+    h.push_str("<li>Duplicate copies would move to the Archive folder beside the library, where they stay until you empty it yourself.</li>\n");
     h.push_str("<li>No file contents are edited. Books are moved and folders renamed; the audio inside is untouched.</li>\n");
     h.push_str("<li>An undo record is written as changes happen, so the whole tidy-up can be reversed.</li>\n");
     h.push_str("<li>Nothing leaves this computer. The dry run, this report, and the tidy-up itself all run locally.</li>\n");
@@ -1091,7 +1114,7 @@ fn shelf_layout_label(preset: crate::plan::templates::Preset) -> &'static str {
     match preset {
         Preset::AbsAuthorFirst => "author first",
         Preset::TitleFirst => "title first",
-        Preset::HybridGenre => "genre shelves",
+        Preset::HybridGenre => "genre folders",
     }
 }
 
@@ -1234,7 +1257,7 @@ pub async fn build_and_persist_plan(
     let merged = extract(&entry_inputs);
 
     // FD-34: resolve the set-aside root (F-803 `set_aside_root` when configured,
-    // else the default sibling `<library-parent>\Set Aside\`). The builder stamps
+    // else the default sibling `<library-parent>\Audiobook Archive\`). The builder stamps
     // set-aside targets under this root, and validation checks targets against it.
     let set_aside_root = crate::db::settings::get_settings(pool)
         .await
@@ -1584,7 +1607,7 @@ mod tests {
             "copies chip is checking"
         );
         // The copies count is the exact-duplicate GROUP count (FD-08): one group.
-        assert!(html.contains("Set aside 1 duplicate copies"));
+        assert!(html.contains("Move 1 duplicate copies to the Archive"));
     }
 
     /// AC-21: the complete change-list table has exactly one row per plan op.
@@ -1624,10 +1647,25 @@ mod tests {
     }
 
     /// The banned internal vocabulary never reaches the report (FD-31 + register).
+    ///
+    /// This is the Rust half of a two-part gate; `src/lib/__tests__/vocabulary.ts`
+    /// is the other, covering the app's own copy. Both halves must know the same
+    /// words, or a term retired on one surface survives on the other. That is not
+    /// hypothetical: this test knew only the never-allowed list and had no opinion
+    /// about RETIRED words, so the exported report carried "Set Aside" and six
+    /// "shelves" strings after FD-42 and FD-47 had already retired them.
     #[test]
     fn no_banned_vocabulary() {
         let o = owned();
         let html = build_html_report(&input_of(&o, false)).to_lowercase();
+
+        // "Audiobookshelf" is the product this app complements and appears in the
+        // report by design. A substring scan for "shelf" would flag it forever, so
+        // neutralize it first rather than weakening the pattern. Doing this
+        // explicitly beats a cleverer match: the exception stays visible.
+        let html = html.replace("audiobookshelf", "<the-product>");
+
+        // Engineering terms that were NEVER allowed on a user-facing surface.
         for word in [
             "quarantine",
             "dedupe",
@@ -1638,6 +1676,24 @@ mod tests {
             assert!(
                 !html.contains(word),
                 "banned word {word:?} leaked into the report"
+            );
+        }
+
+        // Words RETIRED by a ledger decision: each was the approved term until a
+        // decision replaced it. Kept separate from the list above because the fix
+        // differs - banned jargon is rewritten, a retired word is swapped for its
+        // successor. NOT listed: "copies", which FD-46 kept for the members of a
+        // group even though the group itself became "Duplicates".
+        for (word, decision, successor) in [
+            // "aside" bare: the adjacent-only form missed "set it aside".
+            ("aside", "FD-42", "Archive"),
+            ("shelf", "FD-47", "library"),
+            ("shelves", "FD-47", "library"),
+        ] {
+            assert!(
+                !html.contains(word),
+                "{word:?} was retired by {decision} in favour of {successor:?}, \
+                 but it reached the exported report"
             );
         }
     }

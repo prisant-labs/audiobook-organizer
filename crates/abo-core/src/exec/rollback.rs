@@ -326,6 +326,41 @@ fn is_at_or_under(child: &str, root: &str) -> bool {
     c == r || c.starts_with(&format!("{r}/"))
 }
 
+/// The set-aside root a FROZEN plan op was built against, recovered from the
+/// `{job-id}` placeholder in its target.
+///
+/// A frozen `plan_ops.target_path` for a set-aside op is
+/// `<set_aside_root>\{job-id}\<original relative path>`, so everything before the
+/// placeholder IS the root, exactly, at plan time. `None` when the target carries
+/// no placeholder (an ordinary in-library op) or when nothing precedes it.
+///
+/// Deriving from the placeholder rather than from the SUBSTITUTED job number is
+/// deliberate: after substitution the job id is just a path segment, and a book
+/// folder named for that same number would make the cut ambiguous. The placeholder
+/// cannot be spoofed by a real path.
+///
+/// **On keeping only the FIRST recovered prefix.** An adversarial review flagged
+/// this as "mixed roots are not handled". It is unreachable by construction rather
+/// than unhandled, and the reason is worth recording so nobody adds speculative
+/// code for it: [`crate::plan::builder::Builder`] holds ONE `set_aside_root`
+/// field, and every set-aside target is built from it through
+/// `set_aside_job_dir`, so a single plan cannot mix roots. A partial undo takes
+/// one `job_id`, which has one plan. Two roots in one inverse plan would require
+/// ops from two plans, which this path never assembles.
+///
+/// The one shape that genuinely yields `None` here is a set-aside op whose frozen
+/// target carries no placeholder at all, which means a plan built before FD-34
+/// introduced the per-job segment. Those cannot exist in the wild: no real apply
+/// has ever been reachable (the frontend hardcodes `"dry-run"`, and a dry run
+/// executes against `MemFs`), so no pre-FD-34 job was ever written. If real
+/// applies are enabled and old plans could survive a schema migration, this
+/// fallback needs revisiting.
+fn set_aside_root_from_frozen_target(frozen_target: &str) -> Option<String> {
+    let idx = frozen_target.find(QUARANTINE_JOB_PLACEHOLDER)?;
+    let root = frozen_target[..idx].trim_end_matches(['\\', '/']);
+    (!root.is_empty()).then(|| root.to_string())
+}
+
 /// The effective set-aside root for teardown detection. The FD-34 ensure-mkdir is
 /// the ONE op that creates a directory OUTSIDE the library (the per-job folder
 /// `<set_aside_root>\<job-id>\`), so its target's PARENT is the real set-aside root
@@ -455,7 +490,7 @@ fn assemble_inverse_ops(
             source_path: dir.clone(),
             target_path: String::new(),
             byte_size: 0,
-            rationale: "Undo the last tidy-up: remove the now-empty set-aside folder.".to_string(),
+            rationale: "Undo the last tidy-up: remove the now-empty Archive folder.".to_string(),
         });
     }
     Ok((all, teardown_dirs))
@@ -678,6 +713,23 @@ pub async fn rollback_prepare_partial<V: Vfs>(
     let job_seg = job_id.to_string();
     let mut forward: Vec<ForwardOp> = Vec::new();
     let mut present: HashSet<String> = HashSet::new();
+    // The set-aside root THIS JOB actually used, recovered from the frozen plan
+    // rather than from the current setting.
+    //
+    // Why this exists (found by adversarial review of the FD-42 Archive rename):
+    // `effective_set_aside_root` derives the boundary from a selected out-of-library
+    // `mkdir`, and falls back to the resolved CURRENT root when the selection has
+    // none. A contiguous tail holding only later quarantine ops has no mkdir, so
+    // after a rename of the default root the fallback pointed at the NEW folder
+    // while the files sat under the OLD one: the restore still worked (it replays
+    // frozen paths) but no teardown was synthesized, stranding the emptied legacy
+    // folder forever.
+    //
+    // The frozen target carries both the plan-time root AND the placeholder
+    // (`<root>\{job-id}\<relative path>`), so the root is the prefix BEFORE the
+    // placeholder. That is exact and needs no guessing, unlike cutting at the
+    // substituted job number, which a book folder named for that number could spoof.
+    let mut frozen_set_aside_root: Option<String> = None;
     for (op_id, _seq) in &ordered {
         let op = by_id
             .get(op_id)
@@ -695,11 +747,14 @@ pub async fn rollback_prepare_partial<V: Vfs>(
         // the inverse op - a missing reconstructed path is a validation failure, not a
         // guess.
         let real_target = if op.target_path.contains(QUARANTINE_JOB_PLACEHOLDER) {
+            if frozen_set_aside_root.is_none() {
+                frozen_set_aside_root = set_aside_root_from_frozen_target(&op.target_path);
+            }
             let reconstructed = op.target_path.replace(QUARANTINE_JOB_PLACEHOLDER, &job_seg);
             if !vfs.exists(Path::new(&reconstructed)) {
                 return Err(AppError::RollbackPrepareFailed {
                     detail: format!(
-                        "the set-aside location to restore from could not be found: {reconstructed}"
+                        "the Archive location to restore from could not be found: {reconstructed}"
                     ),
                 });
             }
@@ -728,14 +783,18 @@ pub async fn rollback_prepare_partial<V: Vfs>(
     //    dirs of the SELECTED set-aside ops. A set-aside dir still holding a
     //    non-selected item's file is not empty, so its `rmdir-empty` halts SAFELY
     //    after the library restorations complete (never deleting the other item).
-    let (inverses, teardown_dirs) = assemble_inverse_ops(&forward, &library_root, &set_aside_root)?;
+    // Prefer the root this job actually used over the current setting, so a tail
+    // with no selected mkdir still tears down the folder it really filled.
+    let job_set_aside_root = frozen_set_aside_root.as_deref().unwrap_or(&set_aside_root);
+    let (inverses, teardown_dirs) =
+        assemble_inverse_ops(&forward, &library_root, job_set_aside_root)?;
     present.extend(teardown_dirs);
     persist_inverse_plan(
         pool,
         scan_id,
         ruleset_id,
         &library_root,
-        &set_aside_root,
+        job_set_aside_root,
         &present,
         &inverses,
         now,
@@ -991,6 +1050,29 @@ mod tests {
         ]
     }
 
+    /// The legacy-root recovery that keeps a partial undo's teardown pointed at the
+    /// folder the job actually filled (found by adversarial review of FD-42).
+    #[test]
+    fn frozen_target_yields_the_root_the_plan_was_built_against() {
+        // Windows and POSIX separators both, since plans are built with either.
+        assert_eq!(
+            set_aside_root_from_frozen_target(r"E:\Set Aside\{job-id}\Some Book\part01.mp3"),
+            Some(r"E:\Set Aside".to_string()),
+            "a pre-rename plan still resolves to its ORIGINAL root"
+        );
+        assert_eq!(
+            set_aside_root_from_frozen_target("E:/Audiobook Archive/{job-id}/B/x.mp3"),
+            Some("E:/Audiobook Archive".to_string())
+        );
+        // No placeholder: an ordinary in-library op contributes no root.
+        assert_eq!(
+            set_aside_root_from_frozen_target(r"E:\Books - Audio\Author\Book\part01.mp3"),
+            None
+        );
+        // Never yields an empty root, which would make every path a descendant.
+        assert_eq!(set_aside_root_from_frozen_target("{job-id}/B/x.mp3"), None);
+    }
+
     /// Approve every op of the inverse plan and apply it for REAL, so the round
     /// trip completes through the same executor walk. Returns nothing; the caller
     /// re-signatures the tree.
@@ -1046,7 +1128,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
 
         let specs = build_fixture(&library_root, &set_aside_root);
@@ -1131,7 +1213,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1208,7 +1290,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1334,7 +1416,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1444,7 +1526,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
@@ -1492,7 +1574,7 @@ mod tests {
         let (pool, _) = open_db(db.path()).await.expect("open_db");
         let work = TempDir::new().expect("work dir");
         let library_root = work.path().join("library");
-        let set_aside_root = work.path().join("Set Aside");
+        let set_aside_root = work.path().join("Audiobook Archive");
         std::fs::create_dir_all(&library_root).expect("library");
         let specs = build_fixture(&library_root, &set_aside_root);
         let scope = ApplyScope {
