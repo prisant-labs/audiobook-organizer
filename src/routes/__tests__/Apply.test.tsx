@@ -190,7 +190,14 @@ describe("Apply - rehearsal feed", () => {
       }),
     );
     render(<Apply jobId={1} onDone={vi.fn()} />);
-    expect(screen.getByText(/checked the eye of the world - ready for its new shelf\./i)).toBeInTheDocument();
+    // Derived from STRINGS rather than hardcoded. This assertion used to spell the
+    // sentence out, so it duplicated copy that strings.ts owns and broke when
+    // FD-47 retired "shelf" - a copy change failing a ROUTE test tells you nothing
+    // about the route. What this test actually guards is the line below it.
+    expect(
+      screen.getByText(STRINGS.apply.rehearsalOpMovedSentence("The Eye of the World")),
+    ).toBeInTheDocument();
+    // The real property (Critical 1): a rehearsal never claims a real move.
     expect(screen.queryByText(/^moved /i)).toBeNull();
   });
 });

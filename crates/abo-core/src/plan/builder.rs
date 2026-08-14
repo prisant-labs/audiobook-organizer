@@ -92,16 +92,56 @@ use crate::ruleset::{
 };
 use crate::scan::typing::FileClass;
 
-/// The folder name new set-aside shells and clutter land under. Never deletes:
+/// The folder name new Archive shells and clutter land under. Never deletes:
 /// the never-delete-audio invariant means a pack shell or non-preferred copy is
-/// MOVED here, not removed. The on-disk name is the plain-language "Set Aside"
-/// (FD-31); "quarantine" stays internal vocabulary (the const name, the op kind,
-/// type names) and never appears on disk or in a stored rationale sentence.
+/// MOVED here, not removed.
 ///
-/// FD-34: the set-aside ROOT this names is a SIBLING of the library, resolved
-/// OUTSIDE the library root (default `<library-parent>\Set Aside\`), not a folder
-/// inside it. See [`default_set_aside_root`].
-pub const QUARANTINE_DIRNAME: &str = "Set Aside";
+/// The on-disk name is **"Audiobook Archive"** (FD-42, superseding FD-31's
+/// "Set Aside"). Two names deliberately, for two contexts: the product says
+/// **Archive** on every surface, short enough for a button and unambiguous inside
+/// an app that is entirely about audiobooks, while the FOLDER says "Audiobook
+/// Archive" because FD-34 places it beside the library at the drive root, where a
+/// bare `Archive` is generic enough to collide with something unrelated and tells
+/// a person nothing when they find it in Explorer months later with no app
+/// running. "quarantine" stays internal vocabulary (this const's name, the op
+/// kind, type names) and never appears on disk or in a stored rationale sentence.
+///
+/// **On the migration FD-42 asks for.** Its entry requires that an install with an
+/// existing `Set Aside` folder keeps resolving it rather than being orphaned. No
+/// migration code implements that, and the reasons are recorded here because an
+/// adversarial review corrected an earlier, WRONG version of this comment.
+///
+/// **What actually preserves a legacy root.** There are TWO undo paths, not one,
+/// and they differ:
+///
+/// - **Completed undo** ([`crate::exec::rollback::rollback_prepare`]) reads the
+///   real executed paths out of the exported manifest.
+/// - **Partial undo** ([`crate::exec::rollback::rollback_prepare_partial`]) reads
+///   the FROZEN `plan_ops` and substitutes [`QUARANTINE_JOB_PLACEHOLDER`] itself.
+///
+/// Both therefore act on the root as it was at apply time, so a first undo of a
+/// pre-rename job restores from `Set Aside` regardless of what this constant now
+/// says. `rollback::resolve_set_aside_root` never contributes a path; its own doc
+/// notes it affects "a defensive out-of-scope verdict, never the paths".
+///
+/// Teardown of the emptied folder is separate, and it needed a fix: see
+/// [`crate::exec::rollback::effective_set_aside_root`], which now derives the root
+/// from the frozen target's own placeholder rather than only from a selected
+/// `mkdir`. Teardown ops are `rmdir-empty`, which `validate::creates_target`
+/// excludes from the target-scope check, so a legacy-rooted teardown is never
+/// refused as out of scope.
+///
+/// **The ordering is load-bearing, so do not reorder it.** This rename lands while
+/// real applies are still unreachable (the frontend hardcodes `"dry-run"` and a dry
+/// run executes against `MemFs`), so no install can hold a `Set Aside` folder this
+/// app created. Were real applies enabled FIRST and the rename done after, the
+/// above would be load-bearing in production rather than a belt-and-braces
+/// argument, and migration code WOULD be required.
+///
+/// FD-34: the Archive ROOT this names is a SIBLING of the library, resolved
+/// OUTSIDE the library root (default `<library-parent>\Audiobook Archive\`), not a
+/// folder inside it. See [`default_set_aside_root`].
+pub const QUARANTINE_DIRNAME: &str = "Audiobook Archive";
 
 /// The literal path segment the builder stamps where the apply job's id will go
 /// in a set-aside target (`<set-aside-root>\{job-id}\<original relative path>`,
@@ -113,7 +153,7 @@ pub const QUARANTINE_DIRNAME: &str = "Set Aside";
 /// segment gives each tidy-up its own collision-free set-aside folder (FD-34).
 pub const QUARANTINE_JOB_PLACEHOLDER: &str = "{job-id}";
 
-/// The FD-34 default set-aside root: a `Set Aside` folder that is a SIBLING of
+/// The FD-34 default set-aside root: a `Audiobook Archive` folder that is a SIBLING of
 /// the library (one level up from `library_root`), resolved OUTSIDE the library
 /// so a post-apply rescan and family media players never index set-aside items.
 /// Same-volume by construction (a sibling is on the library's volume), which
@@ -122,8 +162,8 @@ pub const QUARANTINE_JOB_PLACEHOLDER: &str = "{job-id}";
 /// Pure string semantics keyed off the library root's own separator (the CFG
 /// RULE), so it is host-independent. A bare synthetic root with no separator
 /// (the fixture convention, e.g. `library`) yields the bare sibling name
-/// `Set Aside` at the same level. A real root (`E:\Books - Audio`) yields
-/// `E:\Set Aside`. A configured override (F-803 settings) replaces this default.
+/// `Audiobook Archive` at the same level. A real root (`E:\Books - Audio`) yields
+/// `E:\Audiobook Archive`. A configured override (F-803 settings) replaces this default.
 pub fn default_set_aside_root(library_root: &str) -> String {
     let sep = separator_of(library_root);
     let parent = parent_dir(library_root, sep);
@@ -239,7 +279,16 @@ impl CampaignGroup {
         CampaignGroup::EmptyFolders,
     ];
 
-    /// The FD-26 canonical label.
+    /// The FD-26 canonical label, as a user reads it.
+    ///
+    /// `Copies` reads "duplicates" (FD-46): a "copy" also means an ordinary
+    /// instance of a book ("my copy of Dune"), which is a different meaning, while
+    /// "duplicates" only ever means this. The members INSIDE a group are still
+    /// copies, which reads naturally. Note the deliberate divergence from
+    /// [`CampaignGroup::slug`], which stays `"copies"` because it is the stable id
+    /// the review UI's group cards and approval commands key off; renaming it
+    /// would be a contract change, not a copy change. Same shape as the
+    /// `set_aside_root` field over the `quarantine_root` column.
     pub fn label(self) -> &'static str {
         match self {
             CampaignGroup::Staging => "staging",
@@ -247,7 +296,7 @@ impl CampaignGroup {
             CampaignGroup::MessyNames => "messy names",
             CampaignGroup::BoxSets => "box sets",
             CampaignGroup::Bundles => "bundles",
-            CampaignGroup::Copies => "copies",
+            CampaignGroup::Copies => "duplicates",
             CampaignGroup::EmptyFolders => "empty folders",
         }
     }
@@ -267,6 +316,39 @@ impl CampaignGroup {
             CampaignGroup::Copies => "copies",
             CampaignGroup::EmptyFolders => "empty-folders",
         }
+    }
+
+    /// Recover a [`CampaignGroup`] from ANY token that has ever identified it in a
+    /// stored artifact: the stable [`CampaignGroup::slug`], the current
+    /// [`CampaignGroup::label`], or a label some decision has since retired.
+    ///
+    /// Exists because exported plans store the LABEL, not the slug, and a label can
+    /// change. `FD-46` renamed the Copies group to "duplicates", which made the
+    /// Markdown renderer's `o.group == group.label()` filter silently stop matching
+    /// operations in every export written before the rename: the summary table
+    /// (read from stored stats) still counted them while the section below it said
+    /// "No changes in this group". One document, contradicting itself.
+    ///
+    /// Resolving tolerantly beats rewriting the export format: the format has no
+    /// version field and `group` is an unversioned machine value, so changing what
+    /// is WRITTEN would break any external reader, whereas widening what is READ
+    /// breaks nobody. Every future rename adds one line to `RETIRED_LABELS`.
+    pub fn from_stored_token(s: &str) -> Option<Self> {
+        /// (retired label, the group it named). Append, never edit: an entry here
+        /// is the only thing that keeps old artifacts readable.
+        const RETIRED_LABELS: &[(&str, CampaignGroup)] = &[("copies", CampaignGroup::Copies)]; // FD-46, 2026-08-06
+
+        let needle = s.trim().to_ascii_lowercase();
+        CampaignGroup::ALL
+            .iter()
+            .copied()
+            .find(|g| g.slug() == needle || g.label() == needle)
+            .or_else(|| {
+                RETIRED_LABELS
+                    .iter()
+                    .find(|(old, _)| *old == needle)
+                    .map(|(_, g)| *g)
+            })
     }
 
     /// Recover a [`CampaignGroup`] from its [`CampaignGroup::slug`]. `None`
@@ -1578,7 +1660,7 @@ fn ensure_quarantine_dir(b: &mut Builder, pass: InternalPass) {
             source_path: String::new(),
             target_path: job_dir,
             rationale:
-                "Create the \"Set Aside\" folder so items can be set aside without deleting anything."
+                "Create the \"Audiobook Archive\" folder so items can be moved there without deleting anything."
                     .to_string(),
             rule_id: "empty-cleanup-mkdir".to_string(),
             confidence: "high".to_string(),
@@ -1605,7 +1687,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             source_path: shell_path,
             target_path: target,
             rationale: format!(
-                "The collection bundle \"{name}\" is empty after its books were extracted; set the empty shell aside (never deleted)."
+                "The collection bundle \"{name}\" is empty after its books were extracted; the empty shell moves to the Archive (never deleted)."
             ),
             rule_id: "flatten-packs-shell".to_string(),
             confidence: "high".to_string(),
@@ -1632,7 +1714,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             source_path: src,
             target_path: target,
             rationale: format!(
-                "This book keeps a preferred {} copy, so the extra \"{name}\" copy is set aside (never deleted).",
+                "This book keeps a preferred {} copy, so the extra \"{name}\" copy moves to the Archive (never deleted).",
                 preferred_ext(b.ruleset.structure.preferred_format)
             ),
             rule_id: "parallel-format-quarantine".to_string(),
@@ -1663,7 +1745,7 @@ fn pass_empty_cleanup(b: &mut Builder) {
             source_path: src,
             target_path: target,
             rationale: format!(
-                "\"{name}\" is not an audiobook file; set it aside (never deleted)."
+                "\"{name}\" is not an audiobook file; it moves to the Archive (never deleted)."
             ),
             rule_id: "clutter-quarantine".to_string(),
             confidence: "high".to_string(),
@@ -1999,22 +2081,25 @@ mod tests {
 
     // ---- FD-34: set-aside root resolves OUTSIDE the library (AC-21). --------
 
-    /// The FD-34 default set-aside root is a `Set Aside` SIBLING of the library,
+    /// The FD-34 default set-aside root is a `Audiobook Archive` SIBLING of the library,
     /// one level up, on the library's own volume (so moves stay rename-first).
     #[test]
     fn default_set_aside_root_is_a_sibling_outside_the_library() {
         // A real Windows root: the sibling sits at the drive root beside it.
-        assert_eq!(default_set_aside_root(r"E:\Books - Audio"), r"E:\Set Aside");
+        assert_eq!(
+            default_set_aside_root(r"E:\Books - Audio"),
+            r"E:\Audiobook Archive"
+        );
         // A nested real root: the sibling sits beside the library folder.
         assert_eq!(
             default_set_aside_root(r"E:\Media\Books"),
-            r"E:\Media\Set Aside"
+            r"E:\Media\Audiobook Archive"
         );
         // A POSIX/synthetic root keeps forward slashes.
-        assert_eq!(default_set_aside_root("E:/Library"), "E:/Set Aside");
+        assert_eq!(default_set_aside_root("E:/Library"), "E:/Audiobook Archive");
         // A bare synthetic root (the fixture convention) has no parent, so the
         // sibling is the bare name at the same top level.
-        assert_eq!(default_set_aside_root("lib"), "Set Aside");
+        assert_eq!(default_set_aside_root("lib"), "Audiobook Archive");
     }
 
     /// FD-34 end to end: with a real drive-letter library root, every set-aside
@@ -2042,7 +2127,7 @@ mod tests {
                 q.target_path
             );
             assert!(
-                q.target_path.starts_with("E:/Set Aside/{job-id}/"),
+                q.target_path.starts_with("E:/Audiobook Archive/{job-id}/"),
                 "target under the per-job set-aside folder: {}",
                 q.target_path
             );
@@ -2084,6 +2169,10 @@ mod tests {
         assert_eq!(InternalPass::StripNoise.group().label(), "messy names");
     }
 
+    /// The FD-26 seven-group canon, with FD-46's rename applied: the GROUP is
+    /// "duplicates", while the members inside one are still copies. The stable
+    /// slug stays "copies" and is asserted separately, since it is an IPC
+    /// contract id rather than copy.
     #[test]
     fn campaign_group_labels_are_the_fd26_canon() {
         let labels: Vec<&str> = CampaignGroup::ALL.iter().map(|g| g.label()).collect();
@@ -2095,10 +2184,69 @@ mod tests {
                 "messy names",
                 "box sets",
                 "bundles",
-                "copies",
+                "duplicates",
                 "empty folders",
+                // NOTE: if this list changed, check the slug assertion below.
+                // The label and the slug diverge deliberately and must not be
+                // "tidied" into agreement.
             ]
         );
+
+        // FD-46 renamed the LABEL only. `slug` is the stable kebab-case id the
+        // review UI's group cards and approval commands key off, so renaming it
+        // would break the IPC contract rather than change a word a user reads.
+        // Pinned explicitly because the divergence looks like an oversight to
+        // anyone who has not read FD-46, and the obvious "fix" is a silent
+        // breaking change.
+        assert_eq!(
+            CampaignGroup::Copies.label(),
+            "duplicates",
+            "the user-facing label follows FD-46"
+        );
+        assert_eq!(
+            CampaignGroup::Copies.slug(),
+            "copies",
+            "the IPC slug is a contract id and does NOT follow FD-46"
+        );
+        assert_eq!(
+            CampaignGroup::from_slug("copies"),
+            Some(CampaignGroup::Copies),
+            "an existing client's stored group id still resolves"
+        );
+    }
+
+    /// Artifacts written before FD-46 store the label "copies". They must still
+    /// resolve, or a re-rendered old export files none of its duplicate operations
+    /// under any heading while its own summary table still counts them.
+    #[test]
+    fn a_retired_label_in_a_stored_artifact_still_resolves() {
+        // The retired label, which is the whole point of the resolver.
+        assert_eq!(
+            CampaignGroup::from_stored_token("copies"),
+            Some(CampaignGroup::Copies),
+            "a pre-FD-46 export must still resolve its own group"
+        );
+        // The current label and the stable slug both resolve too.
+        assert_eq!(
+            CampaignGroup::from_stored_token("duplicates"),
+            Some(CampaignGroup::Copies)
+        );
+        assert_eq!(
+            CampaignGroup::from_stored_token("loose-books"),
+            Some(CampaignGroup::LooseBooks)
+        );
+        assert_eq!(
+            CampaignGroup::from_stored_token("loose books"),
+            Some(CampaignGroup::LooseBooks)
+        );
+        // Tolerant of casing and padding, since these come out of stored text.
+        assert_eq!(
+            CampaignGroup::from_stored_token("  Duplicates "),
+            Some(CampaignGroup::Copies)
+        );
+        // Never fabricates a group.
+        assert_eq!(CampaignGroup::from_stored_token("not-a-group"), None);
+        assert_eq!(CampaignGroup::from_stored_token(""), None);
     }
 
     /// SPEC guard (PR-B regression): the EXACT pass-to-group fold for every
@@ -2431,13 +2579,13 @@ mod tests {
         assert_eq!(q.source_path, "lib/Hugo Collection");
         // FD-34: the shell is set aside OUTSIDE the library, under the per-job
         // folder, preserving its original relative path (AC-21). ROOT is "lib"
-        // (a bare synthetic root), so the sibling set-aside root is "Set Aside".
+        // (a bare synthetic root), so the sibling set-aside root is "Audiobook Archive".
         assert!(
             !q.target_path.starts_with("lib/"),
             "FD-34: a set-aside target never sits inside the library root: {}",
             q.target_path
         );
-        assert_eq!(q.target_path, "Set Aside/{job-id}/Hugo Collection");
+        assert_eq!(q.target_path, "Audiobook Archive/{job-id}/Hugo Collection");
         // The quarantine (a removal) comes after both member moves.
         let q_idx = plan
             .ops
@@ -2609,12 +2757,14 @@ mod tests {
         for q in &quarantines {
             assert_eq!(q.kind, "quarantine");
             // FD-31: a parallel-format loser is a copy of the book, so it folds
-            // into the Copies group (the dedupe-quarantine pass), not the
+            // into the duplicates group (the dedupe-quarantine pass), not the
             // empty-cleanup pile, even though it is emitted in empty-cleanup.
+            // The internal pass name is unchanged; only the user-facing label
+            // moved, per FD-46.
             assert_eq!(q.op_group, "dedupe-quarantine");
             assert_eq!(
                 group_for_op_group(&q.op_group).map(|g| g.label()),
-                Some("copies")
+                Some("duplicates")
             );
             assert!(q.source_path.ends_with(".mp3"), "loser is an mp3");
             // FD-34: set aside OUTSIDE the library under the per-job folder,
@@ -2624,7 +2774,7 @@ mod tests {
                 "FD-34: a set-aside target never sits inside the library root: {}",
                 q.target_path
             );
-            assert!(q.target_path.starts_with("Set Aside/{job-id}/"));
+            assert!(q.target_path.starts_with("Audiobook Archive/{job-id}/"));
             assert!(
                 q.target_path.ends_with(&q.source_path["lib/".len()..]),
                 "AC-21: the original relative path is preserved under the job folder: {} -> {}",
@@ -2919,7 +3069,7 @@ mod tests {
         );
         assert_eq!(
             op.target_path,
-            "Set Aside/{job-id}/Hugo Collection/release.nfo"
+            "Audiobook Archive/{job-id}/Hugo Collection/release.nfo"
         );
     }
 

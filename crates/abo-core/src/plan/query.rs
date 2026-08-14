@@ -213,7 +213,7 @@ fn group_headline(group: CampaignGroup, n: u64) -> String {
         CampaignGroup::MessyNames => format!("Clean up {n} messy folder names"),
         CampaignGroup::BoxSets => format!("Split {n} books out of their box-set folders"),
         CampaignGroup::Bundles => format!("Unpack {n} books out of collection bundles"),
-        CampaignGroup::Copies => format!("Set aside {n} duplicate copies"),
+        CampaignGroup::Copies => format!("Move {n} duplicate copies to the Archive"),
         CampaignGroup::EmptyFolders => format!("Sweep out {n} empty folders"),
     }
 }
@@ -239,13 +239,13 @@ fn group_reason(group: CampaignGroup) -> &'static str {
              whole folder as one giant book. Each book gets its own folder inside the series."
         }
         CampaignGroup::Bundles => {
-            "These are download packages, not shelves. The books inside move to their authors; \
-             the collection they came from is remembered in the report."
+            "These are download packages, not books in your library. The books inside move to \
+             their authors; the collection they came from is remembered in the report."
         }
         CampaignGroup::Copies => {
-            "Exact copies of the same book, found in more than one place. Before anything is set \
-             aside, every pair is double-checked byte by byte so a near-miss is never mistaken \
-             for a copy."
+            "Exact copies of the same book, found in more than one place. Before anything \
+             moves to the Archive, every pair is double-checked byte by byte so a near-miss \
+             is never mistaken for a copy."
         }
         CampaignGroup::EmptyFolders => {
             "These folders hold no audio at all - leftover placeholders from an earlier \
@@ -693,6 +693,46 @@ mod tests {
             provenance_json: None,
             approval: approval.to_string(),
             approval_updated_at: None,
+        }
+    }
+
+    /// Group headlines and reasons are USER-FACING: they cross IPC on
+    /// `PlanGroupView` and render in `GroupCard.tsx` and `GroupDetail.tsx`. Like
+    /// `AppError::remediation`, they passed through NEITHER vocabulary gate, which
+    /// is how the Bundles reason kept saying "not shelves" after FD-47 retired the
+    /// word. An adversarial review found it; no test could have.
+    ///
+    /// Swept over every group and both singular and plural headlines, since a
+    /// headline that branches on count can hide a retired word on one branch.
+    #[test]
+    fn no_group_copy_carries_retired_vocabulary() {
+        for group in CampaignGroup::ALL {
+            let mut samples = vec![group_reason(*group).to_string(), group.label().to_string()];
+            // Headlines are templates over a count: probe both sides of any
+            // singular/plural branch rather than assuming one shape.
+            for n in [0u64, 1, 2] {
+                samples.push(group_headline(*group, n));
+            }
+
+            for sample in samples {
+                let text = sample
+                    .to_lowercase()
+                    .replace("audiobookshelf", "<the-product>");
+                for (word, decision, successor) in [
+                    // "aside" bare, not "set aside": the adjacent-only pattern
+                    // missed "Set it aside" and "sets the copy aside", both live.
+                    ("aside", "FD-42", "Archive"),
+                    ("shelf", "FD-47", "library"),
+                    ("shelves", "FD-47", "library"),
+                ] {
+                    assert!(
+                        !text.contains(word),
+                        "{:?} group copy carries {word:?}, retired by {decision} in favour of \
+                         {successor:?}. This renders on the review surface: {sample}",
+                        group
+                    );
+                }
+            }
         }
     }
 

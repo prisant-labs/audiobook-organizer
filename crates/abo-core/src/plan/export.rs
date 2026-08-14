@@ -18,7 +18,7 @@
 //! target path (P6 FIX 3), but three STRUCTURED fields still carry the word
 //! as internal data: the `kind` value `"quarantine"`, and the rule ids
 //! `"parallel-format-quarantine"` / `"clutter-quarantine"` (F-205/F-402).
-//! [`scrub_internal_vocab`] rewrites the substring to `"set-aside"` wherever
+//! [`scrub_internal_vocab`] rewrites the substring to `"archive"` wherever
 //! it appears, and [`ExportOp::group`] is always the FD-26 user-facing label
 //! (never the raw `op_group`, which can be the internal pass name
 //! `"dedupe-quarantine"`). No exported field can carry "quarantine" as a
@@ -49,12 +49,13 @@ pub const FD10_GUARANTEE_LINE: &str =
     "No audiobook is ever deleted. Only empty folders are removed, and every change can be undone.";
 
 /// Rewrite every occurrence of the internal-only word "quarantine" to the
-/// plain-language "set-aside" (FD-31). A plain substring replace is complete
+/// plain-language "archive" (FD-42, superseding FD-31's "set-aside"). A plain
+/// substring replace is complete
 /// because the only field values that ever carry the word are the `kind`
 /// value `"quarantine"` and the two rule ids named in the module doc; none of
 /// them embed it as part of an unrelated word.
 fn scrub_internal_vocab(s: &str) -> String {
-    s.replace("quarantine", "set-aside")
+    s.replace("quarantine", "archive")
 }
 
 /// One exported operation row: the FD-31-scrubbed, spreadsheet/JSON-safe
@@ -252,13 +253,28 @@ impl PlanExport {
 
         out.push_str("| Group | Operations |\n|---|---|\n");
         for g in &self.stats.per_group {
-            out.push_str(&format!("| {} | {} |\n", title_case(&g.group), g.ops));
+            // Display the CURRENT label for whatever token was stored, so an old
+            // export cannot show a "Copies" summary row above a "Duplicates"
+            // section heading. An unrecognized token is printed as-is rather than
+            // dropped: showing an unfamiliar group beats hiding one.
+            let label = CampaignGroup::from_stored_token(&g.group)
+                .map(|c| c.label())
+                .unwrap_or(g.group.as_str());
+            out.push_str(&format!("| {} | {} |\n", title_case(label), g.ops));
         }
         out.push('\n');
 
         for group in CampaignGroup::ALL {
             let label = group.label();
-            let in_group: Vec<&ExportOp> = self.ops.iter().filter(|o| o.group == label).collect();
+            // Resolve the stored token rather than string-matching the CURRENT label:
+            // an export written before FD-46 stores "copies", and a raw comparison
+            // would file none of its operations under any heading while the summary
+            // table above still counted them. See CampaignGroup::from_stored_token.
+            let in_group: Vec<&ExportOp> = self
+                .ops
+                .iter()
+                .filter(|o| CampaignGroup::from_stored_token(&o.group) == Some(*group))
+                .collect();
             out.push_str(&format!("## {}\n\n", title_case(label)));
             if in_group.is_empty() {
                 out.push_str("No changes in this group.\n\n");
@@ -546,10 +562,42 @@ mod tests {
             ("json", export.to_json()),
             ("markdown", export.to_markdown()),
         ] {
+            let lower = text.to_lowercase();
             assert!(
-                !text.to_lowercase().contains("quarantine"),
+                !lower.contains("quarantine"),
                 "{name} export must never contain the internal word \"quarantine\": {text}"
             );
+            // The retired term must not come back, in either spelling.
+            assert!(
+                !lower.contains("set-aside") && !lower.contains("set aside"),
+                "{name} export must not carry FD-42's retired \"set aside\": {text}"
+            );
         }
+
+        // Pin the SCRUBBED VALUES directly rather than looking for "archive" in
+        // rendered text.
+        //
+        // An earlier version of this test asserted `rendered.contains("archive")`
+        // and was VACUOUS: the fixture's target path already contains "Audiobook
+        // Archive" and its rationale "moves to the Archive" BEFORE scrubbing runs,
+        // so the assertion passed regardless of what the scrub produced. Asserting
+        // absence was weak; asserting presence in the wrong place was no better.
+        // These check the two fields the scrub actually rewrites.
+        let kinds: Vec<&str> = export.ops.iter().map(|o| o.kind.as_str()).collect();
+        assert!(
+            kinds.contains(&"archive"),
+            "the internal `quarantine` op kind must scrub to exactly \"archive\" \
+             (FD-42, superseding FD-31's \"set-aside\"), got {kinds:?}"
+        );
+
+        let rule_ids: Vec<&str> = export.ops.iter().map(|o| o.rule_id.as_str()).collect();
+        assert!(
+            rule_ids.iter().any(|r| r.ends_with("-archive")),
+            "a `*-quarantine` rule id must scrub to `*-archive`, got {rule_ids:?}"
+        );
+        assert!(
+            !rule_ids.iter().any(|r| r.contains("set-aside")),
+            "no rule id may carry FD-42's retired \"set-aside\", got {rule_ids:?}"
+        );
     }
 }
