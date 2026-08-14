@@ -34,7 +34,7 @@ The five `PRODUCT.md` principles govern every surface. Restated as design-system
 
 1. Plain language first. Books, shelves, copies, tidy-up. Technical detail lives behind one consistent "Show file details" disclosure (Section 6, Section 7).
 2. Preview before touch. Every destructive-adjacent flow is scan then review then confirm. The review screen and the exported HTML report are the trust ceremony.
-3. Nothing irreversible. No deletion vocabulary in the UI. Copies are "set aside", changes are "undoable", and the interface says so where the anxiety happens (Section 6 reassurance canon).
+3. Nothing irreversible. No deletion vocabulary in the UI. Duplicates are "moved to the Archive", changes are "undoable", and the interface says so where the anxiety happens (Section 6 reassurance canon).
 4. The books are the interface. Covers and spines carry warmth and recognition; app chrome stays quiet and neutral so the collection is the color.
 5. One calm primary action per screen. Every surface answers "what should I do next" with exactly one obvious button (Section 7).
 
@@ -278,7 +278,7 @@ All user-facing copy is centralized in one strings module (FD-23 (localization: 
 | tidy-up, tidy | operation, op, job (in UI) |
 | changes | operations, mutations |
 | groups | batches |
-| set aside | delete, remove, trash, quarantine |
+| move to the Archive | delete, remove, trash, quarantine, set aside |
 | copies (within a group) | duplicates-as-files, pairs |
 | held, checking, needs you | blocked, error (for soft states) |
 | library home, your library | dashboard |
@@ -321,7 +321,7 @@ Seven user-facing groups, exactly as prototyped in 05/07, and the review UI and 
 3. Clean up messy folder names (names)
 4. Split box-set folders into separate books (box sets)
 5. Unpack collection bundles onto the shelves (bundles)
-6. Set aside duplicate copies (copies)
+6. Move duplicate copies to the Archive (duplicates)
 7. Sweep out empty folders (empties)
 
 Series-index normalization folds into "messy names" for the UI while remaining a distinct internal plan pass (FD-26). The internal group list of F-403 (plan builder) maps onto these seven.
