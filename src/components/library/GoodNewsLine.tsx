@@ -7,19 +7,22 @@ export interface GoodNewsLineProps {
 }
 
 // The home's "good news" line (design-system Section 4, `.goodline`): what is
-// ALREADY tidy, each fact a full sentence-fragment naming its own unit (FD-08)
+// ALREADY done, each fact a full sentence-fragment naming its own unit (FD-08)
 // rather than a bare number. A fact with a zero count is simply omitted - a
 // zero here is not itself news.
 export function GoodNewsLine({ goodNews }: GoodNewsLineProps) {
   const facts: string[] = [];
   if (goodNews.already_tidy_books > 0) {
     facts.push(
-      `${goodNews.already_tidy_books} book${goodNews.already_tidy_books === 1 ? "" : "s"} already in tidy folders`,
+      `${goodNews.already_tidy_books} book${goodNews.already_tidy_books === 1 ? "" : "s"} already in the right folders`,
     );
   }
+  // "kept together", not "shelved together": FD-47 retired the shelf word family
+  // for "library". The copy guard's own pattern only matches "shelf" and
+  // "shelves", so this verb form was live in shipped copy and swept by nothing.
   if (goodNews.series_shelved > 0) {
     facts.push(
-      `${goodNews.series_shelved} series shelved together`,
+      `${goodNews.series_shelved} series kept together`,
     );
   }
   if (goodNews.empty_folders > 0) {

@@ -57,7 +57,7 @@ export function ConfirmInline({ disabled, onConfirm }: ConfirmInlineProps) {
       onClick={() => setStep("confirming")}
       className="rounded bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover disabled:opacity-50"
     >
-      {STRINGS.review.tidyUpNow}
+      {STRINGS.review.organizeNow}
     </button>
   );
 }
