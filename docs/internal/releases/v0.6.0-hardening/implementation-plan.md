@@ -57,7 +57,7 @@ recorded in the P1 status note.
 | P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | **COMPLETE.** P1a/P1b/P1d MERGED 2026-07-31; P1c MERGED 2026-08-05 (PR #11). AC-8 hand walkthrough still owed by jp |
 | P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15)**: BLAKE3 hashing, its persistence, a cancellable verification job, and the auto-resolve gate. `AC-13` (two-step override) and `AC-16` (throughput on real data) remain |
 | **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **COMPLETE, awaiting review.** All five criteria implemented, engine-only, no IPC change. Descope path not taken |
-| P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
+| P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | **Steps 1-2 done 2026-08-15** (`dupes/policy.rs`, pure, `AC-23`/`AC-24`/`AC-26`). Steps 3-4 (emission + rollback round-trip, `AC-25`/`AC-27`) remain and are the safety-critical half. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108. See the finding below |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
 | P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | Not started |
 | P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | Not started |
@@ -229,9 +229,21 @@ Steps:
 4. Ensure set-aside losers go through F-605 (quarantine) preserving relative paths and provenance, so F-603 (rollback) restores them (AC-27).
 
 Verification:
-- Table-driven policy tests over fixture groups (AC-23, AC-24).
-- flag-only emits zero operations (AC-26).
+- Table-driven policy tests over fixture groups (AC-23, AC-24). **Done**, 12 tests in `policy.rs`; the tie-break is mutation-tested (taking the LAST member at the best rank instead of the first fails two).
+- flag-only emits zero operations (AC-26). **Pending step 3**: emission is what there is to assert, and it does not exist yet. `policy.rs` covers the other half of `AC-26`, that flag-only still produces a keeper suggestion.
 - Dedupe round-trip test on fixtures: resolve -> set aside -> rollback -> tree byte-identical (AC-27); the real-data-copy version is exercised in Phase 8 / campaign log.
+
+### P3 finding, 2026-08-15: the policies discriminate almost nowhere resolution is permitted
+
+Worth knowing before steps 3-4 are built, and worth `jp` seeing, because it is a property of the specified policies rather than a defect in them:
+
+- An **exact** group is keyed on `(basename, size)`. Equal size means `keep-larger` cannot rank it; equal basename means equal extension, so `keep-m4b` cannot either. Both tie **always**, by construction of the key.
+- A **fingerprint** book group requires agreement on audio count and total audio bytes (`AC-51`), so `keep-m4b` ties on it by construction too.
+- Where both policies DO discriminate is title-only groups, and `AC-55` says those never auto-resolve, since choosing between one file and twelve is a preference rather than a mechanical ranking.
+
+So on proven-identical copies **the tie-break is the de facto policy**. It is therefore first-class here: deterministic (first by path, the order members already arrive in), stated to the reader as `KeeperReason::Equivalent` rather than dressed up as a decision, and mutation-tested. This does not block anything; it does mean `P5`'s surface should expect "these were equivalent" to be the common message, not a rare one.
+
+**One wording tension, flagged rather than silently resolved.** Step 2 above and `FD-44` give `keep-m4b` a book-level meaning ("prefer the copy that is one file over the copy that is twelve"), and `AC-55` says exactly that choice "is a preference, not a mechanical ranking" and such groups never auto-resolve. These reconcile: `AC-24` has the policy PROPOSE and the user CONFIRM, so no mechanical rule is ever the final word, and the architecture enforces it independently since a single-file copy is not a book folder and so its group can never reach `Fingerprint`, leaving the `AC-12` gate shut. Implemented under that reading. If `jp` reads `AC-55` as forbidding even a proposal, the change is small and local to `rank`.
 
 Decision Gate: NONE remaining. `OQ-1` (keep-higher-bitrate bitrate source) was CLOSED as moot on 2026-08-05 when the policy itself was cut as `F-1108`. The three surviving policies never depended on it.
 
