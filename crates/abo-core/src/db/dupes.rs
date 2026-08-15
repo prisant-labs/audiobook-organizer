@@ -294,6 +294,7 @@ mod tests {
                     size: 100,
                 },
             ],
+            book_match: None,
         }];
 
         let ids = insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-04T00:00:00Z")
@@ -333,6 +334,7 @@ mod tests {
                     path: "E:\\Books\\a\\Book.m4b".to_string(),
                     size: 100,
                 }],
+                book_match: None,
             },
             DuplicateGroup {
                 method: METHOD_VERSION,
@@ -343,6 +345,7 @@ mod tests {
                     path: "E:\\Books\\b\\Book.m4b".to_string(),
                     size: 100,
                 }],
+                book_match: Some(crate::dupes::BookMatch::TitleOnly),
             },
         ];
         insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-04T00:00:00Z")

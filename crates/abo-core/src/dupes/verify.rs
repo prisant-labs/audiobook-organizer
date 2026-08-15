@@ -255,6 +255,7 @@ mod tests {
                     size: 100,
                 },
             ],
+            book_match: None,
         }];
         insert_duplicate_groups(pool, scan_id, &groups, "2026-08-06T00:00:00Z")
             .await

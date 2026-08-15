@@ -46,7 +46,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::dupes::{detect_duplicates, dupe_entries_from_plan_nodes, DuplicateGroup};
+use crate::dupes::{
+    book_folders_from_plan_nodes, detect_duplicates, dupe_entries_from_plan_nodes, DuplicateGroup,
+};
 use crate::plan::builder::CampaignGroup;
 use crate::plan::export::{build_plan_export, ExportOp, PlanExport, FD10_GUARANTEE_LINE};
 use crate::plan::provenance::{build_provenance_report, ProvenanceReport};
@@ -361,19 +363,39 @@ fn exact_dup_groups<'a>(input: &ReportInput<'a>) -> Vec<&'a DuplicateGroup> {
         .collect()
 }
 
-/// Normalized-title version candidates (each needs a keep decision).
+/// Every duplicate CANDIDATE group: exact basename+size groups, plus the
+/// `F-1110` folder groups whose members agree at least on the `AC-51`
+/// fingerprint.
+///
+/// This is the FD-08 counted unit for the Copies row. It is deliberately wider
+/// than [`exact_dup_groups`]: counting only exact groups reported zero for a
+/// book split across twelve files, which is the silent under-reporting `F-1110`
+/// closes.
+fn duplicate_candidate_groups<'a>(input: &ReportInput<'a>) -> Vec<&'a DuplicateGroup> {
+    input
+        .duplicate_groups
+        .iter()
+        .filter(|g| g.is_duplicate_candidate())
+        .collect()
+}
+
+/// Normalized-title version candidates that did NOT reach candidate strength
+/// (each needs a keep decision).
+///
+/// Excludes folder groups that are now counted as duplicate candidates, so a
+/// group is listed in exactly one place and the two figures never overlap.
 fn version_candidate_groups<'a>(input: &ReportInput<'a>) -> Vec<&'a DuplicateGroup> {
     input
         .duplicate_groups
         .iter()
-        .filter(|g| g.is_version_candidate())
+        .filter(|g| g.is_version_candidate() && !g.is_duplicate_candidate())
         .collect()
 }
 
 /// The displayed change count for a group (copies counts GROUPS, FD-08).
 fn displayed_count(input: &ReportInput, group: CampaignGroup) -> u64 {
     if group == CampaignGroup::Copies {
-        exact_dup_groups(input).len() as u64
+        duplicate_candidate_groups(input).len() as u64
     } else {
         group_change_count(input.export, group.label())
     }
@@ -1276,7 +1298,8 @@ pub async fn build_and_persist_plan(
         &set_aside_root,
     );
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-    let duplicate_groups = detect_duplicates(&dupe_entries);
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    let duplicate_groups = detect_duplicates(&dupe_entries, &books);
 
     // 5. Validate against a fresh view of the snapshot's own paths (all present),
     // with the FD-34 target-scope check enabled (a persisted plan's targets must
@@ -1374,7 +1397,8 @@ pub async fn preview_plan_review(
     // 4. Build the plan (in memory only) and detect duplicate candidates.
     let plan = build_plan(&nodes, &classifications, &merged, ruleset, &root_path);
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-    let duplicate_groups = detect_duplicates(&dupe_entries);
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    let duplicate_groups = detect_duplicates(&dupe_entries, &books);
 
     // 5. Validate against a fresh view of the snapshot's own paths (all
     // present) - the same env `build_and_persist_plan` uses, so a preview's
@@ -1521,7 +1545,8 @@ mod tests {
         let export = build_plan_export(7, "2026-07-04T18:14:03Z", "draft", &plan, &verdicts);
         let provenance = build_provenance_report(&plan);
         let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-        let dupes = detect_duplicates(&dupe_entries);
+        let books = book_folders_from_plan_nodes(&nodes, &merged);
+        let dupes = detect_duplicates(&dupe_entries, &books);
         Owned {
             export,
             provenance,
