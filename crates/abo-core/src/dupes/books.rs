@@ -118,6 +118,15 @@ pub struct BookFolder {
     pub audio_count: usize,
     /// Total bytes across those audio files.
     pub audio_bytes: u64,
+    /// The `entries.id` of every audio file beneath this folder, sorted.
+    ///
+    /// Two things need it. The subsumption rule in
+    /// [`detect_duplicates`](super::detect::detect_duplicates) asks which book
+    /// owns a given file, and `AC-54`'s content tier will ask which files to
+    /// hash for a given book. Book folders never nest (see the containment rule
+    /// above), so these sets partition the library's audio: every file belongs
+    /// to at most one book.
+    pub audio_entry_ids: Vec<usize>,
     /// Their sizes, SORTED ascending.
     ///
     /// Sorted rather than in directory order, settled by jp on 2026-08-14. The
@@ -187,7 +196,7 @@ pub fn book_folders_from_plan_nodes(nodes: &[PlanNode], merged: &[MergedEntry]) 
     // Audio sizes per ancestor folder, walking each audio file up to the root.
     // The step guard mirrors `dupe_entries_from_plan_nodes`: a malformed parent
     // chain must not spin, and a snapshot is untrusted input.
-    let mut audio_sizes: HashMap<usize, Vec<u64>> = HashMap::new();
+    let mut audio_files: HashMap<usize, Vec<(usize, u64)>> = HashMap::new();
     for n in nodes {
         if n.file_class != Some(FileClass::Audio) {
             continue;
@@ -199,7 +208,7 @@ pub fn book_folders_from_plan_nodes(nodes: &[PlanNode], merged: &[MergedEntry]) 
                 break;
             }
             steps += 1;
-            audio_sizes.entry(p).or_default().push(n.size);
+            audio_files.entry(p).or_default().push((n.id, n.size));
             cur = nodes[index_of[&p]].parent;
         }
     }
@@ -219,21 +228,25 @@ pub fn book_folders_from_plan_nodes(nodes: &[PlanNode], merged: &[MergedEntry]) 
         if title_norm.is_empty() {
             continue;
         }
-        let mut sizes = audio_sizes.get(&n.id).cloned().unwrap_or_default();
-        if sizes.is_empty() {
+        let files = audio_files.get(&n.id).cloned().unwrap_or_default();
+        if files.is_empty() {
             continue;
         }
+        let mut sizes: Vec<u64> = files.iter().map(|(_, s)| *s).collect();
         sizes.sort_unstable();
         let audio_bytes: u64 = sizes.iter().sum();
         if audio_bytes == 0 {
             continue;
         }
+        let mut audio_entry_ids: Vec<usize> = files.iter().map(|(i, _)| *i).collect();
+        audio_entry_ids.sort_unstable();
         out.push(BookFolder {
             id: n.id,
             path: n.path.clone(),
             title_norm,
             audio_count: sizes.len(),
             audio_bytes,
+            audio_entry_ids,
             audio_sizes: sizes,
         });
     }
@@ -315,6 +328,9 @@ mod tests {
             title_norm: normalize_title(title),
             audio_count: sizes.len(),
             audio_bytes: sizes.iter().sum(),
+            // Synthetic ids, distinct per book so a containment test over these
+            // fixtures behaves the way it does over a real snapshot.
+            audio_entry_ids: (0..sizes.len()).map(|i| id * 1_000 + i).collect(),
             audio_sizes: sizes,
         }
     }

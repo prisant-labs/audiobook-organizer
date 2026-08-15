@@ -1018,6 +1018,7 @@ mod tests {
                 },
             ],
             book_match: Some(tier),
+            subsumed_by_book_group: false,
         };
 
         // Title-only: possibly different editions, possibly one file against

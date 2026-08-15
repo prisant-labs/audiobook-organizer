@@ -134,6 +134,193 @@ fn two_twelve_part_copies_are_one_candidate_group_at_structural_tier() {
         1,
         "F-1110 raises a tier on the group that exists; it emits no second group"
     );
+
+    // FD-08: one duplicated book is ONE counted group. The twelve parts of the
+    // two copies are identically named and sized, so the exact detector also
+    // found twelve groups; every one of them is the same duplication restated,
+    // and none is counted.
+    assert_eq!(
+        groups.iter().filter(|g| g.is_duplicate_candidate()).count(),
+        1,
+        "one duplicated book, one counted group: {groups:#?}"
+    );
+    assert_eq!(
+        groups.iter().filter(|g| g.is_exact()).count(),
+        12,
+        "the part-level groups are still DETECTED, just not counted"
+    );
+    assert!(
+        groups
+            .iter()
+            .filter(|g| g.is_exact())
+            .all(|g| g.subsumed_by_book_group),
+        "every part group is subsumed by the book group above it"
+    );
+}
+
+/// A disc-split book copied twice: every disc carries a `track01.mp3`, so the
+/// exact detector finds a FOUR-member group drawn from two books. That is still
+/// the folder-level duplication restated one track at a time, so it is subsumed.
+///
+/// This is the case that made the rule "spans at least two copies" rather than
+/// "exactly one member per copy". Disc-split books are ordinary: measured on the
+/// standard fixture, `Verbal Advantage` alone yields a four-copy `track01.mp3`
+/// group without any duplication at all.
+#[test]
+fn a_disc_split_book_copied_twice_counts_once_despite_repeated_track_names() {
+    let discs = || {
+        vec![
+            T::D("Disc 1", vec![T::F("track01.mp3", 45_000)]),
+            T::D("Disc 2", vec![T::F("track01.mp3", 45_000)]),
+        ]
+    };
+    let nodes = build(vec![
+        T::D(
+            "Genre - Non-Fiction",
+            vec![T::D("Verbal Advantage", discs())],
+        ),
+        T::D("Backups", vec![T::D("Verbal Advantage", discs())]),
+    ]);
+    let groups = groups_of(&nodes);
+
+    let track = groups
+        .iter()
+        .find(|g| g.is_exact() && g.group_key.starts_with("track01.mp3|"))
+        .expect("track01.mp3 repeats across discs AND copies");
+    assert_eq!(track.copies(), 4, "two discs times two copies");
+    assert!(track.subsumed_by_book_group);
+    assert_eq!(
+        groups.iter().filter(|g| g.is_duplicate_candidate()).count(),
+        1,
+        "one duplicated book, one counted group: {groups:#?}"
+    );
+}
+
+/// A group confined to a SINGLE book is that book's own internal duplication,
+/// never the folder-level one, so it keeps counting on its own account. Here the
+/// duplicated book is genuinely duplicated AND one part repeats inside a copy.
+#[test]
+fn a_group_confined_to_one_book_is_never_subsumed() {
+    let nodes = build(vec![
+        // A lone disc-split book, not duplicated anywhere, whose two discs
+        // happen to carry the same track name and size.
+        T::D(
+            "Genre - Non-Fiction",
+            vec![T::D(
+                "Verbal Advantage",
+                vec![
+                    T::D("Disc 1", vec![T::F("track01.mp3", 45_000)]),
+                    T::D("Disc 2", vec![T::F("track01.mp3", 45_000)]),
+                ],
+            )],
+        ),
+    ]);
+    let groups = groups_of(&nodes);
+
+    assert!(
+        !groups.iter().any(|g| g.is_version_candidate()),
+        "nothing is duplicated at the book level here"
+    );
+    let track = groups
+        .iter()
+        .find(|g| g.is_exact() && g.group_key.starts_with("track01.mp3|"))
+        .expect("the two same-named tracks still group");
+    assert!(
+        !track.subsumed_by_book_group,
+        "with no covering book group, nothing may be suppressed"
+    );
+    assert!(track.is_duplicate_candidate());
+}
+
+/// An exact group with a member OUTSIDE any book folder is not covered by a book
+/// group, so it keeps counting. The rule only suppresses what it can prove is a
+/// restatement; anything it cannot prove stays visible.
+#[test]
+fn an_exact_group_reaching_outside_the_books_is_not_subsumed() {
+    let nodes = build(vec![
+        T::D(
+            "Genre - SciFI",
+            vec![
+                T::D("Dune", twelve_parts()),
+                // A loose copy of one part, sitting on the shelf itself.
+                T::F("Part 01.mp3", 61_000),
+            ],
+        ),
+        T::D("Backups", vec![T::D("Dune", twelve_parts())]),
+    ]);
+    let groups = groups_of(&nodes);
+
+    let reaching = groups
+        .iter()
+        .find(|g| g.is_exact() && g.group_key.starts_with("Part 01.mp3|"))
+        .expect("the Part 01 group must exist");
+    assert_eq!(reaching.copies(), 3, "two in books, one loose");
+    assert!(
+        !reaching.subsumed_by_book_group,
+        "a member outside every book cannot be covered by a book group"
+    );
+    assert!(reaching.is_duplicate_candidate());
+}
+
+/// Regression: an ordinary single-file duplicate, with no book group anywhere
+/// near it, counts exactly as it always did. The subsumption rule must be
+/// invisible when there is nothing to subsume.
+#[test]
+fn a_plain_single_file_duplicate_still_counts() {
+    let nodes = build(vec![
+        T::D(
+            "Genre - SciFI",
+            vec![T::F("Island by Aldous Huxley.m4b", 120_000)],
+        ),
+        T::D(
+            "Backups",
+            vec![T::F("Island by Aldous Huxley.m4b", 120_000)],
+        ),
+    ]);
+    let groups = groups_of(&nodes);
+    assert_eq!(
+        groups.iter().filter(|g| g.is_duplicate_candidate()).count(),
+        1
+    );
+    assert!(groups
+        .iter()
+        .filter(|g| g.is_exact())
+        .all(|g| !g.subsumed_by_book_group));
+}
+
+/// A TITLE-ONLY folder group subsumes nothing: it is not a confirmed duplicate,
+/// so the part-level evidence under it must stay countable. Suppressing there
+/// would hide real file duplicates behind a pair that only shares a name.
+#[test]
+fn a_title_only_group_subsumes_nothing() {
+    // Same title, different shapes (AC-55), but one part happens to match.
+    let nodes = build(vec![
+        T::D(
+            "Genre - SciFI",
+            vec![T::D(
+                "Dune",
+                vec![T::F("Part 01.mp3", 61_000), T::F("Part 02.mp3", 62_000)],
+            )],
+        ),
+        T::D(
+            "Backups",
+            vec![T::D("Dune", vec![T::F("Part 01.mp3", 61_000)])],
+        ),
+    ]);
+    let groups = groups_of(&nodes);
+    let folder = folder_group(&groups, "dune");
+    assert_eq!(folder.book_match, Some(BookMatch::TitleOnly));
+    assert!(!folder.is_duplicate_candidate());
+
+    let part1 = groups
+        .iter()
+        .find(|g| g.is_exact() && g.group_key.starts_with("Part 01.mp3|"))
+        .expect("Part 01 matches across the two folders");
+    assert!(
+        !part1.subsumed_by_book_group,
+        "an unconfirmed pair must not hide the file evidence beneath it"
+    );
+    assert!(part1.is_duplicate_candidate());
 }
 
 /// AC-53 as jp settled it on 2026-08-14: the sizes are SORTED and compared

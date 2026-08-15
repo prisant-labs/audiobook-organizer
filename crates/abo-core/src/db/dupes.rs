@@ -295,6 +295,7 @@ mod tests {
                 },
             ],
             book_match: None,
+            subsumed_by_book_group: false,
         }];
 
         let ids = insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-04T00:00:00Z")
@@ -335,6 +336,7 @@ mod tests {
                     size: 100,
                 }],
                 book_match: None,
+                subsumed_by_book_group: false,
             },
             DuplicateGroup {
                 method: METHOD_VERSION,
@@ -346,6 +348,7 @@ mod tests {
                     size: 100,
                 }],
                 book_match: Some(crate::dupes::BookMatch::TitleOnly),
+                subsumed_by_book_group: false,
             },
         ];
         insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-04T00:00:00Z")

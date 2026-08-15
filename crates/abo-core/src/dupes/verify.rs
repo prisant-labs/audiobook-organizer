@@ -256,6 +256,7 @@ mod tests {
                 },
             ],
             book_match: None,
+            subsumed_by_book_group: false,
         }];
         insert_duplicate_groups(pool, scan_id, &groups, "2026-08-06T00:00:00Z")
             .await

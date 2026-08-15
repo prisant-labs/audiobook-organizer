@@ -77,6 +77,18 @@ pub struct DuplicateGroup {
     /// [`BookMatch`] variant, so a caller cannot read "not applicable" as a
     /// weak match and count it.
     pub book_match: Option<BookMatch>,
+    /// Whether this exact file group is the SAME duplication a book group
+    /// already reports, one part at a time.
+    ///
+    /// Two copies of a twelve-part book usually carry identically named,
+    /// identically sized parts, so the exact detector finds twelve groups for
+    /// one duplicated book. Counting those beside the book group tells a user
+    /// "13 duplicate copies" for a single duplicated book, and `FD-08` makes one
+    /// book one group. The rows stay: they are true, and the complete change
+    /// list may want them. They simply stop being counted.
+    ///
+    /// Always `false` for folder groups, which subsume rather than get subsumed.
+    pub subsumed_by_book_group: bool,
 }
 
 impl DuplicateGroup {
@@ -98,11 +110,18 @@ impl DuplicateGroup {
     /// Whether this group counts as a duplicate CANDIDATE (`AC-52`), the unit
     /// the Copies card and the report count.
     ///
-    /// True for every exact basename+size group, as it always was, and now also
-    /// for a folder group whose members agree at least on the `AC-51`
-    /// fingerprint. Before `F-1110` the second half did not exist, so two copies
-    /// of a twelve-part book contributed nothing to any count a user could see.
+    /// True for an exact basename+size group, as it always was, and now also for
+    /// a folder group whose members agree at least on the `AC-51` fingerprint.
+    /// Before `F-1110` the second half did not exist, so two copies of a
+    /// twelve-part book contributed nothing to any count a user could see when
+    /// the two copies named their parts differently.
+    ///
+    /// False for an exact group a book group already subsumes, so the same
+    /// duplicated book is counted once rather than once per part.
     pub fn is_duplicate_candidate(&self) -> bool {
+        if self.subsumed_by_book_group {
+            return false;
+        }
         self.is_exact()
             || self
                 .book_match
@@ -146,6 +165,7 @@ pub fn detect_exact_duplicates(entries: &[DupeEntry]) -> Vec<DuplicateGroup> {
                 .collect(),
             // File-level: there is no book shape to compare.
             book_match: None,
+            subsumed_by_book_group: false,
         });
     }
     groups
@@ -204,6 +224,7 @@ pub fn detect_version_candidates(
                 })
                 .collect(),
             book_match: Some(match_tier(&member_ids, books)),
+            subsumed_by_book_group: false,
         });
     }
     groups
@@ -213,10 +234,100 @@ pub fn detect_version_candidates(
 /// groups first, then normalized-title version candidates. The two method
 /// families never merge (an exact-duplicate file pair and a version-candidate
 /// folder pair are separate groups with separate methods).
+///
+/// Folder groups are computed FIRST, because an exact file group that a book
+/// group already covers is marked subsumed and stops being counted. See
+/// [`mark_subsumed_exact_groups`].
 pub fn detect_duplicates(entries: &[DupeEntry], books: &[BookFolder]) -> Vec<DuplicateGroup> {
-    let mut groups = detect_exact_duplicates(entries);
-    groups.extend(detect_version_candidates(entries, books));
-    groups
+    let folders = detect_version_candidates(entries, books);
+    let mut exact = detect_exact_duplicates(entries);
+    mark_subsumed_exact_groups(&mut exact, &folders, books);
+    exact.extend(folders);
+    exact
+}
+
+/// Mark every exact file group that reports the same duplication a book group
+/// already reports.
+///
+/// # Why this is needed at all
+///
+/// Two copies of a twelve-part book normally carry identically named,
+/// identically sized parts, so `Part 01.mp3` in copy A and `Part 01.mp3` in copy
+/// B are an exact group, and so are the other eleven. Rendered over a library
+/// with one duplicated twelve-part book and one duplicated single-file book, the
+/// report read **"Move 14 duplicate copies to the Archive"** for two duplicated
+/// books. `FD-08` makes one book one group, so that is a defect, and `F-1110`
+/// makes it worse by adding a thirteenth group for the book itself. Found by
+/// rendering the report and reading it, not by a test.
+///
+/// # The rule, deliberately narrow
+///
+/// A group is subsumed only when ALL THREE hold:
+///
+/// 1. Every member is an audio file owned by some book folder.
+/// 2. The distinct owning books number at least two.
+/// 3. Those owning books are all members of ONE folder group that is a duplicate
+///    candidate.
+///
+/// Condition 2 is the discriminator, and it is deliberately "spans at least two
+/// of the duplicated copies" rather than "exactly one member per copy". A
+/// disc-split book has a `track01.mp3` on every disc, so copying it twice yields
+/// a four-member group drawn from two books; that is still the folder-level
+/// duplication restated, and the stricter form would have left it counted.
+/// Measured on the standard fixture: `Verbal Advantage` alone produces a
+/// four-copy `track01.mp3` group from ONE book.
+///
+/// A group confined to a SINGLE book is never subsumed, so a book holding the
+/// same chapter twice keeps counting on its own account. Anything the rule
+/// cannot prove stays counted, so the failure direction is a duplicate reported
+/// twice rather than a duplicate reported never.
+fn mark_subsumed_exact_groups(
+    exact: &mut [DuplicateGroup],
+    folders: &[DuplicateGroup],
+    books: &[BookFolder],
+) {
+    // Which book owns each audio file. Book folders never nest, so this is a
+    // partition and a file has at most one owner.
+    let mut owner_of: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for b in books {
+        for id in &b.audio_entry_ids {
+            owner_of.insert(*id, b.id);
+        }
+    }
+
+    // Each candidate folder group, as the set of book-folder ids it covers.
+    let covering: Vec<std::collections::HashSet<usize>> = folders
+        .iter()
+        .filter(|g| g.is_duplicate_candidate())
+        .map(|g| g.members.iter().map(|m| m.entry_id).collect())
+        .collect();
+    if covering.is_empty() {
+        return;
+    }
+
+    for g in exact.iter_mut() {
+        let mut owners = Vec::with_capacity(g.members.len());
+        let mut every_member_owned = true;
+        for m in &g.members {
+            match owner_of.get(&m.entry_id) {
+                Some(o) => owners.push(*o),
+                None => {
+                    every_member_owned = false;
+                    break;
+                }
+            }
+        }
+        if !every_member_owned {
+            continue;
+        }
+        let distinct: std::collections::HashSet<usize> = owners.iter().copied().collect();
+        // Condition 2: the group must SPAN copies. One confined to a single book
+        // is that book's own internal duplication, not the folder-level one.
+        if distinct.len() < 2 {
+            continue;
+        }
+        g.subsumed_by_book_group = covering.iter().any(|c| distinct.is_subset(c));
+    }
 }
 
 /// Build [`DupeEntry`]s from the plan builder's node view plus the F-303 merged
@@ -395,6 +506,7 @@ mod tests {
                 title_norm: "dune".to_string(),
                 audio_count: 3,
                 audio_bytes: 600,
+                audio_entry_ids: vec![101, 102, 103],
                 audio_sizes: vec![100, 200, 300],
             },
             BookFolder {
@@ -403,6 +515,7 @@ mod tests {
                 title_norm: "dune".to_string(),
                 audio_count: 3,
                 audio_bytes: 600,
+                audio_entry_ids: vec![201, 202, 203],
                 audio_sizes: vec![100, 200, 300],
             },
         ];
