@@ -55,8 +55,8 @@ recorded in the P1 status note.
 |---|---|---|---|---|
 | P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | MERGED 2026-07-31 |
 | P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | **COMPLETE.** P1a/P1b/P1d MERGED 2026-07-31; P1c MERGED 2026-08-05 (PR #11). AC-8 hand walkthrough still owed by jp |
-| P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | Not started |
-| **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **NEW 2026-08-05 per FD-44. Not started** |
+| P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15)**: BLAKE3 hashing, its persistence, a cancellable verification job, and the auto-resolve gate. `AC-13` (two-step override) and `AC-16` (throughput on real data) remain |
+| **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **IN PROGRESS.** `AC-51`, `AC-52`, `AC-53` and `AC-55` implemented as the match-tier engine; `AC-54` (content tier) is the remaining half and needs per-file hash persistence |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
 | P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | Not started |
@@ -72,7 +72,21 @@ recorded in the P1 status note.
 
 `P10` (`F-610`) is jp's request for clickable folder paths, which cannot be a link because `FD-29` gives the web layer no shell access. A narrow backend command that refuses any path outside the library and set-aside roots keeps the capability model unchanged. Inline affordances throughout the tidy-up and review surfaces, plus two permanent sidebar quick links.
 
-**Ordering note.** `F-1110` (multi-file book duplicate comparison, in the backlog) is recommended between `P2` and `P3` if it is scheduled, because `P3`'s resolution policies should be written against books rather than files. Doing it after `P3` means writing those policies twice. Not scheduled; awaiting the duplicates audit.
+**Ordering note.** `F-1110` (multi-file book duplicate comparison) sits between `P2` and `P3` per `FD-44`, because `P3`'s resolution policies should be written against books rather than files. Doing it after `P3` means writing those policies twice. Scheduled as `P2b` on 2026-08-05; unblocked 2026-08-14 when jp settled `AC-53`.
+
+### P2b status detail (2026-08-14)
+
+**What landed.** A match tier on folder duplicate groups: `TitleOnly` < `Fingerprint` < `Structural`, in `crates/abo-core/src/dupes/books.rs`, with the consumer half in `plan/query.rs` and `plan/report.rs` so a book-level duplicate is counted where a user can see it.
+
+**Three design points worth not re-deriving:**
+
+1. **F-1110 raises a tier on an existing group; it never emits one.** A fingerprint match implies a title match, so every book-level duplicate already sits inside a normalized-title version-candidate group. A second group would count the same book twice against `FD-08`. This is also what makes `AC-55` work: partitioning by fingerprint would split a one-file copy and a twelve-file copy into a group of one each, and a group of one is dropped, so they would stop grouping at all.
+2. **The population is the classifier's `book` verdict, not "folder with a parsed title".** Measured on the standard fixture: `Genre - SciFI` parses the title "SciFI", and so do series containers and staging folders.
+3. **A book folder must have no `book` ancestor.** A disc-split title classifies as `book` and so does each of its disc folders; `Verbal Advantage` alone produced five. Every book's `Disc 1` normalises to the title "disc 1", so without this rule unrelated books fingerprint-match through their disc folders.
+
+**What remains: `AC-54`, the content tier.** Hashing pairwise via `F-702` on request only. It needs per-file hash persistence, because a folder group's members are FOLDERS and `hash_member` reads a file path. Sketch: a child table keyed on the member row, mirroring `set_member_hash`'s write-one-clear-the-other invariant, with folder content identity as equal hash multisets. `group_may_auto_resolve` must stay false for folder groups regardless, since `AC-52` keeps them candidate-only; resolution opens at `P3`.
+
+**Fixtures.** The `F-1110` cases are purpose-built trees in `crates/abo-core/tests/book_dupe_detection.rs`, not additions to `standard_library_manifest`, which twelve test files and a snapshot directory read. The standard fixture contains no multi-file book copied twice; adding one is worth doing and is its own reviewable change, because it moves goldens everywhere at once.
 
 **P1 status detail (2026-07-30).** P1a (reconcile primitives), P1b-1 (per-kind outcome
 classification), P1b-2 (orchestration + journal repair), and P1b-3 (startup hook + IPC)
