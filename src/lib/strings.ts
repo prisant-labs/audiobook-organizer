@@ -4,6 +4,14 @@
 // grow this to the full copy register in docs/internal/design-system.md
 // Section 6.
 //
+// VERB AND NOUN (FD-48, superseding FD-43). The action is "organize". There is
+// no noun form: "an organize" is not English, and rather than substitute one
+// word for another this module retires the noun entirely. Where the old copy
+// needed a noun it now uses one the register already carried: "the plan" for
+// the thing being reviewed, "the changes" for what it would do, and "run" for
+// one past execution. That is why History rows read "Real run" beside "Practice
+// run" instead of naming the action at all.
+//
 // The sidebar footer line is the design-system Section 6.4 standing
 // reassurance line tagged "(nav / provenance)": "Everything stays on this
 // computer." Section 4.3's illustrative second line ("Nothing is ever
@@ -25,7 +33,7 @@ export const STRINGS = {
   // guarantee.
   firstRun: {
     heading: "Let's find your audiobooks",
-    lede: "Choose the folder where your audiobooks live. The app only reads it, then shows you what a tidy-up would do. Nothing is moved or changed until you review and approve it.",
+    lede: "Choose the folder where your audiobooks live. The app only reads it, then shows you what organizing would change. Nothing is moved or changed until you review and approve it.",
     chooseAction: "Choose your library folder",
     choosing: "Opening the folder picker...",
     reassurance: "Everything stays on this computer.",
@@ -38,15 +46,15 @@ export const STRINGS = {
   // never appear (design-system Section 6.1).
   settings: {
     heading: "Settings",
-    intro: "Where your library lives and how tidy-ups behave.",
+    intro: "Where your library lives and how organizing behaves.",
     libraryLabel: "Your library folder",
     libraryHelp: "The folder the app reads your audiobooks from.",
     libraryChange: "Change folder",
     libraryChoose: "Choose a folder",
     setAsideLabel: "Archive folder",
-    setAsideHelp: "Where duplicates and clutter are moved when you tidy up. Leave as the default to keep it beside your library.",
+    setAsideHelp: "Where duplicates and clutter are moved when you organize. Leave as the default to keep it beside your library.",
     reportsLabel: "Reports folder",
-    reportsHelp: "Where saved tidy-up reports are written. Leave as the default to keep it beside the app's data.",
+    reportsHelp: "Where saved reports are written. Leave as the default to keep it beside the app's data.",
     defaultLocation: "Default location",
     change: "Change",
     themeLabel: "Appearance",
@@ -88,7 +96,7 @@ export const STRINGS = {
         description: "Adds a genre folder on top of the author-first style, when a genre is known.",
       },
     } as const,
-    policiesHeading: "Safety and tidiness options",
+    policiesHeading: "Safety and neatness options",
     oneBookPerFolder: {
       label: "Split folders that hold more than one book",
       help: "Turns a folder holding several complete books into one folder per book.",
@@ -110,7 +118,7 @@ export const STRINGS = {
       mp3: "The MP3 copy",
     },
     emptyFolderRemoval: {
-      label: "Sweep out folders a tidy-up leaves empty",
+      label: "Sweep out folders left empty",
     },
     stripNoise: {
       label: "Clean up leftover labels in folder names",
@@ -121,7 +129,7 @@ export const STRINGS = {
     liveCountsLoading: "Recalculating...",
     saveAction: "Save",
     saveSaving: "Saving...",
-    saveSaved: "Saved. The tidy-up plan will use this the next time it's built.",
+    saveSaved: "Saved. The plan will use this the next time it's built.",
     unsavedNote: "You have changes that aren't saved yet.",
   },
 
@@ -132,11 +140,11 @@ export const STRINGS = {
   library: {
     heading: "Your library",
     worthALookHeading: "Worth a look first",
-    worthALookSubline: "a few examples of what the tidy-up would fix",
+    worthALookSubline: "a few examples of what organizing would fix",
     seriesHeading: "Series in your library",
-    seriesSubline: "the tidy-up keeps each series together",
+    seriesSubline: "organizing keeps each series together",
     scanAgain: "Scan again",
-    startTidyUp: "Start a tidy-up",
+    startOrganizing: "Start organizing",
     scanNow: "Scan your library",
     // AC-9: the FD-10 deletion-guarantee copy, verbatim. This is the exact
     // sanctioned string; do not paraphrase it here or at any call site.
@@ -164,12 +172,12 @@ export const STRINGS = {
   // every count/byte figure comes from the real generated plan
   // (`plan_generate`/`plan_get`), never a literal here (FD-27).
   review: {
-    heading: "Review the tidy-up",
-    lede: "The plan looks at every book and works out what would tidy it up. Nothing happens until you say so, and you can leave any group out.",
-    generating: "Building the tidy-up plan...",
+    heading: "Review the changes",
+    lede: "The plan looks at every book and works out where it should go. Nothing happens until you say so, and you can leave any group out.",
+    generating: "Building the plan...",
     noScan: {
       heading: "Scan your library first",
-      body: "There is nothing to review yet. Go to your library and scan it, then come back here to review a tidy-up.",
+      body: "There is nothing to review yet. Go to your library and scan it, then come back here to review the changes.",
     },
     detailEmpty: "Choose a group on the left to see what it would change.",
     detailNoOps: "There is nothing to show for this group this time.",
@@ -193,15 +201,15 @@ export const STRINGS = {
     // Design-system Section 4.13/6.4 standing footer reassurance line
     // (distinct from the library home's full FD-10 guarantee enumeration).
     footerReassurance: "Nothing is deleted. Every change can be undone.",
-    tidyUpNow: "Tidy up now",
-    confirmPrompt: "Ready to tidy up the included groups?",
+    organizeNow: "Organize now",
+    confirmPrompt: "Ready to organize the included groups?",
     confirmGoAhead: "Go ahead",
     confirmNotYet: "Not yet",
     // Applying is v0.5.0 (acting); the confirm affordance is real but honest
     // about what it cannot do yet, never a fake success.
     confirmNotAvailable:
-      "Applying a tidy-up isn't available in this version yet - that arrives in a later update. For now you can review the plan, include or leave out groups, and look at the file details.",
-    allExcludedNote: "Turn on at least one group to tidy up.",
+      "Organizing isn't available in this version yet - that arrives in a later update. For now you can review the plan, include or leave out groups, and look at the file details.",
+    allExcludedNote: "Turn on at least one group to organize.",
   },
 
   // Apply / activity surface (F-904, v0.5.0 Phase 8, design-system Section 4.16
@@ -212,7 +220,7 @@ export const STRINGS = {
   // FD-10 canon string: pulled from library.reassurance at render time (AC-30).
   apply: {
     // Heading while running (dry-run mode adds the badge below separately).
-    heading: "Tidying up your books",
+    heading: "Organizing your books",
     // Sub-line shown while a REAL walk is running (it moves books for real).
     subline: "Moving books to their new folders. This may take a little while.",
     // Sub-line shown while a REHEARSAL (dry-run) is running: a rehearsal moves
@@ -240,37 +248,37 @@ export const STRINGS = {
     // Paused state: shown instead of the sub-line when the job is paused.
     pausedHeading: "Paused between books",
     pausedBody:
-      "The tidy-up is waiting at a safe stopping point. Your books are exactly where they were when you paused.",
+      "The run is waiting at a safe stopping point. Your books are exactly where they were when you paused.",
     // Stopped state: cooperative Stop, not an error (AC-26).
     stoppedHeading: "Stopped between books",
     // Real-apply stopped body: some books really did move to their new places.
     stoppedBody:
-      "The tidy-up was stopped at a safe point. The books that have already been moved are in their new places. Nothing was lost or damaged.",
+      "The run was stopped at a safe point. The books that have already been moved are in their new places. Nothing was lost or damaged.",
     // Rehearsal stopped body (Critical 1): a rehearsal moved nothing, so it never
     // claims books are "in their new places".
     rehearsalStoppedBody:
       "The rehearsal was stopped at a safe point. No books were moved - this was only a rehearsal. Nothing was lost or damaged.",
     // Completed state (no block).
-    completedHeading: "Tidy-up complete",
-    completedBody: "All the included books have been tidied up.",
+    completedHeading: "Organizing complete",
+    completedBody: "All the included books have been organized.",
     // Completed with undo file saved note.
     undoSaved: "Your undo file has been saved. You can put everything back from the History screen.",
     // Completed-but-blocked state (F-604, AC-20, AC-29).
-    blockedHeading: "Tidy-up complete - needs a look",
+    blockedHeading: "Organizing complete - needs a look",
     blockedBody:
-      "The books have been moved, but the after-the-fact check found something that needs your attention before the next tidy-up can run. Everything is safe.",
+      "The books have been moved, but the after-the-fact check found something that needs your attention before the next run can start. Everything is safe.",
     // How many differences the after-the-fact check found (IMPORTANT 5): the
     // blocked state names the specifics instead of an unexplained "Got it".
     blockedCountLine: (count: number) =>
       count === 1
-        ? "The check found 1 thing to look at before the next tidy-up."
-        : `The check found ${count.toLocaleString("en-US")} things to look at before the next tidy-up.`,
+        ? "The check found 1 thing to look at before the next run."
+        : `The check found ${count.toLocaleString("en-US")} things to look at before the next run.`,
     // The technical pointer to the saved check report (FD-13): named behind
     // "Show file details", never on the family-facing line.
     blockedReportPointer:
       'The full check details are saved as "after-the-fact-check.md" in your Reports folder.',
     // Failed state (FD-04, AC-29): plain language, what happened / what is safe / what to do next.
-    failedHeading: "Something stopped the tidy-up",
+    failedHeading: "Something stopped the run",
     // What is safe (always true for all failure modes - no audiobook is ever deleted mid-op).
     failedSafeNote:
       "Your books are safe. No book was moved only partway - every change either completed or was left as it was.",
@@ -291,7 +299,7 @@ export const STRINGS = {
     // Dry-run framing (never presented as real moves).
     rehearsalCompletedHeading: "Rehearsal complete",
     rehearsalCompletedBody:
-      "This was a rehearsal - no books were actually moved. Everything looks good. Run it for real from the tidy-up screen whenever you're ready.",
+      "This was a rehearsal - no books were actually moved. Everything looks good. Run it for real from the Organize screen whenever you're ready.",
   },
 
   // Error / empty / loading states (F-908, v0.4.0 Phase 7, design-system
@@ -322,7 +330,7 @@ export const STRINGS = {
     // Stop does (it never claims to cancel work mid-file - there is no file
     // work to cancel while planning).
     buildingThePlan: {
-      heading: "Building the tidy-up plan",
+      heading: "Building the plan",
       subline: "Working out the safest set of changes.",
       stop: "Stop",
     },
@@ -333,23 +341,27 @@ export const STRINGS = {
     },
   },
 
-  // History (v0.6.0): the record of past tidy-ups and the way back from each.
+  // History (v0.6.0): the record of past runs and the way back from each.
   //
   // Copy register notes. "Put these books back" rather than "roll back" or
   // "prepare the inverse plan" (design-system Section 6; the vocabulary rule
   // forbids the engineering terms on any surface a user reads). Practice runs
   // are named "practice run", never "dry run", matching the rehearsal wording
-  // the tidy-up surface already uses.
+  // the Organize surface already uses.
+  //
+  // FD-48 note: the row label for a real execution is "Real run", pairing with
+  // "Practice run". The action has no noun form, so a row is named by what kind
+  // of run it was rather than by naming the action twice.
   history: {
     heading: "History",
-    lede: "Every tidy-up you have run, and how to put things back.",
-    // Honest pre-first-run state: no tidy-up has ever been run.
-    emptyHeading: "No tidy-ups yet",
+    lede: "Every time you have organized, and how to put things back.",
+    // Honest pre-first-run state: nothing has ever been organized.
+    emptyHeading: "Nothing organized yet",
     emptyBody:
-      "Once you tidy up your library, every run shows up here - with a way to put things back.",
+      "Once you organize your library, every run shows up here - with a way to put things back.",
     // Row labels.
     practiceRun: "Practice run",
-    realRun: "Tidy-up",
+    realRun: "Real run",
     // A practice run changed nothing, so the count would be misleading.
     practiceRunNote: "A practice run. Nothing was moved.",
     changesMade: (n: number) => (n === 1 ? "1 book moved" : `${n} books moved`),
@@ -360,9 +372,9 @@ export const STRINGS = {
     nothingToPutBack: "Nothing to put back.",
     needsALook: "This one needs a look before anything can be put back.",
     needsALookDetail:
-      "The app could not tell for certain what happened to one of your books, so it will not move anything automatically. Open the tidy-up to see the details.",
+      "The app could not tell for certain what happened to one of your books, so it will not move anything automatically. Open the run to see the details.",
     // What pressing an undo does: it builds a plan you review first, exactly
-    // like a forward tidy-up. Nothing moves on the strength of this button.
+    // like organizing forward. Nothing moves on the strength of this button.
     undoIsReviewedFirst: "You will see exactly what moves back before anything happens.",
     preparing: "Getting the undo ready...",
     // States of a past run, in plain language.
@@ -375,8 +387,8 @@ export const STRINGS = {
   },
 
   // The interruption recovery surface (v0.6.0 P1c, F-606 interruption safety).
-  // Shown when a prior session was killed mid-tidy-up and the startup
-  // reconciler repaired the record before the app opened.
+  // Shown when a prior session was killed mid-run and the startup reconciler
+  // repaired the record before the app opened.
   //
   // Copy register notes. "Stopped early" rather than "crashed" or "aborted",
   // matching history.state.failed; "practice run" never "dry run", matching
@@ -394,20 +406,20 @@ export const STRINGS = {
       "Your computer stopped before the practice run finished. Nothing in your library was touched: a practice run only shows you what would happen.",
     practiceAction: "Back to your library",
 
-    // State 2: a real tidy-up stopped early, and the app confirmed where it
-    // got to before it stopped.
-    stoppedHeading: "The tidy-up stopped early",
+    // State 2: a real run stopped early, and the app confirmed where it got to
+    // before it stopped.
+    stoppedHeading: "The run stopped early",
     stoppedBody:
       "Your computer stopped partway through. Nothing was left half-done, and every book that was moved is safe.",
     booksMoved: (n: number) => (n === 1 ? "1 book was moved" : `${n} books were moved`),
     nothingMoved: "No books had been moved yet.",
-    carryOn: "Carry on tidying up",
+    carryOn: "Carry on organizing",
     carryOnNote:
-      "The app takes a fresh look at your library first, so books that were already tidied stay where they are.",
+      "The app takes a fresh look at your library first, so books that were already moved stay where they are.",
 
-    // State 3: a real tidy-up stopped early and one step could not be
-    // confirmed, so carrying on is not offered.
-    ambiguousHeading: "The tidy-up stopped early, and one book needs a look",
+    // State 3: a real run stopped early and one step could not be confirmed, so
+    // carrying on is not offered.
+    ambiguousHeading: "The run stopped early, and one book needs a look",
     ambiguousBody:
       "The app could not tell for certain what happened to one book when it stopped, so it will not carry on by itself.",
     openHistory: "Open History",

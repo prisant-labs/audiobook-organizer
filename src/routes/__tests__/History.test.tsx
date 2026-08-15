@@ -37,13 +37,13 @@ beforeEach(() => {
 });
 
 describe("History", () => {
-  it("shows the honest empty state before any tidy-up has run", async () => {
+  it("shows the honest empty state before anything has been organized", async () => {
     historyList.mockResolvedValue({ status: "ok", data: [] });
     render(<History onOpenPlan={vi.fn()} />);
     expect(await screen.findByText(S.emptyHeading)).toBeInTheDocument();
   });
 
-  it("offers the whole-run undo for a completed real tidy-up", async () => {
+  it("offers the whole-run undo for a completed real run", async () => {
     historyList.mockResolvedValue({ status: "ok", data: [entry()] });
     render(<History onOpenPlan={vi.fn()} />);
 

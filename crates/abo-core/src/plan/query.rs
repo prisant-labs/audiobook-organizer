@@ -228,7 +228,7 @@ fn group_reason(group: CampaignGroup) -> &'static str {
         }
         CampaignGroup::LooseBooks => {
             "These audiobooks are sitting as single files instead of their own folder. Each one \
-             moves into a tidy folder named for its author and title."
+             moves into its own folder, named for its author and title."
         }
         CampaignGroup::MessyNames => {
             "These folder names carry leftover labels from wherever they came from, like \
@@ -724,6 +724,13 @@ mod tests {
                     ("aside", "FD-42", "Archive"),
                     ("shelf", "FD-47", "library"),
                     ("shelves", "FD-47", "library"),
+                    // The verb form the noun-only list missed: "shelved"
+                    // contains neither "shelf" nor "shelves".
+                    ("shelved", "FD-47", "library"),
+                    // FD-48 retired the whole family for "organize". A
+                    // substring match covers tidy, tidying, tidied and
+                    // tidy-up in one, and no other word contains "tidy".
+                    ("tidy", "FD-48", "organize"),
                 ] {
                     assert!(
                         !text.contains(word),

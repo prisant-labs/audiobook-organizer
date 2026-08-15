@@ -915,8 +915,8 @@ fn push_guarantees(h: &mut String) {
     h.push_str("<ul class=\"plain\">\n");
     h.push_str("<li>Duplicate copies would move to the Archive folder beside the library, where they stay until you empty it yourself.</li>\n");
     h.push_str("<li>No file contents are edited. Books are moved and folders renamed; the audio inside is untouched.</li>\n");
-    h.push_str("<li>An undo record is written as changes happen, so the whole tidy-up can be reversed.</li>\n");
-    h.push_str("<li>Nothing leaves this computer. The dry run, this report, and the tidy-up itself all run locally.</li>\n");
+    h.push_str("<li>An undo record is written as changes happen, so the whole run can be reversed.</li>\n");
+    h.push_str("<li>Nothing leaves this computer. The dry run, this report, and the changes themselves all happen locally.</li>\n");
     h.push_str("</ul>\n");
 }
 
@@ -1689,6 +1689,13 @@ mod tests {
             ("aside", "FD-42", "Archive"),
             ("shelf", "FD-47", "library"),
             ("shelves", "FD-47", "library"),
+            // The verb form the noun-only list missed: "shelved" contains
+            // neither "shelf" nor "shelves", so it was unswept here.
+            ("shelved", "FD-47", "library"),
+            // FD-48 retired the whole family for "organize". A substring match
+            // is right here: it covers tidy, tidying, tidied and tidy-up in
+            // one, and no other English word contains "tidy".
+            ("tidy", "FD-48", "organize"),
         ] {
             assert!(
                 !html.contains(word),

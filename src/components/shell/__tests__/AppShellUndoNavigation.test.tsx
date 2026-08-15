@@ -8,7 +8,7 @@ import { STRINGS } from "@/lib/strings";
 // Regression coverage for the adversarial-review finding that `openPlanId` was
 // never cleared. Once History prepared an undo, the id stayed set on the shell
 // forever: `usePlanReview` prefers it over the scan on EVERY run, so navigating
-// away and back to Tidy-up reopened the undo, and "build the plan again" rebuilt
+// away and back to Organize reopened the undo, and "build the plan again" rebuilt
 // the undo rather than a forward plan. The user could not return to forward
 // planning without restarting the app.
 //
@@ -28,7 +28,7 @@ vi.mock("../../../lib/bindings", () => ({
     dbStatus: vi.fn().mockResolvedValue({ recovered: false, backup_path: null }),
     scanStart: vi.fn(),
     scanEntries: vi.fn(),
-    // A completed scan, so the Tidy-up route has a scan_id and builds a FORWARD
+    // A completed scan, so the Organize route has a scan_id and builds a FORWARD
     // plan (the behaviour these tests check the shell can return to).
     classifyOverview: vi.fn().mockResolvedValue({
       status: "ok",
@@ -134,18 +134,18 @@ describe("undo plan navigation lifecycle", () => {
     planGenerate.mockClear();
     planGet.mockClear();
 
-    // Leave Tidy-up and come back the ordinary way.
+    // Leave Organize and come back the ordinary way.
     await goTo("Library");
-    await goTo("Tidy-up");
+    await goTo("Organize");
 
     await waitFor(() => expect(planGenerate).toHaveBeenCalled());
     expect(planGet).not.toHaveBeenCalled();
   });
 
-  it("does not open an undo plan when Tidy-up is reached by normal navigation", async () => {
+  it("does not open an undo plan when Organize is reached by normal navigation", async () => {
     render(<AppShell settings={SETTINGS} onUpdate={vi.fn()} />);
 
-    await goTo("Tidy-up");
+    await goTo("Organize");
 
     await waitFor(() => expect(planGenerate).toHaveBeenCalled());
     expect(planGet).not.toHaveBeenCalled();

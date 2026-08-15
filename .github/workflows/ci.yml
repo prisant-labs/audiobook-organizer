@@ -90,7 +90,14 @@ jobs:
           set -eu
           # NOT just the adjacent form: `set[- ]aside` missed "Set it aside" and
           # "sets the copy aside", both of which were live in shipped copy.
-          retired='set(s|ting)?[^.!?]{0,24}aside|\bshelf\b|\bshelves\b'
+          #
+          # Inflections matter as much as base forms. `shelved` was live in the
+          # shipped good-news line while a noun-only pattern passed, and FD-48
+          # retired a whole verb family ("tidy up", "tidying", "tidied",
+          # "tidy-up"), so a pattern matching only "tidy up" would have left most
+          # of them standing. A hyphen is a word boundary, so \btidy\b covers
+          # "tidy-up" without a separate alternative.
+          retired='set(s|ting)?[^.!?]{0,24}aside|\bshel(f|ves|ved|ving)\b|\btid(y|ies|ied|ying)\b'
           bad=0
           for f in PRODUCT.md CLAUDE.md AGENTS.md; do
             if [ ! -r "$f" ]; then

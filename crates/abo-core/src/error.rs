@@ -211,7 +211,7 @@ pub enum AppError {
     /// Wraps a database, filesystem-read, or not-found failure from
     /// [`crate::plan::report::build_and_persist_plan`] into one family-safe
     /// code; `detail` is developer-facing.
-    #[error("the tidy-up plan could not be built: {detail}")]
+    #[error("the plan could not be built: {detail}")]
     PlanGenerationFailed { detail: String },
 
     /// A plan query or approval command named a `plan_id` that does not exist
@@ -254,7 +254,7 @@ pub enum AppError {
     /// A second apply was started while one is already running. The single-writer
     /// lock (a running apply `jobs` row plus an in-process guard, AC-8) refuses the
     /// second start immediately so two apply runs never touch the library at once.
-    #[error("a tidy-up is already running")]
+    #[error("a run is already in progress")]
     JobAlreadyRunning,
 
     /// A cross-volume move copied the file, then the copy's size did not match the
@@ -298,7 +298,7 @@ pub enum AppError {
     /// generically) is the plain-language form of the P2 safety semantic that a
     /// dry-run manifest refuses to reverse. Also raised when a tidy-up recorded a
     /// change kind that cannot be reversed (honest rather than a false undo offer).
-    #[error("this tidy-up was a rehearsal, so there is nothing to undo")]
+    #[error("this was a rehearsal, so there is nothing to undo")]
     RollbackNotReversible,
 
     /// A partial undo selected changes that are not a single unbroken run of the most
@@ -335,7 +335,7 @@ pub enum AppError {
     /// acknowledged yet. Forward tidying is paused until a human acknowledges it
     /// (AC-20). This gate is FORWARD-only: preparing or running an UNDO is never
     /// refused this way, because undo is the remedy for such a difference.
-    #[error("further tidy-ups are paused until the after-the-fact check is acknowledged")]
+    #[error("further runs are paused until the after-the-fact check is acknowledged")]
     TidyingBlocked,
 
     // ---- Apply control family (v0.5.0 Phase 7: F-608 pause/resume) ----
@@ -346,13 +346,13 @@ pub enum AppError {
     // returns a boolean, like the scan Stop), so it has no error variant here.
     /// `job_pause` was asked to pause, but no tidy-up is in progress to pause
     /// (it already finished, was never started, or the id is unknown).
-    #[error("there is no tidy-up in progress to pause")]
+    #[error("there is nothing in progress to pause")]
     NothingToPause,
 
     /// `job_resume` was asked to resume, but the tidy-up is not paused (it is
     /// running normally, already finished, or the id is unknown), so there is
     /// nothing to resume.
-    #[error("there is no paused tidy-up to resume")]
+    #[error("there is no paused run to resume")]
     NothingToResume,
 
     // ---- Interruption safety family (v0.6.0 Phase 1: F-606 reconcile) ----
@@ -362,7 +362,7 @@ pub enum AppError {
     /// from [`JournalWriteFailed`](AppError::JournalWriteFailed), the write-side
     /// journal-before-act hard stop: this is a read failure while recovering from
     /// an interruption at startup.
-    #[error("could not check whether the last tidy-up was interrupted: {detail}")]
+    #[error("could not check whether the last run was interrupted: {detail}")]
     ReconcileFailed { detail: String },
 
     // ---- History family (v0.6.0: the record of past tidy-ups) ----
@@ -371,7 +371,7 @@ pub enum AppError {
     /// A read-only failure: it means the record could not be SHOWN, never that a
     /// past tidy-up or its undo file was lost - both live outside this read, and
     /// the undo file is self-contained by design (AC-11).
-    #[error("could not read the record of past tidy-ups: {detail}")]
+    #[error("could not read the record of past runs: {detail}")]
     HistoryUnavailable { detail: String },
 }
 
@@ -548,22 +548,22 @@ impl AppError {
             }
             // Plan review family
             AppError::PlanGenerationFailed { .. } => {
-                "The tidy-up plan could not be built. Scan the library again and try building \
+                "The plan could not be built. Scan the library again and try building \
                  the plan once more. If this keeps happening, the disk may be full or the app \
                  data folder may be on a synced location (OneDrive); free space or move the app \
                  data out of the synced folder."
             }
             AppError::PlanNotFound { .. } => {
-                "This tidy-up plan could not be found; it may have been built in an earlier \
+                "This plan could not be found; it may have been built in an earlier \
                  session. Build a new plan from the current scan and review that instead."
             }
             // Apply family
             AppError::ApplyNotSupported => {
                 "Making changes for real is not available in this version yet. You can preview \
-                 what a tidy-up would do; making changes for real arrives in a later version."
+                 what organizing would change; making changes for real arrives in a later version."
             }
             AppError::ApplyFailed { .. } => {
-                "The app could not record this tidy-up run. Try again. If this keeps happening, \
+                "The app could not record this run. Try again. If this keeps happening, \
                  the disk may be full or the app data folder may be on a synced location \
                  (OneDrive); free space or move the app data out of the synced folder."
             }
@@ -575,40 +575,41 @@ impl AppError {
             }
             // Apply execution family
             AppError::JobAlreadyRunning => {
-                "A tidy-up is already in progress. Wait for it to finish, then start the next one. \
-                 Only one tidy-up runs at a time so your library is never changed twice at once."
+                "Organizing is already in progress. Wait for it to finish, then start the next \
+                 one. Only one run happens at a time so your library is never changed twice at \
+                 once."
             }
             AppError::CopyVerifyMismatch { .. } => {
                 "A file had to be copied to another drive, but the copy did not match the \
                  original, so the change was stopped and your original file was left exactly where \
-                 it was. Check the target drive for errors, then try the tidy-up again."
+                 it was. Check the target drive for errors, then try again."
             }
             AppError::SourceVanished { .. } => {
-                "A file or folder this tidy-up was going to change is no longer where it was, so \
-                 the tidy-up stopped safely. Scan your library again to refresh it, then review \
-                 and run the tidy-up once more."
+                "A file or folder this run was going to change is no longer where it was, so \
+                 the run stopped safely. Scan your library again to refresh it, then review \
+                 and organize once more."
             }
             AppError::TargetAppeared { .. } => {
                 "Something already exists where a change was going to land, so it was left alone \
-                 and the tidy-up stopped without overwriting anything. Scan your library again to \
-                 refresh it, then review and run the tidy-up once more."
+                 and the run stopped without overwriting anything. Scan your library again to \
+                 refresh it, then review and organize once more."
             }
             AppError::AccessDenied { .. } => {
                 "Windows would not let the app change an item, even after a second try, so the \
-                 tidy-up stopped there. Close any program that may be using that file or folder, \
-                 or grant the app permission to it, then try the tidy-up again."
+                 run stopped there. Close any program that may be using that file or folder, \
+                 or grant the app permission to it, then try again."
             }
             // Undo family
             AppError::RollbackNotReversible => {
-                "That tidy-up was a rehearsal, so nothing was actually moved and there is nothing \
-                 to undo. Run a real tidy-up first if you want changes you can undo."
+                "That was a rehearsal, so nothing was actually moved and there is nothing \
+                 to undo. Do a real run first if you want changes you can undo."
             }
             AppError::RollbackSelectionNotContiguous => {
                 "An undo can only take back the most recent changes, in order. Choose an unbroken \
                  run of the latest changes to undo, without skipping any in the middle."
             }
             AppError::RollbackPrepareFailed { .. } => {
-                "The undo could not be prepared. The undo file may be missing or the tidy-up it \
+                "The undo could not be prepared. The undo file may be missing or the run it \
                  refers to may be gone. Scan your library again, then build and review a fresh \
                  plan instead."
             }
@@ -618,29 +619,29 @@ impl AppError {
             }
             // Post-apply check family
             AppError::TidyingBlocked => {
-                "The last tidy-up's after-the-fact check found a difference that needs a look \
+                "The last run's after-the-fact check found a difference that needs a look \
                  before more changes are made. Review the after-the-fact check and acknowledge it; \
-                 undoing the last tidy-up is still available. Once acknowledged, tidy-ups resume."
+                 undoing the last run is still available. Once acknowledged, runs resume."
             }
             // Apply control family
             AppError::NothingToPause => {
-                "There is no tidy-up in progress to pause. Start a tidy-up first; you can pause it \
+                "There is nothing in progress to pause. Start organizing first; you can pause it \
                  between books while it runs."
             }
             AppError::NothingToResume => {
-                "This tidy-up is not paused, so there is nothing to resume. If a tidy-up is \
+                "This run is not paused, so there is nothing to resume. If a run is \
                  paused, use Resume to continue it between books."
             }
             // Interruption safety family
             AppError::ReconcileFailed { .. } => {
-                "The app could not check whether the last tidy-up was interrupted. Restart the \
+                "The app could not check whether the last run was interrupted. Restart the \
                  app and try again. If this keeps happening, the disk may be full or the app \
                  data folder may be on a synced location (OneDrive); free space or move the app \
                  data out of the synced folder."
             }
             // History family
             AppError::HistoryUnavailable { .. } => {
-                "The app could not read the record of your past tidy-ups. Your books and your                  undo files are untouched - only the app's own notes could not be read. Restart                  the app and try again."
+                "The app could not read the record of your past runs. Your books and your                  undo files are untouched - only the app's own notes could not be read. Restart                  the app and try again."
             }
         }
     }
@@ -809,6 +810,13 @@ mod tests {
                 ("aside", "FD-42", "Archive"),
                 ("shelf", "FD-47", "library"),
                 ("shelves", "FD-47", "library"),
+                // The verb form the noun-only list missed: "shelved" contains
+                // neither "shelf" nor "shelves", so it was unswept here.
+                ("shelved", "FD-47", "library"),
+                // FD-48 retired the whole family for "organize". A substring
+                // match is right here: it covers tidy, tidying, tidied and
+                // tidy-up in one, and no other English word contains "tidy".
+                ("tidy", "FD-48", "organize"),
             ] {
                 assert!(
                     !text.contains(word),
