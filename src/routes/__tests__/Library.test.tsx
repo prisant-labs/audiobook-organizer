@@ -110,10 +110,10 @@ describe("Library", () => {
   it("presents exactly one primary action alongside the secondary scan-again control (AC-6)", () => {
     const { container } = render(<Library onNavigate={vi.fn()} health={health(OVERVIEW)} />);
 
-    expect(screen.getByRole("button", { name: "Start a tidy-up" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start organizing" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Scan again" })).toBeInTheDocument();
     // "One calm primary action per screen" (design-system Section 1.1/7): only
-    // "Start a tidy-up" carries the primary button treatment.
+    // "Start organizing" carries the primary button treatment.
     expect(container.querySelectorAll("button.bg-primary")).toHaveLength(1);
   });
 
@@ -122,13 +122,13 @@ describe("Library", () => {
     expect(container.querySelector(".stat-band, .hero-metric, .kpi-tile")).toBeNull();
   });
 
-  it("routes to Tidy-up when 'Start a tidy-up' is clicked", async () => {
+  it("routes to Organize when 'Start organizing' is clicked", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
     render(<Library onNavigate={onNavigate} health={health(OVERVIEW)} />);
 
-    await user.click(screen.getByRole("button", { name: "Start a tidy-up" }));
-    expect(onNavigate).toHaveBeenCalledWith("tidy-up");
+    await user.click(screen.getByRole("button", { name: "Start organizing" }));
+    expect(onNavigate).toHaveBeenCalledWith("organize");
   });
 
   it("surfaces a retry control when the overview failed to load, and retry calls reload()", async () => {

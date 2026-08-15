@@ -43,7 +43,7 @@ describe("navCountsFrom", () => {
 
 describe("badgeForRoute", () => {
   it("renders no badge for library/settings regardless of counts", () => {
-    const counts = { duplicateGroups: 403, historyCount: 12, tidyUpStatus: "ready" };
+    const counts = { duplicateGroups: 403, historyCount: 12, organizeStatus: "ready" };
     expect(badgeForRoute("library", counts)).toBeUndefined();
     expect(badgeForRoute("settings", counts)).toBeUndefined();
   });

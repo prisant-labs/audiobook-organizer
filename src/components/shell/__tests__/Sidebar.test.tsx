@@ -11,7 +11,7 @@ describe("Sidebar", () => {
     render(<Sidebar active="library" onNavigate={vi.fn()} counts={{}} />);
     const items = screen.getAllByRole("button").map((b) => b.textContent);
     expect(items[0]).toContain("Library");
-    expect(items[1]).toContain("Tidy-up");
+    expect(items[1]).toContain("Organize");
     expect(items[2]).toContain("Duplicates");
     expect(items[3]).toContain("History");
     expect(items[4]).toContain("Settings");
