@@ -9,17 +9,30 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- The interruption recovery surface (`P1c`): after a tidy-up is cut short, the app
+- The interruption recovery surface (`P1c`): after a run is cut short, the app
   now says so on next launch instead of recovering in silence. Three states from one
-  reconciler result: an interrupted practice run (nothing on the shelves was touched),
+  reconciler result: an interrupted practice run (nothing in the library was touched),
   a real run stopped early with a verified outcome (carry on, or put the changes back),
   and one whose last step could not be confirmed (carrying on is not offered). The
   surface renders the engine's own answers and derives none of them.
+- `F-606` (interruption safety): after a process kill mid-run, startup finds the
+  single in-doubt operation, verifies what actually happened on disk, repairs the
+  journal with the terminal record the kill prevented, and reports what can be done
+  next. Reads the filesystem; never mutates it.
+- History screen and its engine read model: every past run, what it changed, and
+  the one honest action available for it. Undo is prepared as a reviewable plan, not
+  executed by a button.
+- `history_list` command; `AppError::HistoryUnavailable` with family-safe copy.
+- Kill-process recovery tests: a feature-gated binary runs a real apply against a
+  real temp library and then calls `abort()` mid-operation, so recovery is proven
+  against a genuinely killed process rather than a hand-built journal state. Covers
+  intent-then-kill (the source is still in place) and act-then-kill (the rename
+  landed, so the journal is repaired as done, not failed).
 - `docs/internal/backlog/`: deferred, raised, and answered, with a README stating that
   nothing leaves the backlog by being forgotten. Created because "I will add it to the
   backlog" had been said when there was nowhere to add it.
 - `F-609` (library freshness): the age of the current scan on the library screen, five
-  explicit scan triggers, and a cheap change check when entering the tidy-up flow that
+  explicit scan triggers, and a cheap change check when entering the Organize flow that
   summarises what moved before the plan is built. Event-triggered by design; the app
   never watches the filesystem.
 - `F-610` (open a folder in the OS file manager): a backend command that opens Explorer
@@ -40,40 +53,45 @@ and this project follows [Semantic Versioning](https://semver.org/).
   "Audiobook Archive". Two names for two contexts: short enough for a button inside an
   app that is entirely about audiobooks, and self-explanatory as a directory sitting
   beside your library with no app running. "Backup" was considered and rejected: it
-  implies the original is still on your shelf and this is a spare, which invites
+  implies the original is still in your library and this is a spare, which invites
   deleting the one folder that makes undo possible.
+- **The action is "organize", and the noun is retired rather than replaced** (`FD-48`,
+  superseding `FD-43`). Measured before it was decided: in the shipped copy the noun
+  outnumbered the verb roughly three to one, so a straight swap would have broken most
+  strings, not one. Where copy needs a noun it now uses one the register already
+  carried: "the plan" for what is being reviewed, "the changes" for what it would do,
+  and "run" for one past execution, so History rows read "Real run" beside "Practice
+  run". Engineering identifiers do not move; renaming those is a migration, not a copy
+  change.
 - `keep-higher-bitrate` is cut from v1 (`F-1108`). Not because bitrate cannot be read,
   but because file size already tells you the same thing for free: for the same book, a
   higher-bitrate copy is a larger file.
+- README states plainly which parts of the app work today and which are aspiration.
+  Real changes remain unreachable from the UI by design.
+- The project is now a public, MIT-licensed repository (`FD-38`). It was republished as
+  a new repository from clean history rather than switching visibility, because
+  server-side pull-request refs on the original could not be rewritten. That original
+  was deleted on 2026-08-02 once a verified local backup existed, which removed the
+  last server-side copy of those refs.
+- Documentation reconciled with that change: the governance docs no longer tell an
+  agent it may self-merge, and a SECURITY.md records the disclosure path along with
+  the four known safety gaps.
+- Dependencies updated across the Rust, JavaScript, and GitHub Actions groups.
+  TypeScript is held on 6.x: typescript-eslint 8.x refuses to run against TypeScript 7
+  and exits rather than degrading, which takes the whole lint gate down while every
+  other check still passes. The constraint and its removal condition are recorded in
+  `.github/dependabot.yml`.
 
 ### Fixed
 
-- A tidy-up no longer halts partway through on an ordinary multi-book folder. The
+- A run no longer halts partway through on an ordinary multi-book folder. The
   planner decided a folder had been emptied by counting only its audio files, so once
   leftovers began being kept, it would ask to remove a folder that still had one in it.
   The executor refuses that and stops the run, after earlier moves have already been
   applied. Found by an adversarial review before release; the planner now checks every
   child and keeps the folder whenever it cannot prove otherwise.
-
-
-- F-606 (interruption safety): after a process kill mid-tidy-up, startup finds the
-  single in-doubt operation, verifies what actually happened on disk, repairs the
-  journal with the terminal record the kill prevented, and reports what can be done
-  next. Reads the filesystem; never mutates it.
-- History screen and its engine read model: every past tidy-up, what it changed, and
-  the one honest action available for it. Undo is prepared as a reviewable plan, not
-  executed by a button.
-- `history_list` command; `AppError::HistoryUnavailable` with family-safe copy.
-- Kill-process recovery tests: a feature-gated binary runs a real apply against a
-  real temp library and then calls `abort()` mid-operation, so recovery is proven
-  against a genuinely killed process rather than a hand-built journal state. Covers
-  intent-then-kill (the source is still in place) and act-then-kill (the rename
-  landed, so the journal is repaired as done, not failed).
-
-### Fixed
-
 - Startup reconciliation was mode-blind: it probed the real library to classify
-  interrupted jobs without checking whether the job was a real tidy-up or a practice
+  interrupted jobs without checking whether the job was a real run or a practice
   run. Since the UI pins practice runs, this affected every interruption in practice
   and could offer a recovery with no connection to the run that was lost. Now gated on
   the recorded mode, failing closed when the mode is unreadable or when more than one
@@ -97,24 +115,6 @@ and this project follows [Semantic Versioning](https://semver.org/).
   reopened the undo and "build the plan again" rebuilt the undo rather than a fresh
   forward plan.
 
-### Changed
-
-- README states plainly which parts of the app work today and which are aspiration.
-  Real changes remain unreachable from the UI by design.
-- The project is now a public, MIT-licensed repository (FD-38). It was republished as
-  a new repository from clean history rather than switching visibility, because
-  server-side pull-request refs on the original could not be rewritten. That original
-  was deleted on 2026-08-02 once a verified local backup existed, which removed the
-  last server-side copy of those refs.
-- Documentation reconciled with that change: the governance docs no longer tell an
-  agent it may self-merge, and a SECURITY.md records the disclosure path along with
-  the four known safety gaps.
-- Dependencies updated across the Rust, JavaScript, and GitHub Actions groups.
-  TypeScript is held on 6.x: typescript-eslint 8.x refuses to run against TypeScript 7
-  and exits rather than degrading, which takes the whole lint gate down while every
-  other check still passes. The constraint and its removal condition are recorded in
-  `.github/dependabot.yml`.
-
 ## [0.5.0] - unreleased
 
 ### Added
@@ -124,10 +124,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - F-602 (journal + undo manifest): append-only journal-before-act per operation;
   JSON manifest exported to Reports so recovery never depends on a healthy database.
 - F-603 (rollback): full or partial undo from a manifest, run through the same
-  validate and apply pipeline as a forward tidy-up.
+  validate and apply pipeline as a forward run.
 - F-604 (post-apply verification): verifies moved trees, refreshes snapshot, and
   blocks further campaign groups until any discrepancy is acknowledged.
-- F-605 (set-aside / quarantine): move-not-delete holding area outside the library
+- F-605 (Archive / quarantine): move-not-delete holding area outside the library
   root, preserving relative paths and provenance; no audio file is ever deleted.
 - F-607 (dry-run harness): identical executor code path running against an
   in-memory filesystem (MemFs) instead of RealFs.
@@ -144,8 +144,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - F-901 (app shell + navigation): sidebar navigation, Day/Evening themes, and
   command palette; replaces the throwaway v0.1.0 tracer-bullet UI.
-- F-902 (library home): cover-forward shelf rendering health facts inside sentences;
-  no stat bands or hero metrics.
+- F-902 (library home): cover-forward library rendering with health facts inside
+  sentences; no stat bands or hero metrics.
 - F-903 (plan preview surface): hosts campaign group review, search, and
   explainability per change.
 - F-502 (campaign group review): approve, reject, or defer per campaign group;
@@ -154,7 +154,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - F-504 (explainability): every change shows matched pattern, rationale, and
   confidence tier.
 - F-906 (settings + ruleset editor): ruleset CRUD with live re-plan preview counts.
-- F-803 (app settings): library roots, set-aside root, reports folder, theme, and
+- F-803 (app settings): library roots, Archive root, reports folder, theme, and
   snapshot retention configurable through the UI.
 - F-907 (cover extraction and fallback tiles): reads embedded art and cover.jpg
   sidecars read-only; hash-colored fallback tile when no cover exists.
