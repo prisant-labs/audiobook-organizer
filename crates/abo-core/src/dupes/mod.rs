@@ -18,7 +18,10 @@ pub mod detect;
 pub mod hash;
 pub mod verify;
 
-pub use verify::{group_may_auto_resolve, verify_groups, VerifyOutcome};
+pub use verify::{
+    book_group_content_matches, group_may_auto_resolve, verify_book_group, verify_groups,
+    VerifyOutcome,
+};
 
 pub use hash::{group_is_verified_identical, hash_member, ContentSource, MemberHash};
 

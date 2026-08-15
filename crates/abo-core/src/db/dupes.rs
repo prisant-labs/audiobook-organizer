@@ -222,6 +222,134 @@ pub async fn get_unhashed_members(
         .collect())
 }
 
+/// One persisted per-file row beneath a FOLDER member of a book-level duplicate
+/// group (`F-1110` `AC-54`, migration 0008).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberFileRow {
+    pub id: i64,
+    pub member_id: i64,
+    pub entry_id: i64,
+    pub path: String,
+    pub size: i64,
+    pub content_hash: Option<String>,
+    pub hash_error: Option<String>,
+}
+
+impl MemberFileRow {
+    /// What is known about this file's content. Same three states, same encoding
+    /// and same precedence as [`DuplicateMemberRow::verification`], so a reader
+    /// never has to hold two rules in mind.
+    pub fn verification(&self) -> MemberVerification {
+        match (&self.content_hash, &self.hash_error) {
+            (Some(h), _) => MemberVerification::Verified(h.clone()),
+            (None, Some(e)) => MemberVerification::Failed(e.clone()),
+            (None, None) => MemberVerification::Unhashed,
+        }
+    }
+}
+
+/// Register the audio files beneath one FOLDER member, so they can be hashed
+/// (`AC-54`).
+///
+/// Idempotent: re-registering the same member leaves any hash already recorded
+/// alone. A second verification pass over a group must find its previous work,
+/// not start over, which is `AC-15`'s rule applied one level down.
+pub async fn register_member_files(
+    pool: &SqlitePool,
+    member_id: i64,
+    files: &[(i64, String, i64)],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    for (entry_id, path, size) in files {
+        sqlx::query(
+            "INSERT OR IGNORE INTO duplicate_member_files (member_id, entry_id, path, size) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(member_id)
+        .bind(entry_id)
+        .bind(path)
+        .bind(size)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Every registered file beneath a member, ordered by id.
+pub async fn get_member_files(
+    pool: &SqlitePool,
+    member_id: i64,
+) -> Result<Vec<MemberFileRow>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, member_id, entry_id, path, size, content_hash, hash_error \
+         FROM duplicate_member_files WHERE member_id = ? ORDER BY id",
+    )
+    .bind(member_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| MemberFileRow {
+            id: r.get("id"),
+            member_id: r.get("member_id"),
+            entry_id: r.get("entry_id"),
+            path: r.get("path"),
+            size: r.get("size"),
+            content_hash: r.get("content_hash"),
+            hash_error: r.get("hash_error"),
+        })
+        .collect())
+}
+
+/// Record the outcome of hashing ONE file beneath a folder member (`AC-54`).
+///
+/// Writes one column and clears the other, exactly as [`set_member_hash`] does
+/// and for the same reason: a stale error must never sit beside a fresh hash.
+/// Kept as the only statement that writes these two columns.
+pub async fn set_member_file_hash(
+    pool: &SqlitePool,
+    file_id: i64,
+    outcome: &crate::dupes::MemberHash,
+) -> Result<(), sqlx::Error> {
+    let (hash, error) = match outcome {
+        crate::dupes::MemberHash::Hashed(h) => (Some(h.as_str()), None),
+        crate::dupes::MemberHash::Failed(e) => (None, Some(e.as_str())),
+    };
+    sqlx::query("UPDATE duplicate_member_files SET content_hash = ?, hash_error = ? WHERE id = ?")
+        .bind(hash)
+        .bind(error)
+        .bind(file_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Resolve `(id, path, size)` for snapshot entries by id, for the files a book
+/// folder holds.
+///
+/// Reads paths from `entries` rather than carrying them on the pure
+/// [`BookFolder`](crate::dupes::BookFolder), which describes a book's SHAPE. A
+/// path is something the database already stores and the pure layer has no use
+/// for, so it is fetched at the point of the read rather than threaded through
+/// detection.
+pub async fn entry_paths(
+    pool: &SqlitePool,
+    ids: &[usize],
+) -> Result<Vec<(i64, String, i64)>, sqlx::Error> {
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let row = sqlx::query("SELECT id, path, size FROM entries WHERE id = ?")
+            .bind(*id as i64)
+            .fetch_optional(pool)
+            .await?;
+        if let Some(r) = row {
+            out.push((r.get("id"), r.get("path"), r.get("size")));
+        }
+    }
+    Ok(out)
+}
+
 /// Count duplicate GROUPS for a scan (the FD-08 canonical count: groups, never
 /// pairs or copies).
 pub async fn count_duplicate_groups(pool: &SqlitePool, scan_id: i64) -> Result<i64, sqlx::Error> {
