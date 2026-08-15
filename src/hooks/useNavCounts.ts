@@ -8,8 +8,8 @@ export interface NavCounts {
   duplicateGroups?: number;
   /** History entry count. `undefined` when not yet known. */
   historyCount?: number;
-  /** Tidy-up readiness label ("ready"), matching prototype 04/07. */
-  tidyUpStatus?: string;
+  /** Organize readiness label ("ready"), matching prototype 04/07. */
+  organizeStatus?: string;
 }
 
 const DUPLICATE_GROUPS_PROBLEM = "duplicate-candidate-groups";
@@ -46,8 +46,8 @@ export function badgeForRoute(route: RouteId, counts: NavCounts): string | undef
       return counts.duplicateGroups === undefined ? undefined : String(counts.duplicateGroups);
     case "history":
       return counts.historyCount === undefined ? undefined : String(counts.historyCount);
-    case "tidy-up":
-      return counts.tidyUpStatus;
+    case "organize":
+      return counts.organizeStatus;
     case "library":
     case "settings":
       return undefined;

@@ -5,18 +5,23 @@
 // registry is the whole "router" this phase calls for. `aria-current="page"`
 // (AC-1) does not require History-API navigation, only a stable notion of
 // "the active item."
-export type RouteId = "library" | "tidy-up" | "duplicates" | "history" | "settings";
+export type RouteId = "library" | "organize" | "duplicates" | "history" | "settings";
 
 export interface RouteDef {
   id: RouteId;
   label: string;
 }
 
-// Order and labels match AC-1 / design-system Section 4.3 exactly: Library,
-// Tidy-up, Duplicates, History, Settings.
+// Order matches AC-1 / design-system Section 4.3: Library, Organize,
+// Duplicates, History, Settings.
+//
+// "Organize" is the one verb among nouns (FD-48, superseding FD-43's "tidy
+// up"). That break in the parallel is deliberate and was looked at rendered
+// before being kept: the action has no noun form, and inventing one reads worse
+// than a nav item that names what it does.
 export const ROUTES: readonly RouteDef[] = [
   { id: "library", label: "Library" },
-  { id: "tidy-up", label: "Tidy-up" },
+  { id: "organize", label: "Organize" },
   { id: "duplicates", label: "Duplicates" },
   { id: "history", label: "History" },
   { id: "settings", label: "Settings" },

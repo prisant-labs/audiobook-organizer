@@ -235,10 +235,10 @@ export function Library({ onNavigate, health, onRepickRoot }: LibraryProps) {
           </button>
           <button
             type="button"
-            onClick={() => onNavigate("tidy-up")}
+            onClick={() => onNavigate("organize")}
             className="rounded bg-primary px-4 py-2 text-[13px] font-semibold text-primary-ink transition-colors hover:bg-primary-hover"
           >
-            {STRINGS.library.startTidyUp}
+            {STRINGS.library.startOrganizing}
           </button>
         </div>
       </header>

@@ -110,7 +110,7 @@ describe("Review", () => {
   it("shows a building-the-plan message while generating", () => {
     mockedUsePlanReview.mockReturnValue(hookState({ status: "generating", review: null, ops: [] }));
     render(<Review scanId={9} />);
-    expect(screen.getByText(/Building the tidy-up plan/)).toBeInTheDocument();
+    expect(screen.getByText(/Building the plan/)).toBeInTheDocument();
   });
 
   it("the plan-building state carries a real Stop wired to cancel (AC-26)", async () => {
@@ -255,7 +255,7 @@ describe("Review", () => {
     );
     render(<Review scanId={9} />);
 
-    expect(screen.getByRole("button", { name: "Tidy up now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Organize now" })).toBeDisabled();
     expect(screen.getByText(/Turn on at least one group/)).toBeInTheDocument();
   });
 
@@ -264,7 +264,7 @@ describe("Review", () => {
     mockedUsePlanReview.mockReturnValue(hookState());
     render(<Review scanId={9} />);
 
-    await user.click(screen.getByRole("button", { name: "Tidy up now" }));
+    await user.click(screen.getByRole("button", { name: "Organize now" }));
     await user.click(screen.getByRole("button", { name: "Go ahead" }));
 
     expect(screen.getByText(/isn't available in this version yet/)).toBeInTheDocument();

@@ -24,11 +24,11 @@ export function LibraryLede({ overview }: LibraryLedeProps) {
           <b className="tabular-nums font-semibold text-ink">
             {needs_tidy_books.toLocaleString()}
           </b>{" "}
-          could use a tidy: loose files, messy folder names, and a few box sets that need
+          could use organizing: loose files, messy folder names, and a few box sets that need
           splitting up.
         </>
       ) : (
-        "Your library is already tidy - nothing needs a tidy-up right now."
+        "Your library is already organized - nothing needs doing right now."
       )}
     </p>
   );

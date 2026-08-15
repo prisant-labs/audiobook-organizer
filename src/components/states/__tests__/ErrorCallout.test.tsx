@@ -70,10 +70,10 @@ describe("EmptyState", () => {
     render(
       <EmptyState
         heading="Nothing selected"
-        action={{ label: "Tidy up now", onClick: vi.fn(), disabled: true, reason: "Turn on at least one group." }}
+        action={{ label: "Organize now", onClick: vi.fn(), disabled: true, reason: "Turn on at least one group." }}
       />,
     );
-    expect(screen.getByRole("button", { name: "Tidy up now" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Organize now" })).toBeDisabled();
     expect(screen.getByText("Turn on at least one group.")).toBeInTheDocument();
   });
 });
