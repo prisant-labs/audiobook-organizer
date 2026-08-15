@@ -6,6 +6,7 @@
 
 use abo_core::classify::classify;
 use abo_core::classify::engine::ClassifyInput;
+use abo_core::dupes::book_folders_from_plan_nodes;
 use abo_core::dupes::detect::{
     detect_duplicates, detect_exact_duplicates, dupe_entries_from_plan_nodes, METHOD_EXACT,
 };
@@ -118,7 +119,8 @@ fn every_detected_group_has_at_least_two_copies() {
     let merged = merged_of(&nodes);
     let entries = dupe_entries_from_plan_nodes(&nodes, &merged);
 
-    let groups = detect_duplicates(&entries);
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    let groups = detect_duplicates(&entries, &books);
     assert!(
         !groups.is_empty(),
         "the fixture has at least the Island pair"
@@ -136,8 +138,9 @@ fn detection_is_deterministic() {
     let merged = merged_of(&nodes);
     let entries = dupe_entries_from_plan_nodes(&nodes, &merged);
 
-    let a = detect_duplicates(&entries);
-    let b = detect_duplicates(&entries);
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    let a = detect_duplicates(&entries, &books);
+    let b = detect_duplicates(&entries, &books);
     assert_eq!(a, b);
 }
 

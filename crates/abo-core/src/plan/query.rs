@@ -48,7 +48,9 @@
 use sqlx::SqlitePool;
 
 use crate::db::plans::{get_plan, get_plan_ops, PlanOpRow};
-use crate::dupes::{detect_duplicates, dupe_entries_from_plan_nodes, DuplicateGroup};
+use crate::dupes::{
+    book_folders_from_plan_nodes, detect_duplicates, dupe_entries_from_plan_nodes, DuplicateGroup,
+};
 use crate::error::AppError;
 use crate::ipc::{
     ExtractedFieldView, GroupStatus, MatchedPatternView, PlanApproval, PlanGroupView, PlanOpView,
@@ -175,10 +177,20 @@ fn build_group_view(
 /// (see module doc). Always [`GroupStatus::Checking`]: F-701 is
 /// candidate-only this release, so the group can never be toggled on until
 /// the F-702 hash verification (v0.6.0) exists.
+///
+/// Counts every candidate group, which since `F-1110` means exact
+/// basename+size groups PLUS folder groups whose members agree at least on the
+/// `AC-51` fingerprint. Before that this filtered on `is_exact()` alone, so two
+/// copies of a twelve-part book counted zero here: they are twelve unrelated
+/// files to the exact detector, and the folder group they did form was excluded.
+/// That silent under-reporting is the whole reason `F-1110` exists.
 fn copies_group_view(duplicate_groups: &[DuplicateGroup]) -> PlanGroupView {
-    let exact: Vec<&DuplicateGroup> = duplicate_groups.iter().filter(|g| g.is_exact()).collect();
-    let op_count = exact.len() as i64;
-    let byte_size: i64 = exact.iter().map(|g| g.total_bytes as i64).sum();
+    let candidates: Vec<&DuplicateGroup> = duplicate_groups
+        .iter()
+        .filter(|g| g.is_duplicate_candidate())
+        .collect();
+    let op_count = candidates.len() as i64;
+    let byte_size: i64 = candidates.iter().map(|g| g.total_bytes as i64).sum();
     PlanGroupView {
         group: CampaignGroup::Copies.slug().to_string(),
         label: CampaignGroup::Copies.label().to_string(),
@@ -604,7 +616,8 @@ async fn duplicate_groups_for_scan(
         .collect();
     let merged = extract(&entry_inputs);
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-    Ok(detect_duplicates(&dupe_entries))
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    Ok(detect_duplicates(&dupe_entries, &books))
 }
 
 /// Build the [`PlanReview`] (the seven group cards) for a persisted plan,
@@ -974,7 +987,8 @@ mod tests {
             .collect();
         let merged = extract(&entry_inputs);
         let dupe_entries: Vec<DupeEntry> = dupe_entries_from_plan_nodes(&nodes, &merged);
-        let groups = detect_duplicates(&dupe_entries);
+        let books = book_folders_from_plan_nodes(&nodes, &merged);
+        let groups = detect_duplicates(&dupe_entries, &books);
         assert!(!groups.is_empty(), "fixture must produce a duplicate group");
 
         let review = build_plan_review(1, 1, &[], &groups);
@@ -982,6 +996,61 @@ mod tests {
         assert_eq!(copies.status, GroupStatus::Checking);
         assert_eq!(copies.op_count, 1, "one exact duplicate group");
         assert_eq!(copies.byte_size, 1000);
+    }
+
+    /// F-1110 / AC-52 at the surface the user actually reads. Two copies of a
+    /// multi-file book form a FOLDER group, which this card filtered out
+    /// entirely before F-1110: it counted `is_exact()` only, so the card said
+    /// zero while the library held two copies of a twelve-part book. That silent
+    /// under-reporting is the defect F-1110 exists to close, so it is asserted
+    /// here rather than only in the detector.
+    #[test]
+    fn the_copies_card_counts_book_level_duplicates_f1110() {
+        use crate::dupes::{BookMatch, DuplicateMember, METHOD_VERSION};
+
+        let book_group = |tier: BookMatch| DuplicateGroup {
+            method: METHOD_VERSION,
+            group_key: "dune".to_string(),
+            total_bytes: 1_600_000,
+            members: vec![
+                DuplicateMember {
+                    entry_id: 1,
+                    path: "E:/lib/A/Dune".to_string(),
+                    size: 800_000,
+                },
+                DuplicateMember {
+                    entry_id: 2,
+                    path: "E:/lib/B/Dune".to_string(),
+                    size: 800_000,
+                },
+            ],
+            book_match: Some(tier),
+            subsumed_by_book_group: false,
+        };
+
+        // Title-only: possibly different editions, possibly one file against
+        // twelve. Not a duplicate, and the card must not claim one.
+        let weak = build_plan_review(1, 1, &[], &[book_group(BookMatch::TitleOnly)]);
+        let weak_card = weak.groups.iter().find(|g| g.group == "copies").unwrap();
+        assert_eq!(weak_card.op_count, 0);
+        assert_eq!(weak_card.byte_size, 0);
+
+        // Fingerprint or better: a duplicate candidate, counted.
+        for tier in [BookMatch::Fingerprint, BookMatch::Structural] {
+            let review = build_plan_review(1, 1, &[], &[book_group(tier)]);
+            let card = review.groups.iter().find(|g| g.group == "copies").unwrap();
+            assert_eq!(card.op_count, 1, "{tier:?} is a duplicate candidate");
+            assert_eq!(card.byte_size, 1_600_000);
+            assert_eq!(
+                card.status,
+                GroupStatus::Checking,
+                "counted, never actionable: detection stays candidate-only"
+            );
+            assert_eq!(
+                card.actionable_count, 0,
+                "AC-52: recorded and counted, never acted on"
+            );
+        }
     }
 
     /// F-504 / AC-18: the disclosure re-derives a matched pattern and

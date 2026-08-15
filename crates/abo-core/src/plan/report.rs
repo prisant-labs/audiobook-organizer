@@ -46,7 +46,9 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::dupes::{detect_duplicates, dupe_entries_from_plan_nodes, DuplicateGroup};
+use crate::dupes::{
+    book_folders_from_plan_nodes, detect_duplicates, dupe_entries_from_plan_nodes, DuplicateGroup,
+};
 use crate::plan::builder::CampaignGroup;
 use crate::plan::export::{build_plan_export, ExportOp, PlanExport, FD10_GUARANTEE_LINE};
 use crate::plan::provenance::{build_provenance_report, ProvenanceReport};
@@ -122,7 +124,9 @@ pub struct HeadlineNumbers {
     pub total_changes: u64,
     /// Per user-facing group (FD-26 order): (label, change count).
     pub per_group: Vec<(String, u64)>,
-    /// Exact basename+size duplicate GROUPS (FD-08 unit), held pending the check.
+    /// Duplicate candidate GROUPS (FD-08 unit), held pending the check: exact
+    /// basename+size groups plus the F-1110 folder groups that reach the
+    /// fingerprint tier.
     pub duplicate_groups: u64,
     /// Normalized-title version candidates (each needs a keep decision).
     pub version_candidates: u64,
@@ -352,28 +356,44 @@ fn group_change_count(export: &PlanExport, label: &str) -> u64 {
         .count() as u64
 }
 
-/// Exact basename+size duplicate groups (the FD-08 copies unit).
-fn exact_dup_groups<'a>(input: &ReportInput<'a>) -> Vec<&'a DuplicateGroup> {
+/// Every duplicate CANDIDATE group: exact basename+size groups, plus the
+/// `F-1110` folder groups whose members agree at least on the `AC-51`
+/// fingerprint.
+///
+/// This is the FD-08 counted unit everywhere the report speaks about copies:
+/// the summary row, its size cell, the headline numbers, and the held-duplicates
+/// line in the decision callout. All four read this ONE predicate, so a count
+/// can never disagree with what the body renders.
+///
+/// It replaced an exact-only helper wholesale rather than sitting beside it.
+/// Leaving both would have let the Copies row count a book-level duplicate while
+/// the callout below rendered nothing for it, which is worse than the
+/// under-reporting `F-1110` set out to fix: a group counted and shown nowhere.
+fn duplicate_candidate_groups<'a>(input: &ReportInput<'a>) -> Vec<&'a DuplicateGroup> {
     input
         .duplicate_groups
         .iter()
-        .filter(|g| g.is_exact())
+        .filter(|g| g.is_duplicate_candidate())
         .collect()
 }
 
-/// Normalized-title version candidates (each needs a keep decision).
+/// Normalized-title version candidates that did NOT reach candidate strength
+/// (each needs a keep decision).
+///
+/// Excludes folder groups that are now counted as duplicate candidates, so a
+/// group is listed in exactly one place and the two figures never overlap.
 fn version_candidate_groups<'a>(input: &ReportInput<'a>) -> Vec<&'a DuplicateGroup> {
     input
         .duplicate_groups
         .iter()
-        .filter(|g| g.is_version_candidate())
+        .filter(|g| g.is_version_candidate() && !g.is_duplicate_candidate())
         .collect()
 }
 
 /// The displayed change count for a group (copies counts GROUPS, FD-08).
 fn displayed_count(input: &ReportInput, group: CampaignGroup) -> u64 {
     if group == CampaignGroup::Copies {
-        exact_dup_groups(input).len() as u64
+        duplicate_candidate_groups(input).len() as u64
     } else {
         group_change_count(input.export, group.label())
     }
@@ -466,7 +486,7 @@ pub fn headline_numbers(input: &ReportInput) -> HeadlineNumbers {
         .map(|&g| (g.label().to_string(), displayed_count(input, g)))
         .collect();
     let total_changes = per_group.iter().map(|(_, n)| *n).sum();
-    let duplicate_groups = exact_dup_groups(input).len() as u64;
+    let duplicate_groups = duplicate_candidate_groups(input).len() as u64;
     let version_candidates = version_candidate_groups(input).len() as u64;
     let manual_review = input
         .export
@@ -712,7 +732,10 @@ fn group_size_cell(input: &ReportInput, group: CampaignGroup) -> String {
         return "renames".to_string();
     }
     if group == CampaignGroup::Copies {
-        let bytes: u64 = exact_dup_groups(input).iter().map(|g| g.total_bytes).sum();
+        let bytes: u64 = duplicate_candidate_groups(input)
+            .iter()
+            .map(|g| g.total_bytes)
+            .sum();
         return if bytes > 0 {
             human_bytes(bytes)
         } else {
@@ -815,7 +838,7 @@ fn example_after(op: &ExportOp, root: &str, sep: char) -> String {
 
 fn push_warnings(h: &mut String, input: &ReportInput) {
     let versions = version_candidate_groups(input);
-    let held = exact_dup_groups(input);
+    let held = duplicate_candidate_groups(input);
     let manual: Vec<&ExportOp> = input
         .export
         .ops
@@ -840,11 +863,12 @@ fn push_warnings(h: &mut String, input: &ReportInput) {
     if !held.is_empty() {
         let copies: usize = held.iter().map(|g| g.copies()).sum();
         h.push_str(&format!(
-            "<p><b>{} group{} of identical copies</b> ({} file{} in all) are held until the byte-by-byte check finishes, so you never end up with two folders for one book. Nothing moves to the Archive until you confirm.</p>\n",
+            "<p><b>{} group{} of identical copies</b> ({} cop{} in all) are held until the byte-by-byte check finishes, so you never end up with two folders for one book. Nothing moves to the Archive until you confirm.</p>\n",
             held.len(),
             if held.len() == 1 { "" } else { "s" },
             copies,
-            if copies == 1 { "" } else { "s" }
+            // "copies" not "files": a book-level group's members are FOLDERS.
+            if copies == 1 { "y" } else { "ies" }
         ));
     }
 
@@ -893,12 +917,24 @@ fn push_warnings(h: &mut String, input: &ReportInput) {
     h.push_str("</div>\n");
 }
 
-/// A readable name for a duplicate/version group: the containing FOLDER of the
-/// first member (the book), falling back to the member file name. Generic track
-/// files (`00.mp3`) live inside a book folder, so the folder name is the
-/// meaningful identity a reader recognises.
+/// A readable name for a duplicate/version group: the book a reader would
+/// recognise, never a generic part name and never the shelf above it.
+///
+/// The two group families need opposite answers, which is why this branches
+/// rather than doing one thing:
+///
+/// - **File members** (exact basename+size): the file is often a generic track
+///   name like `00.mp3`, and it lives INSIDE the book folder, so the containing
+///   folder is the identity.
+/// - **Folder members** (version candidates and the `F-1110` book groups): the
+///   member IS the book folder, so its own name is the identity. Taking the
+///   parent here would name every group after the shelf it sits on, and two
+///   different books under one shelf would both render as that shelf's name.
 fn dup_display_name(g: &DuplicateGroup, sep: char) -> String {
     let first = g.members.first().map(|m| m.path.as_str()).unwrap_or("");
+    if g.is_version_candidate() {
+        return base_name(first, sep).to_string();
+    }
     let parent = parent_dir(first, sep);
     let folder = base_name(parent, sep);
     if folder.is_empty() || parent == first {
@@ -1278,7 +1314,8 @@ pub async fn build_and_persist_plan(
         &set_aside_root,
     );
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-    let duplicate_groups = detect_duplicates(&dupe_entries);
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    let duplicate_groups = detect_duplicates(&dupe_entries, &books);
 
     // 5. Validate against a fresh view of the snapshot's own paths (all present),
     // with the FD-34 target-scope check enabled (a persisted plan's targets must
@@ -1376,7 +1413,8 @@ pub async fn preview_plan_review(
     // 4. Build the plan (in memory only) and detect duplicate candidates.
     let plan = build_plan(&nodes, &classifications, &merged, ruleset, &root_path);
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-    let duplicate_groups = detect_duplicates(&dupe_entries);
+    let books = book_folders_from_plan_nodes(&nodes, &merged);
+    let duplicate_groups = detect_duplicates(&dupe_entries, &books);
 
     // 5. Validate against a fresh view of the snapshot's own paths (all
     // present) - the same env `build_and_persist_plan` uses, so a preview's
@@ -1523,7 +1561,8 @@ mod tests {
         let export = build_plan_export(7, "2026-07-04T18:14:03Z", "draft", &plan, &verdicts);
         let provenance = build_provenance_report(&plan);
         let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
-        let dupes = detect_duplicates(&dupe_entries);
+        let books = book_folders_from_plan_nodes(&nodes, &merged);
+        let dupes = detect_duplicates(&dupe_entries, &books);
         Owned {
             export,
             provenance,
@@ -1543,6 +1582,110 @@ mod tests {
             duplicate_groups: &o.dupes,
             sample_data: sample,
         }
+    }
+
+    /// One exact group, one F-1110 fingerprint-tier folder group, one title-only
+    /// folder group. Every figure the report gives about copies must agree with
+    /// each other AND with what the body actually renders.
+    ///
+    /// This is the test that caught the real hazard in F-1110's consumer half.
+    /// Widening only `displayed_count` made the summary row count a book-level
+    /// duplicate while the headline number, the size cell and the held-duplicates
+    /// callout all still read an exact-only helper. Worse, narrowing the version
+    /// candidate list to exclude fingerprint-tier groups meant that group was
+    /// counted in the table and rendered NOWHERE in the body: counted and
+    /// invisible, which is a new defect rather than an incomplete fix.
+    #[test]
+    fn every_copies_figure_agrees_with_the_body_f1110() {
+        use crate::dupes::{BookMatch, DuplicateMember, METHOD_EXACT, METHOD_VERSION};
+
+        let member = |path: &str, size: u64| DuplicateMember {
+            entry_id: 1,
+            path: path.to_string(),
+            size,
+        };
+        let mut o = owned();
+        o.dupes = vec![
+            DuplicateGroup {
+                method: METHOD_EXACT,
+                group_key: "Island by Aldous Huxley.m4b|120000".to_string(),
+                total_bytes: 240_000,
+                members: vec![
+                    member("library/Island by Aldous Huxley.m4b", 120_000),
+                    member("library/Backup Copy/Island by Aldous Huxley.m4b", 120_000),
+                ],
+                book_match: None,
+                subsumed_by_book_group: false,
+            },
+            DuplicateGroup {
+                method: METHOD_VERSION,
+                group_key: "dune".to_string(),
+                total_bytes: 1_600_000,
+                members: vec![
+                    member("library/Genre - SciFI/Dune", 800_000),
+                    member("library/Backups/Dune", 800_000),
+                ],
+                book_match: Some(BookMatch::Fingerprint),
+                subsumed_by_book_group: false,
+            },
+            DuplicateGroup {
+                method: METHOD_VERSION,
+                group_key: "hyperion".to_string(),
+                total_bytes: 900_000,
+                members: vec![
+                    member("library/Genre - SciFI/Hyperion", 500_000),
+                    member("library/Backups/Hyperion", 400_000),
+                ],
+                book_match: Some(BookMatch::TitleOnly),
+                subsumed_by_book_group: false,
+            },
+        ];
+        let input = input_of(&o, true);
+
+        // The counted unit: the exact group plus the fingerprint group, never
+        // the title-only one.
+        let n = headline_numbers(&input);
+        assert_eq!(n.duplicate_groups, 2, "exact + fingerprint");
+        assert_eq!(n.version_candidates, 1, "only the title-only group");
+        assert_eq!(
+            displayed_count(&input, CampaignGroup::Copies),
+            2,
+            "the summary row must agree with the headline number"
+        );
+        assert_eq!(
+            group_size_cell(&input, CampaignGroup::Copies),
+            human_bytes(240_000 + 1_600_000),
+            "the size cell must cover exactly the groups the count covers"
+        );
+
+        let html = build_html_report(&input);
+
+        // The held line counts COPIES, not files: a book group's members are
+        // folders, so "4 files in all" would have been a lie.
+        assert!(
+            html.contains("<b>2 groups of identical copies</b> (4 copies in all)"),
+            "held line disagrees with the counts: {}",
+            html.lines()
+                .find(|l| l.contains("groups of identical copies"))
+                .unwrap_or("<line absent entirely>")
+        );
+
+        // The title-only group is the one that needs a keep decision, and it is
+        // named after the BOOK, not the shelf it sits on.
+        assert!(
+            html.contains("<b>Hyperion</b> has more than one version"),
+            "the title-only group must still ask for a decision, by book name"
+        );
+        assert!(
+            !html.contains("<b>Genre - SciFI</b> has more than one version"),
+            "a folder group must never be named after its shelf"
+        );
+
+        // And the fingerprint group did not vanish: it is inside the held count.
+        assert!(
+            !html.contains("<b>Dune</b> has more than one version"),
+            "a confirmed book-level duplicate is held, not a version clash"
+        );
     }
 
     #[test]

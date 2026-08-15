@@ -6,14 +6,26 @@
 //! `duplicate_members` tables lives in [`crate::db::dupes`]. This release is
 //! candidate-only (no hashing, no auto-quarantine); see the module doc of
 //! [`detect`] for the FD-08 counting and byte-figure rules.
+//!
+//! [`books`] adds the F-1110 book-level comparison on top: a folder group
+//! carries a MATCH TIER saying whether its members are two copies of one book or
+//! merely two folders with the same name. It raises the tier of a group
+//! [`detect`] already found rather than emitting groups of its own, which is
+//! what keeps the FD-08 group count honest.
 
+pub mod books;
 pub mod detect;
 pub mod hash;
 pub mod verify;
 
-pub use verify::{group_may_auto_resolve, verify_groups, VerifyOutcome};
+pub use verify::{
+    book_group_content_matches, group_may_auto_resolve, verify_book_group, verify_groups,
+    VerifyOutcome,
+};
 
 pub use hash::{group_is_verified_identical, hash_member, ContentSource, MemberHash};
+
+pub use books::{book_folders_from_plan_nodes, match_tier, BookFolder, BookMatch};
 
 pub use detect::{
     detect_duplicates, detect_exact_duplicates, detect_version_candidates,
