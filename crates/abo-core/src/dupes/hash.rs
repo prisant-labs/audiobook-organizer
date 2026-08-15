@@ -55,6 +55,57 @@ pub trait ContentSource {
     fn read_chunks(&self, path: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), std::io::Error>;
 }
 
+/// How many bytes are read per chunk by [`FsContentSource`].
+///
+/// 1 MiB. The files here are routinely over a gigabyte, so the read loop is
+/// syscall-bound long before it is CPU-bound: an 8 KiB buffer would make 128
+/// times as many calls for the same bytes and understate what the hasher can
+/// actually do. It is a documented constant rather than a literal because
+/// `AC-16` measures throughput through this path, and a number that decides
+/// whether a feature ships should say what it was measured with.
+///
+/// One buffer is allocated per file and reused for every chunk of it.
+pub const READ_BUFFER_BYTES: usize = 1 << 20;
+
+/// Read-only access to file bytes, for hashing.
+///
+/// The real one. [`ContentSource`]'s other implementations are in-memory test
+/// doubles; this is the only one that touches a disk, and every hash the
+/// product ever shows a user comes through it.
+///
+/// # Long paths are not optional here
+///
+/// The path is routed through
+/// [`to_extended_length_prefixed`](crate::paths::to_extended_length_prefixed),
+/// the same seam [`Vfs`](crate::exec::Vfs) uses (`F-101`, `FD-19`). A messy
+/// audiobook library is precisely where paths past the legacy 260-character
+/// limit live, and without the prefix those files would report as unreadable:
+/// the group would silently fail to verify, and `AC-12` would refuse to resolve
+/// it for a reason that has nothing to do with the books.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FsContentSource;
+
+impl ContentSource for FsContentSource {
+    fn read_chunks(&self, path: &str, sink: &mut dyn FnMut(&[u8])) -> Result<(), std::io::Error> {
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(crate::paths::to_extended_length_prefixed(
+            std::path::Path::new(path),
+        ))?;
+        let mut buf = vec![0u8; READ_BUFFER_BYTES];
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                return Ok(());
+            }
+            // `..n`, never the whole buffer: the final read is short, and
+            // hashing the stale tail would produce a digest for bytes that are
+            // not in the file.
+            sink(&buf[..n]);
+        }
+    }
+}
+
 /// The outcome of hashing one duplicate group member.
 ///
 /// A failure is a VALUE here, not an error return, because a member that could
@@ -288,5 +339,63 @@ mod tests {
         // membership is the detector's job, not this function's. What matters is
         // that the caller never hands it a group of one.
         assert!(group_is_verified_identical(&[one]));
+    }
+
+    // ---- FsContentSource: the real read path (AC-16) ----
+
+    /// The digest a real file produces must equal the digest its bytes produce
+    /// through the known-good in-memory source. Anything else means the real
+    /// read path is not reading what is on disk, which would make every
+    /// verified hash in the product a number about the wrong bytes.
+    #[test]
+    fn the_real_file_source_agrees_with_the_in_memory_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("book.m4b");
+        let bytes = b"a chapter of an audiobook, on disk this time".to_vec();
+        std::fs::write(&path, &bytes).unwrap();
+
+        let from_disk = hash_member(&FsContentSource, path.to_str().unwrap()).unwrap();
+        let from_memory =
+            hash_member(&MemSource::new().with("book.m4b", &bytes), "book.m4b").unwrap();
+
+        assert!(from_disk.is_verified());
+        assert_eq!(from_disk, from_memory);
+    }
+
+    /// A file larger than one read buffer, so the chunk loop is exercised at a
+    /// boundary rather than in a single read. Sized deliberately to straddle
+    /// [`READ_BUFFER_BYTES`] with a partial final chunk: a loop that dropped
+    /// the tail, or re-hashed a stale buffer, passes the small-file test above
+    /// and fails this one.
+    #[test]
+    fn the_real_file_source_spans_read_buffer_boundaries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.m4b");
+        // Not a repeating byte: a stale-buffer bug would be invisible against a
+        // uniform fill.
+        let bytes: Vec<u8> = (0..(READ_BUFFER_BYTES * 2 + 12_345))
+            .map(|i| (i % 251) as u8)
+            .collect();
+        std::fs::write(&path, &bytes).unwrap();
+
+        let from_disk = hash_member(&FsContentSource, path.to_str().unwrap()).unwrap();
+        let from_memory =
+            hash_member(&MemSource::new().with("long.m4b", &bytes), "long.m4b").unwrap();
+
+        assert_eq!(from_disk, from_memory);
+    }
+
+    /// A file that is not there is a recorded failure, not an aborted job. Same
+    /// contract the in-memory source already proves; asserted again on the real
+    /// path because this is the one that meets a live library, where a file
+    /// vanishing between the scan and the hash is ordinary.
+    #[test]
+    fn the_real_file_source_reports_a_missing_file_as_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("never-existed.m4b");
+
+        let out = hash_member(&FsContentSource, gone.to_str().unwrap()).unwrap();
+
+        assert!(!out.is_verified());
     }
 }

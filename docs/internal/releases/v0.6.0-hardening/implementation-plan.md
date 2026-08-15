@@ -55,8 +55,8 @@ recorded in the P1 status note.
 |---|---|---|---|---|
 | P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | MERGED 2026-07-31 |
 | P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | **COMPLETE.** P1a/P1b/P1d MERGED 2026-07-31; P1c MERGED 2026-08-05 (PR #11). AC-8 hand walkthrough still owed by jp |
-| P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15)**: BLAKE3 hashing, its persistence, a cancellable verification job, and the auto-resolve gate. `AC-13` (two-step override) and `AC-16` (throughput on real data) remain |
-| **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **COMPLETE, awaiting review.** All five criteria implemented, engine-only, no IPC change. Descope path not taken |
+| P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15)**: BLAKE3 hashing, its persistence, a cancellable verification job, and the auto-resolve gate. **`AC-16` MEASURED 2026-08-15: descope trigger NOT met, ship as designed** ([evidence](hash-throughput-2026-08-15.md)). `AC-13` (two-step override) is the remainder, and it is an affordance on a resolve action that does not exist until `P3`/`P4`; see the `AC-13` note under Phase 4 |
+| **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **MERGED 2026-08-15 (PR #29).** All five criteria, engine-only, no IPC change. Descope path not taken |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
 | P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | Not started |
@@ -212,9 +212,9 @@ Verification:
 - Persistence test: hash state survives a surface re-open (AC-15).
 - Performance probe on a real-data copy feeds the descope decision (AC-16); record throughput in the campaign log.
 
-Decision Gate: hash-performance descope trigger (AC-16). If throughput is unacceptable on real data, set the campaign to flag-only and record the decision; F-704 flag-only path (Phase 3) must be complete regardless.
+Decision Gate: hash-performance descope trigger (AC-16). **MEASURED 2026-08-15; the trigger is NOT met. Recommendation: ship F-702 as designed, no descope.** Evidence: [hash-throughput-2026-08-15.md](hash-throughput-2026-08-15.md). The read path plus BLAKE3 sustain 2,765 MB/s while the library's 7200 RPM SATA drive delivers 42 to 80 MB/s, so the hashing code accounts for 2 to 3 percent of the wait and a descope would remove none of it. AC-10's candidates-only rule already cut the work by 95% (14.96 GB of candidates, not the 298.72 GB library): verifying one duplicate group takes about a second, and verifying all 293 takes 3 to 6 minutes once, in a cancellable background job whose results persist. The F-704 flag-only path (Phase 3) is still built regardless, per the original wording.
 
-Output Artifacts: `crates/abo-core/src/dupes/hash.rs`; migration touch if hash-state columns need adding; hash job wiring; dupes hash test suite.
+Output Artifacts: `crates/abo-core/src/dupes/hash.rs`; migration touch if hash-state columns need adding; hash job wiring; dupes hash test suite. **Added 2026-08-15 for AC-16:** `FsContentSource` in `hash.rs` (the production filesystem read path; every prior `ContentSource` was an in-memory test double, so nothing shipping could hash a real file) and `crates/abo-core/tests/real_library_hash_throughput.rs` (three `#[ignore]` operator-run measurements: candidate population, throughput, read-path ceiling).
 
 Suggested Owner: LLM (Opus) - safety-adjacent (gates a destructive-adjacent action).
 
