@@ -778,19 +778,36 @@ pub async fn outstanding_block_detail(
 
 // ---- The forward gate (AC-20 + guard #1) -----------------------------------
 
-/// The forward-tidying gate (AC-20): refuse to start a FORWARD apply while any
-/// discrepancy is unacknowledged. Structurally exempts an UNDO (inverse) plan -
+/// The forward-tidying gate: refuse to start a FORWARD apply while the library's
+/// state is in question. Structurally exempts an UNDO (inverse) plan -
 /// [`super::is_undo_plan_ops`] - so undo is never blocked (undo is the REMEDY
-/// for a discrepancy). The undo command path deliberately does not call this, so
-/// `rollback_prepare` is never gated; this is the ONLY forward gate, called from
-/// `apply_start` before the walk.
+/// for both conditions below). The undo command path deliberately does not call
+/// this, so `rollback_prepare` is never gated; this is the ONLY forward gate,
+/// called from `apply_start` before the walk.
+///
+/// # Two conditions, deliberately separate
+///
+/// - **AC-20**: a previous run's after-the-fact check FOUND a difference and
+///   nobody has acknowledged it. The tool knows what happened and is waiting for
+///   a human to say so.
+/// - **Precondition 4** (added 2026-08-04 with the `P1c` interruption surface,
+///   wired here): a previous run was cut short and the reconciler could NOT
+///   establish what it did. The tool does not know what happened.
+///
+/// They return different errors because they ask the reader for different
+/// things, and merging them would have meant one message that is wrong half the
+/// time. The second is checked first: not knowing is the stronger reason to
+/// refuse, so it should be the reason reported when both hold.
 pub async fn ensure_forward_tidying_allowed(
     pool: &SqlitePool,
     ops: &[PlanOpRow],
 ) -> Result<(), AppError> {
-    // Undo is the remedy for a discrepancy: an inverse plan is never gated.
+    // Undo is the remedy for both conditions: an inverse plan is never gated.
     if super::is_undo_plan_ops(ops) {
         return Ok(());
+    }
+    if crate::exec::reconcile::unreconciled_apply_exists(pool).await? {
+        return Err(AppError::InterruptionUnresolved);
     }
     if forward_tidying_blocked(pool).await? {
         return Err(AppError::TidyingBlocked);
@@ -1236,6 +1253,108 @@ mod tests {
         ensure_forward_tidying_allowed(&pool, &forward)
             .await
             .expect("forward allowed after acknowledgement");
+    }
+
+    /// Precondition 4: a run that was cut short AND could not be reconciled
+    /// blocks the forward path, because planning forward from a library nobody
+    /// could read is the one move that turns a recoverable interruption into an
+    /// unrecoverable one.
+    ///
+    /// Undo stays allowed throughout, for the same reason it is exempt from the
+    /// AC-20 gate: it is the remedy, so gating it would strand the user with a
+    /// mess and no way to undo it.
+    #[tokio::test]
+    async fn an_unreconciled_run_blocks_the_forward_path_but_never_undo() {
+        use crate::exec::reconcile::RECONCILE_FAILED_CODE;
+
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+
+        let job_id: i64 =
+            sqlx::query("INSERT INTO jobs (kind, state, started_at) VALUES ('apply','failed',?)")
+                .bind(NOW)
+                .execute(&pool)
+                .await
+                .unwrap()
+                .last_insert_rowid();
+
+        let forward = vec![op(1, 0, "move", "E:/lib/a.m4b", "E:/lib/A/a.m4b", 10)];
+        let mut undo = op(1, 0, "move", "E:/lib/A/a.m4b", "E:/lib/a.m4b", 10);
+        undo.rule_id = crate::exec::ROLLBACK_RULE_ID.to_string();
+        let undo = vec![undo];
+
+        // A merely interrupted run does NOT block: the reconciler settled it, so
+        // its outcome is known, and FD-39 re-plans from a fresh scan anyway.
+        sqlx::query("UPDATE jobs SET error_code = 'interrupted' WHERE id = ?")
+            .bind(job_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_forward_tidying_allowed(&pool, &forward)
+            .await
+            .expect("a settled interruption is not a reason to refuse");
+
+        // An UNRECONCILED one does block, with its own error rather than the
+        // after-the-fact-check one.
+        sqlx::query("UPDATE jobs SET error_code = ? WHERE id = ?")
+            .bind(RECONCILE_FAILED_CODE)
+            .bind(job_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = ensure_forward_tidying_allowed(&pool, &forward)
+            .await
+            .expect_err("forward refused while the last run is unreadable");
+        assert_eq!(err.code(), "interruption-unresolved");
+        ensure_forward_tidying_allowed(&pool, &undo)
+            .await
+            .expect("undo is the remedy and is never gated");
+
+        // Settling it reopens the forward gate. Durable state, so this is what a
+        // later successful reconcile pass does.
+        sqlx::query("UPDATE jobs SET error_code = 'interrupted' WHERE id = ?")
+            .bind(job_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        ensure_forward_tidying_allowed(&pool, &forward)
+            .await
+            .expect("forward allowed once the run is settled");
+    }
+
+    /// When BOTH conditions hold, the reported reason is the stronger one. "We
+    /// could not read what happened" is a bigger problem than "we read it and
+    /// found a difference", and telling the user the smaller one would send them
+    /// to acknowledge a check while the real blocker sat unmentioned.
+    #[tokio::test]
+    async fn not_knowing_outranks_an_unacknowledged_difference() {
+        use crate::exec::reconcile::RECONCILE_FAILED_CODE;
+
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let job_id: i64 =
+            sqlx::query("INSERT INTO jobs (kind, state, started_at) VALUES ('apply','failed',?)")
+                .bind(NOW)
+                .execute(&pool)
+                .await
+                .unwrap()
+                .last_insert_rowid();
+
+        record_block(&pool, job_id, NOW, r#"{"count":1}"#)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE jobs SET error_code = ? WHERE id = ?")
+            .bind(RECONCILE_FAILED_CODE)
+            .bind(job_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let forward = vec![op(1, 0, "move", "E:/lib/a.m4b", "E:/lib/A/a.m4b", 10)];
+        let err = ensure_forward_tidying_allowed(&pool, &forward)
+            .await
+            .expect_err("still refused");
+        assert_eq!(err.code(), "interruption-unresolved");
     }
 
     /// AC-20 (approval half): the SAME gate `plan_set_group_approval` calls, over

@@ -621,6 +621,31 @@ async fn mark_needs_review(pool: &SqlitePool, job_id: i64) -> Result<(), AppErro
     Ok(())
 }
 
+/// Whether any apply job is still stamped [`RECONCILE_FAILED_CODE`]: a run that
+/// was cut short AND whose outcome could not be established.
+///
+/// This is the durable "we do not know what happened to your library" state, and
+/// it is the fourth precondition for real applies. It survives the reclaim
+/// (which `COALESCE`s rather than overwrites) and the restart, and clears only
+/// when a later pass reconciles the job successfully.
+///
+/// Deliberately narrower than "any interrupted run". A run the reconciler DID
+/// settle has a known outcome, and `FD-39` already says carrying on re-plans
+/// from a fresh scan rather than replaying, so a fresh forward run from there is
+/// safe and refusing it would only be obstructive. What is unsafe is planning
+/// forward from a state nobody could read.
+pub async fn unreconciled_apply_exists(pool: &SqlitePool) -> Result<bool, AppError> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE kind = 'apply' AND error_code = ?")
+            .bind(RECONCILE_FAILED_CODE)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| AppError::ReconcileFailed {
+                detail: format!("could not read the interruption state: {e}"),
+            })?;
+    Ok(count > 0)
+}
+
 /// Drop a [`RECONCILE_FAILED_CODE`] stamp after a pass that did settle the job.
 async fn clear_needs_review(pool: &SqlitePool, job_id: i64) -> Result<(), AppError> {
     sqlx::query("UPDATE jobs SET error_code = NULL WHERE id = ? AND error_code = ?")

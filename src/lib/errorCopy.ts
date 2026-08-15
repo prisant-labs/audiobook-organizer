@@ -324,6 +324,20 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "warn",
   },
 
+  // Deliberately NOT folded into "tidying-blocked" above. That one means a check
+  // found a difference: the app knows what happened and is waiting to be told
+  // it is fine. This one means no check could be completed at all, so the app
+  // does not know what happened. One message covering both would be wrong half
+  // the time, and the half it got wrong would be the half where the reader is
+  // most in need of an accurate account.
+  "interruption-unresolved": {
+    sentence: "The last run stopped early, and what it had already done could not be worked out.",
+    nextStep:
+      "Open History and settle that run first. Putting it back is still available, and nothing was changed by stopping here.",
+    retryable: false,
+    tone: "warn",
+  },
+
   // -- Pause / Stop controls (v0.5.0: pausing between books, F-608) ------------
   "nothing-to-pause": {
     sentence: "There's nothing running to pause.",
