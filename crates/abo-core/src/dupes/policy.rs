@@ -88,9 +88,11 @@ pub enum KeeperReason {
     PreferredFormat,
     /// It is fewer files than the others (`FD-44`'s book-level keep-m4b).
     FewerFiles,
-    /// The policy found nothing to choose between: every copy ranked equally
-    /// under it, so the keeper is simply the first by path. The common case on
-    /// exact groups, and the honest thing to tell a reader.
+    /// The policy found nothing to choose between at the top: the LEADING
+    /// copies ranked equally under it, so the keeper is simply the first of them
+    /// by path. Says nothing about copies further down, which may well have
+    /// ranked lower. The common case on exact groups, and the honest thing to
+    /// tell a reader.
     Equivalent,
 }
 
@@ -154,7 +156,16 @@ pub fn propose(
         .position(|(_, r)| *r == best)
         .expect("best came from this list");
 
-    let decisive = ranked.iter().filter(|(_, r)| *r == best).count() == 1;
+    // The nearest rival: the best rank among everyone else. `Equivalent` when it
+    // equals `best`, otherwise it is what the winner actually had to beat, and
+    // therefore what the reason must name.
+    let rival = ranked
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != winner)
+        .map(|(_, (_, r))| *r)
+        .max()
+        .expect("len >= 2 checked above");
 
     Some(Resolution {
         keeper: ranked[winner].0,
@@ -164,49 +175,60 @@ pub fn propose(
             .filter(|(i, _)| *i != winner)
             .map(|(_, (id, _))| *id)
             .collect(),
-        reason: if decisive {
-            best.reason()
-        } else {
+        reason: if rival == best {
             KeeperReason::Equivalent
+        } else {
+            discriminating_reason(best, rival)
         },
     })
 }
 
-/// One member's rank under a policy. Higher wins.
+/// One member's rank under a policy. Higher wins, and `Ord` is derived, so
+/// field order IS precedence.
 ///
-/// Comparison is derived, so `Format`'s first field is a TIER and its second is
-/// the within-tier score. Ties are detectable rather than merely resolved,
-/// because the caller needs to know not just who won but whether anyone actually
-/// beat anyone: "these were equivalent" is a different thing to tell a reader
-/// than "this one was bigger".
+/// Ties are detectable rather than merely resolved, because the caller needs to
+/// know not just who won but whether anyone actually beat anyone: "these were
+/// equivalent" is a different thing to tell a reader than "this one was bigger".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Rank {
     /// keep-larger and flag-only: total bytes.
     Bytes(u64),
-    /// keep-m4b, as (tier, score within tier), both higher-is-better:
+    /// keep-m4b, in precedence order, all higher-is-better:
     ///
-    /// - tier 2, a `.m4b` file. The literal reading of the policy.
-    /// - tier 1, a book folder, scored by INVERTED audio count so fewer files
-    ///   ranks higher (`FD-44`).
-    /// - tier 0, any other file, scored by size so the tier still has an
-    ///   internal order rather than collapsing into one big tie.
+    /// 0. `1` for a `.m4b`, `0` otherwise. The literal reading of the policy.
+    /// 1. INVERTED file count, so fewer files ranks higher (`FD-44`).
+    /// 2. Total bytes, so two copies alike on both still have an order.
     ///
-    /// A `.m4b` outranking a book folder is deliberate and consistent: under
-    /// keep-m4b, "prefer the .m4b" and "prefer one file over twelve" point the
-    /// same way, because a single `.m4b` IS the one-file copy.
-    Format(u8, u64),
+    /// **A plain file counts as ONE file, and that is load-bearing.** An earlier
+    /// version ranked "is a book folder" above "is any other file", which made a
+    /// twelve-part book beat a single `.mp3` and inverted the exact comparison
+    /// `FD-44` asks keep-m4b to make. Being a book is not itself a merit; the
+    /// merit is being fewer files, and a lone file is the fewest there is.
+    Format(u8, u64, u64),
 }
 
-impl Rank {
-    fn reason(self) -> KeeperReason {
-        match self {
-            Rank::Format(2, _) => KeeperReason::PreferredFormat,
-            Rank::Format(1, _) => KeeperReason::FewerFiles,
-            // Tier 0 means no `.m4b` and no book anywhere in the group, so what
-            // actually decided it was size. Saying "fewer files" there would be
-            // a reason the reader could check and find false.
-            _ => KeeperReason::LargerCopy,
+/// Which axis actually decided it, by comparing the winner against its nearest
+/// rival.
+///
+/// Derived from the comparison rather than from the winner's own category. The
+/// difference is not cosmetic: two `.m4b` copies of different sizes would
+/// otherwise be reported as won on format, and `AC-24` puts that sentence in
+/// front of someone who can look at the two paths and see that both end in
+/// `.m4b`. A reason a reader can falsify is worse than no reason.
+fn discriminating_reason(winner: Rank, rival: Rank) -> KeeperReason {
+    match (winner, rival) {
+        (Rank::Format(p1, f1, _), Rank::Format(p2, f2, _)) => {
+            if p1 != p2 {
+                KeeperReason::PreferredFormat
+            } else if f1 != f2 {
+                KeeperReason::FewerFiles
+            } else {
+                KeeperReason::LargerCopy
+            }
         }
+        // keep-larger and flag-only have exactly one axis. Mixed variants cannot
+        // occur: one policy ranks every member of a call.
+        _ => KeeperReason::LargerCopy,
     }
 }
 
@@ -221,13 +243,14 @@ fn rank(
         // flag-only reuses keep-larger's ranking as its suggestion heuristic.
         ResolutionPolicy::FlagOnly | ResolutionPolicy::KeepLarger => Rank::Bytes(size),
         ResolutionPolicy::KeepM4b => {
-            if is_preferred_format(path) {
-                Rank::Format(2, size)
-            } else if let Some(book) = books.iter().find(|b| b.id == entry_id) {
-                Rank::Format(1, u64::MAX - book.audio_count as u64)
-            } else {
-                Rank::Format(0, size)
-            }
+            let preferred = u8::from(is_preferred_format(path));
+            // A member that is not a known book folder is a single file.
+            let files = books
+                .iter()
+                .find(|b| b.id == entry_id)
+                .map(|b| b.audio_count as u64)
+                .unwrap_or(1);
+            Rank::Format(preferred, u64::MAX - files, size)
         }
     }
 }
@@ -444,6 +467,61 @@ mod tests {
         let r = propose(ResolutionPolicy::KeepM4b, &g, &books).unwrap();
         assert_eq!(r.keeper, 2);
         assert_eq!(r.reason, KeeperReason::PreferredFormat);
+    }
+
+    /// The reason must name the axis that ACTUALLY decided it, not the winner's
+    /// category. Two `.m4b` copies of different sizes: `PreferredFormat` would
+    /// read "it is a .m4b and the others are not", which the reader can check
+    /// against the paths and find false. Size decided, so size is the reason.
+    #[test]
+    fn two_m4bs_of_different_sizes_are_decided_by_size_not_by_format() {
+        let g = group(
+            METHOD_VERSION,
+            vec![
+                member(1, "E:\\a\\Dune.m4b", 900),
+                member(2, "E:\\b\\Dune.m4b", 100),
+            ],
+        );
+        let r = propose(ResolutionPolicy::KeepM4b, &g, &[]).unwrap();
+        assert_eq!(r.keeper, 1);
+        assert_eq!(r.reason, KeeperReason::LargerCopy);
+    }
+
+    /// A lone file IS a one-file copy, so `FD-44`'s "prefer the copy that is one
+    /// file over the copy that is twelve" must prefer it over a twelve-file
+    /// book. Ranking books above plain files would have inverted exactly the
+    /// comparison the policy exists to make.
+    #[test]
+    fn keep_m4b_prefers_a_single_file_over_a_twelve_file_book() {
+        let g = group(
+            METHOD_VERSION,
+            vec![
+                member(10, "E:\\a\\Dune", 700),
+                member(2, "E:\\b\\Dune.mp3", 100),
+            ],
+        );
+        let books = vec![book(10, 12, 700)];
+        let r = propose(ResolutionPolicy::KeepM4b, &g, &books).unwrap();
+        assert_eq!(r.keeper, 2, "one file beats twelve, even as an .mp3");
+        assert_eq!(r.reason, KeeperReason::FewerFiles);
+    }
+
+    /// `Equivalent` means the LEADING copies tied, not that every copy did. A
+    /// third, smaller copy losing does not make the top two distinguishable.
+    #[test]
+    fn a_tie_at_the_top_is_equivalent_even_when_a_third_copy_loses() {
+        let g = group(
+            METHOD_VERSION,
+            vec![
+                member(1, "E:\\a\\Dune.mp3", 99),
+                member(2, "E:\\b\\Dune.mp3", 99),
+                member(3, "E:\\c\\Dune.mp3", 10),
+            ],
+        );
+        let r = propose(ResolutionPolicy::KeepLarger, &g, &[]).unwrap();
+        assert_eq!(r.reason, KeeperReason::Equivalent);
+        assert_eq!(r.keeper, 1, "first by path among the tied leaders");
+        assert_eq!(r.losers, vec![2, 3]);
     }
 
     #[test]

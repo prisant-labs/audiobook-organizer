@@ -229,7 +229,7 @@ Steps:
 4. Ensure set-aside losers go through F-605 (quarantine) preserving relative paths and provenance, so F-603 (rollback) restores them (AC-27).
 
 Verification:
-- Table-driven policy tests over fixture groups (AC-23, AC-24). **Done**, 12 tests in `policy.rs`; the tie-break is mutation-tested (taking the LAST member at the best rank instead of the first fails two).
+- Table-driven policy tests over fixture groups (AC-23, AC-24). **Done**, 15 tests in `policy.rs`; the tie-break is mutation-tested (taking the LAST member at the best rank instead of the first fails two). Two defects were found by review after the first version and are worth not reintroducing: the keeper's REASON was derived from the winner's own category rather than from the axis that beat the runner-up (so two `.m4b` copies of different sizes reported "it is a .m4b and the others are not", which the reader can check against the paths and falsify), and ranking "is a book folder" above "is any other file" made a twelve-part book beat a single `.mp3`, inverting the exact comparison `FD-44` asks keep-m4b to make. A plain file counts as ONE file; being a book is not itself a merit.
 - flag-only emits zero operations (AC-26). **Pending step 3**: emission is what there is to assert, and it does not exist yet. `policy.rs` covers the other half of `AC-26`, that flag-only still produces a keeper suggestion.
 - Dedupe round-trip test on fixtures: resolve -> set aside -> rollback -> tree byte-identical (AC-27); the real-data-copy version is exercised in Phase 8 / campaign log.
 
