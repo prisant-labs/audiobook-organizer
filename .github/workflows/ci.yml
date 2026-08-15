@@ -50,6 +50,30 @@ jobs:
       - name: Assert zero em-dashes and en-dashes
         run: node scripts/check-dashes.mjs
 
+      # The design system governs colour exactly (hex tokens in tokens.css) and copy
+      # mechanically (vocabulary.test.ts), and neither drifts. It states type as
+      # RANGES ("h1 26-30px") and says nothing about spacing, and both drifted to 71
+      # distinct arbitrary values across 285 uses, including text-[6.8px] and
+      # text-[12.5px]. A system produces exactly the consistency it enforces.
+      #
+      # This is the cheap half of the fix and needs no design decision: it freezes
+      # the sprawl at today's count so the problem stops growing while the real
+      # scale (a spacing and type scale in tokens.css under @theme) is decided. The
+      # gate fails in BOTH directions on purpose, so an improvement lowers the
+      # baseline in its own diff rather than leaving invisible slack behind.
+      #
+      # It deliberately ignores arbitrary VARIANTS (data-[state=open]:, [&>svg]:),
+      # which are selector logic rather than design values and which shadcn/ui
+      # generates heavily; the agreed order is scale first then shadcn, so this must
+      # not tax the next step. Verified in eight directions before landing: clean on
+      # the real tree, catches a new value, catches a duplicate of an existing one,
+      # catches a removal, catches a variant-prefixed value, and stays silent on
+      # arbitrary variants, arbitrary properties and ordinary JavaScript brackets.
+      #
+      # Node-only, so it fails fast here before the Rust toolchain and pnpm install.
+      - name: Assert arbitrary Tailwind values have not grown
+        run: node scripts/check-arbitrary-values.mjs
+
       # PRODUCT.md, CLAUDE.md and AGENTS.md restate the sanctioned plain-language
       # vocabulary in prose. Nothing checked those copies against what the code
       # actually enforces, which is exactly how FD-46 ("copies" -> "duplicates") and
@@ -90,7 +114,14 @@ jobs:
           set -eu
           # NOT just the adjacent form: `set[- ]aside` missed "Set it aside" and
           # "sets the copy aside", both of which were live in shipped copy.
-          retired='set(s|ting)?[^.!?]{0,24}aside|\bshelf\b|\bshelves\b'
+          #
+          # Inflections matter as much as base forms. `shelved` was live in the
+          # shipped good-news line while a noun-only pattern passed, and FD-48
+          # retired a whole verb family ("tidy up", "tidying", "tidied",
+          # "tidy-up"), so a pattern matching only "tidy up" would have left most
+          # of them standing. A hyphen is a word boundary, so \btidy\b covers
+          # "tidy-up" without a separate alternative.
+          retired='set(s|ting)?[^.!?]{0,24}aside|\bshel(f|ves|ved|ving)\b|\btid(y|ies|ied|ying)\b'
           bad=0
           for f in PRODUCT.md CLAUDE.md AGENTS.md; do
             if [ ! -r "$f" ]; then

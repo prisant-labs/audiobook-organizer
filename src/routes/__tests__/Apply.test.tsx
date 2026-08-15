@@ -299,7 +299,7 @@ describe("Apply - failed phase", () => {
     // 1. What happened - the CODE-SPECIFIC sentence from ERROR_COPY, not a generic
     //    heading alone (the banner is present too, but the specific sentence proves
     //    the panel now consumes the exhaustive copy map).
-    expect(screen.getByText(/something stopped the tidy-up/i)).toBeInTheDocument();
+    expect(screen.getByText(/something stopped the run/i)).toBeInTheDocument();
     expect(screen.getByText(ERROR_COPY["source-vanished"].sentence)).toBeInTheDocument();
     // 2. What is safe - always shown.
     expect(screen.getByText(STRINGS.apply.failedSafeNote)).toBeInTheDocument();

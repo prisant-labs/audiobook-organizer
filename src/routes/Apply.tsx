@@ -7,15 +7,23 @@
 //   running (not paused) -> Pause between books | Stop
 //   running (paused)     -> [Paused between books] Resume | Stop
 //   stopped              -> [Stopped between books] (no buttons)
-//   completed (real)     -> [Tidy-up complete] FD-10 reassurance
+//   completed (real)     -> [Organizing complete] FD-10 reassurance
 //   completed (dry-run)  -> [Rehearsal complete] body
 //   blocked              -> [Needs a look] Got it
 //   failed               -> ErrorCallout (FD-04 surface)
 //
 // Copy register (CLAUDE.md, PRODUCT.md, design-system Section 6.1):
-//   "books", "shelves", "copies", "tidy up", "set aside", "undo",
+//   "books", "library", "duplicates", "organize", "Archive", "undo",
 //   "Pause between books", "stopped between books" are the canonical terms.
 //   NEVER: operations, ops, journal, manifest, rollback, quarantine, dashboard.
+//   Four of the six nouns this comment used to list had been RETIRED by a
+//   decision while it still taught them as canon: shelves (FD-47), copies
+//   (FD-46), set aside (FD-42) and tidy up (FD-48). Nothing swept it, because
+//   the vocabulary gates read shipped copy and three governance files, never
+//   code comments. A stale list of retired words presented as the rule is worse
+//   than no list, so this one now carries its decision ids.
+//   "Organize" has no noun form (FD-48): use "the plan", "the changes", or
+//   "run" where copy needs one.
 //
 // AC-30 (FD-10 canon string): must appear character-for-character when a real
 //   apply completes. Pulled from STRINGS.library.reassurance - see strings.ts.

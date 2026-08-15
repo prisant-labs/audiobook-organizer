@@ -50,24 +50,24 @@ interface ActiveJob {
 export function AppShell({ settings, onUpdate }: AppShellProps) {
   const [route, setRoute] = useState<RouteId>(DEFAULT_ROUTE);
   const [activeJob, setActiveJob] = useState<ActiveJob | null>(null);
-  // A tidy-up that never started (apply_start failed): there is no job to show, so
+  // A run that never started (apply_start failed): there is no job to show, so
   // this holds the family-safe error surface instead of failing silently to the
   // console (P8 minor). Cleared by the retry action, which returns to the review.
   const [startError, setStartError] = useState<AppError | null>(null);
   // An undo plan prepared from History (v0.6.0). Reviewing it uses the SAME
-  // surface a forward tidy-up uses (D-09), so this is just a plan id the
-  // Tidy-up route opens instead of generating one from the current scan.
+  // surface a forward run uses (D-09), so this is just a plan id the Organize
+  // route opens instead of generating one from the current scan.
   //
   // It is scoped to ONE visit. `usePlanReview` prefers this id over the scan on
   // every run, including a regenerate, so leaving it set would strand the user on
-  // the undo: navigating away and back to Tidy-up would reopen the undo plan, and
+  // the undo: navigating away and back to Organize would reopen the undo plan, and
   // "build the plan again" would rebuild the undo rather than a forward plan.
   // `navigate` below is therefore the ONLY way to change route from the chrome,
   // and it always clears the selection; `openUndoPlan` is the one path that sets
   // it, immediately before routing.
   const [openPlanId, setOpenPlanId] = useState<number | null>(null);
 
-  // Ordinary navigation: always drops any prepared undo, so Tidy-up means the
+  // Ordinary navigation: always drops any prepared undo, so Organize means the
   // forward plan unless the user just asked for an undo.
   const navigate = useCallback((next: RouteId) => {
     setOpenPlanId(null);
@@ -77,7 +77,7 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   // The one path that opens a prepared undo on the review surface.
   const openUndoPlan = useCallback((planId: number) => {
     setOpenPlanId(planId);
-    setRoute("tidy-up");
+    setRoute("organize");
   }, []);
   // ONE `classify_overview` load for the whole shell (T-15): the Sidebar
   // badges and the Library home both derive from this single `health` value,
@@ -86,10 +86,10 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   const health = useHealthMetrics();
   const counts = navCountsFrom(health.overview);
 
-  // A tidy-up a previous session was killed in the middle of (v0.6.0 P1c,
+  // A run a previous session was killed in the middle of (v0.6.0 P1c,
   // F-606). It takes the screen area ahead of everything else, but the sidebar
   // stays live and navigation stays open: the dangerous action is starting a
-  // NEW tidy-up, not using the app, and blocking navigation would be a
+  // NEW run, not using the app, and blocking navigation would be a
   // procedural gate that stops nothing an IPC caller can reach. The gate that
   // matters belongs in the engine, beside ensure_forward_tidying_allowed, and
   // is recorded in STATUS.md as a precondition for enabling real changes.
@@ -110,7 +110,7 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
     return true;
   }, [settings, onUpdate]);
 
-  // F-904 apply start (P8, AC-27): called when the user confirms the tidy-up
+  // F-904 apply start (P8, AC-27): called when the user confirms the changes
   // from ReviewFooter. Uses a dry-run apply for safety in P8; the mode can be
   // promoted to "real" in a later release once the UI exposes a mode selector.
   // NEVER targets E:\Books - Audio or any real library in CI/tests; the plan
@@ -129,9 +129,9 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   }, []);
 
   // Carrying on is a fresh scan and a fresh plan, not a replay of the
-  // interrupted job (FD-39): books already tidied produce no operation the
+  // interrupted job (FD-39): books already moved produce no operation the
   // second time, so the next plan covers exactly the work that remains. That
-  // makes this plain navigation to where the tidy-up action already lives.
+  // makes this plain navigation to where the Organize action already lives.
   // Deliberately does not start a scan: work should not begin off the back of
   // a recovery screen.
   const onInterruptionGoToLibrary = useCallback(() => {
@@ -145,7 +145,7 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   }, [interruption, navigate]);
 
   // The same two-step History uses (D-09): prepare the inverse plan, then hand
-  // the user to the review surface a forward tidy-up uses. Nothing moves on
+  // the user to the review surface a forward run uses. Nothing moves on
   // this click. The op ids come from the engine's UndoOffer, never recomputed
   // here. A failed prepare leaves the notice up rather than dismissing it,
   // because dismissing would strand the user with nothing undone and no
@@ -167,12 +167,12 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
   }, [interruption, openUndoPlan]);
 
   // When the user finishes with the Apply screen (Done/acknowledge/stopped),
-  // return to the tidy-up route so they can see the plan or start again. Goes
+  // return to the Organize route so they can see the plan or start again. Goes
   // through `navigate` so a just-run undo plan is cleared: after running one, the
   // review surface should show a fresh forward plan, not the undo again.
   const onApplyDone = useCallback(() => {
     setActiveJob(null);
-    navigate("tidy-up");
+    navigate("organize");
     health.reload();
   }, [health, navigate]);
 
@@ -242,7 +242,7 @@ function RouteContent({
   switch (route) {
     case "library":
       return <Library onNavigate={onNavigate} health={health} onRepickRoot={onRepickRoot} />;
-    case "tidy-up":
+    case "organize":
       return (
         <Review
           scanId={health.overview?.scan_id ?? null}

@@ -127,14 +127,14 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
 
   // -- Plan build / validation (nothing is moved while planning) -------------
   "plan-generation-failed": {
-    sentence: "The tidy-up plan couldn't be built.",
+    sentence: "The plan couldn't be built.",
     nextStep:
       "Build the plan again. Nothing was changed - building a plan only reads your library.",
     retryable: true,
     tone: "danger",
   },
   "plan-not-found": {
-    sentence: "That tidy-up plan is no longer available.",
+    sentence: "That plan is no longer available.",
     nextStep: "Build the plan again from your library.",
     retryable: false,
     tone: "danger",
@@ -146,7 +146,7 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "warn",
   },
   "nothing-approved": {
-    sentence: "Nothing is turned on to tidy up.",
+    sentence: "Nothing is turned on to organize.",
     nextStep: "Turn on at least one group, then try again.",
     retryable: false,
     tone: "warn",
@@ -200,12 +200,12 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
   "apply-not-supported": {
     sentence: "Making changes for real isn't available in this version yet.",
     nextStep:
-      "You can preview what a tidy-up would do. Making changes for real arrives in a later version.",
+      "You can preview what organizing would change. Making changes for real arrives in a later version.",
     retryable: false,
     tone: "warn",
   },
   "apply-failed": {
-    sentence: "The app couldn't record this tidy-up run.",
+    sentence: "The app couldn't record this run.",
     nextStep: "Try again. If it keeps happening, restart the app - your audiobooks are untouched.",
     retryable: true,
     tone: "danger",
@@ -219,28 +219,28 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
 
   // -- Making changes for real (v0.5.0 executor: safety-first, never overwrite) --
   "job-already-running": {
-    sentence: "A tidy-up is already in progress.",
-    nextStep: "Wait for it to finish, then start the next one. Only one tidy-up runs at a time.",
+    sentence: "Organizing is already in progress.",
+    nextStep: "Wait for it to finish, then start the next one. Only one run happens at a time.",
     retryable: false,
     tone: "warn",
   },
   "source-vanished": {
-    sentence: "Something this tidy-up was going to change is no longer where it was.",
-    nextStep: "Scan your library again to refresh it, then review and run the tidy-up once more.",
+    sentence: "Something this run was going to change is no longer where it was.",
+    nextStep: "Scan your library again to refresh it, then review and organize once more.",
     retryable: true,
     tone: "warn",
   },
   "target-appeared": {
     sentence: "Something already exists where a change would go, so it was left alone.",
     nextStep:
-      "Nothing was overwritten. Scan your library again, then review and run the tidy-up once more.",
+      "Nothing was overwritten. Scan your library again, then review and organize once more.",
     retryable: true,
     tone: "warn",
   },
   "copy-verify-mismatch": {
     sentence: "A file copied to another drive didn't match the original, so the change was stopped.",
     nextStep:
-      "Your original file is safe and untouched. Check the other drive for errors, then try the tidy-up again.",
+      "Your original file is safe and untouched. Check the other drive for errors, then try again.",
     retryable: true,
     tone: "danger",
   },
@@ -252,11 +252,11 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "danger",
   },
 
-  // -- Undoing a tidy-up (v0.5.0: putting things back the way they were) -------
+  // -- Undoing a run (v0.5.0: putting things back the way they were) ----------
   "rollback-not-reversible": {
-    sentence: "That tidy-up was a practice run, so nothing actually moved.",
+    sentence: "That was a practice run, so nothing actually moved.",
     nextStep:
-      "There's nothing to undo. Run a real tidy-up first if you want changes you can put back.",
+      "There's nothing to undo. Do a real run first if you want changes you can put back.",
     retryable: false,
     tone: "warn",
   },
@@ -270,7 +270,7 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
   "rollback-prepare-failed": {
     sentence: "The undo couldn't be prepared.",
     nextStep:
-      "The undo file may be missing or the tidy-up it refers to may be gone. Scan your library again, then build and review a fresh plan instead.",
+      "The undo file may be missing or the run it refers to may be gone. Scan your library again, then build and review a fresh plan instead.",
     retryable: true,
     tone: "danger",
   },
@@ -291,12 +291,12 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "warn",
   },
 
-  // -- The record of past tidy-ups (v0.6.0 History) ---------------------------
-  // A read-only failure: the record could not be SHOWN. Past tidy-ups and their
+  // -- The record of past runs (v0.6.0 History) -------------------------------
+  // A read-only failure: the record could not be SHOWN. Past runs and their
   // undo files are untouched, and an undo file is self-contained (AC-11), so it
   // stays usable even when this read fails.
   "history-unavailable": {
-    sentence: "The app couldn't read the record of your past tidy-ups.",
+    sentence: "The app couldn't read the record of your past runs.",
     nextStep:
       "Your books and your undo files are untouched - only the app's own notes couldn't be read. Restart the app and try again.",
     retryable: true,
@@ -304,11 +304,11 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
   },
 
   // -- Picking up after an interruption (v0.6.0 F-606) ------------------------
-  // The startup pass only READS the shelves to work out how far an interrupted
-  // tidy-up got; it never moves anything. So the copy can promise, without
+  // The startup pass only READS your library to work out how far an interrupted
+  // run got; it never moves anything. So the copy can promise, without
   // qualification, that nothing was changed by the failure itself.
   "reconcile-failed": {
-    sentence: "A tidy-up was interrupted, and the app couldn't work out how far it got.",
+    sentence: "A run was interrupted, and the app couldn't work out how far it got.",
     nextStep:
       "Nothing was changed by this. Restart the app to try again, or scan your library to see where your books stand now.",
     retryable: true,
@@ -317,9 +317,9 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
 
   // -- After-the-fact check (v0.5.0: paused until a difference is acknowledged) --
   "tidying-blocked": {
-    sentence: "The last tidy-up's after-the-fact check found a difference that needs a look.",
+    sentence: "The last run's after-the-fact check found a difference that needs a look.",
     nextStep:
-      "Review the after-the-fact check and acknowledge it to continue. Undoing the last tidy-up is still available.",
+      "Review the after-the-fact check and acknowledge it to continue. Undoing the last run is still available.",
     retryable: false,
     tone: "warn",
   },
@@ -340,14 +340,14 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
 
   // -- Pause / Stop controls (v0.5.0: pausing between books, F-608) ------------
   "nothing-to-pause": {
-    sentence: "There's no tidy-up running to pause.",
-    nextStep: "Start a tidy-up first - you can pause it between books while it runs.",
+    sentence: "There's nothing running to pause.",
+    nextStep: "Start organizing first - you can pause it between books while it runs.",
     retryable: false,
     tone: "warn",
   },
   "nothing-to-resume": {
-    sentence: "This tidy-up isn't paused, so there's nothing to resume.",
-    nextStep: "If a tidy-up is paused, use Resume to continue it between books.",
+    sentence: "This run isn't paused, so there's nothing to resume.",
+    nextStep: "If a run is paused, use Resume to continue it between books.",
     retryable: false,
     tone: "warn",
   },
