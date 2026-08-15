@@ -123,7 +123,7 @@ csv = "1"
 # E:/Projects/product-on-purpose/repo-sync-tool) so a silent lofty bump cannot
 # change what the recorded FD-14 verdict was measured against, nor what the cover
 # reader was tested over.
-lofty = "=0.24.0"
+lofty = "=0.25.0"
 
 # blake3 computes the content hash that turns a duplicate CANDIDATE into a
 # proven duplicate (F-702, v0.6.0 P2). Chosen over SHA-256 for throughput: this
