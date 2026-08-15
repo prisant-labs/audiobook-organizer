@@ -14,6 +14,7 @@
     "test": "vitest run && node scripts/check-contrast.mjs",
     "test:watch": "vitest",
     "check:contrast": "node scripts/check-contrast.mjs",
+    "check:arbitrary": "node scripts/check-arbitrary-values.mjs",
     "bindings:check": "cargo test -p abo --test export_bindings && git diff --exit-code -- src/lib/bindings.ts",
     "tauri": "tauri"
   },
