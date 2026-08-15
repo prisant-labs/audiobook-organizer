@@ -171,11 +171,11 @@ function Specimens() {
           <Sidebar
             active="library"
             onNavigate={fx.noop}
-            counts={{ duplicateGroups: 403, historyCount: 12, tidyUpStatus: "ready" }}
+            counts={{ duplicateGroups: 403, historyCount: 12, organizeStatus: "ready" }}
           />
         </Specimen>
-        <Specimen name="Sidebar" state="tidy-up active, no counts yet" note="FD-27: badges are omitted, never faked as 0">
-          <Sidebar active="tidy-up" onNavigate={fx.noop} counts={{}} />
+        <Specimen name="Sidebar" state="Organize active, no counts yet" note="FD-27: badges are omitted, never faked as 0">
+          <Sidebar active="organize" onNavigate={fx.noop} counts={{}} />
         </Specimen>
         <Specimen name="ThemeToggle" state="day">
           <ThemeToggle theme="day" onChange={fx.noop} />
