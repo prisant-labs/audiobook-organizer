@@ -751,6 +751,21 @@ export type AppError =
  */
 "tidying-blocked" | 
 /**
+ *  A previous run was cut short and the startup reconciler could not
+ *  establish what it actually did, so the library's true state is unknown.
+ *  Starting a fresh forward run from an unknown state is the one thing that
+ *  could turn a recoverable interruption into an unrecoverable one, so the
+ *  forward path is refused until that run is settled.
+ * 
+ *  Distinct from [`Self::TidyingBlocked`], which means a check FOUND a
+ *  difference. This means no check could be completed at all. The two need
+ *  different copy because they ask the reader for different things.
+ * 
+ *  FORWARD-only, exactly like `TidyingBlocked`: preparing or running an UNDO
+ *  is never refused this way, because undo is the remedy.
+ */
+"interruption-unresolved" | 
+/**
  *  `job_pause` was asked to pause, but no tidy-up is in progress to pause
  *  (it already finished, was never started, or the id is unknown).
  */

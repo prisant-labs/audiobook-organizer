@@ -338,6 +338,21 @@ pub enum AppError {
     #[error("further tidy-ups are paused until the after-the-fact check is acknowledged")]
     TidyingBlocked,
 
+    /// A previous run was cut short and the startup reconciler could not
+    /// establish what it actually did, so the library's true state is unknown.
+    /// Starting a fresh forward run from an unknown state is the one thing that
+    /// could turn a recoverable interruption into an unrecoverable one, so the
+    /// forward path is refused until that run is settled.
+    ///
+    /// Distinct from [`Self::TidyingBlocked`], which means a check FOUND a
+    /// difference. This means no check could be completed at all. The two need
+    /// different copy because they ask the reader for different things.
+    ///
+    /// FORWARD-only, exactly like `TidyingBlocked`: preparing or running an UNDO
+    /// is never refused this way, because undo is the remedy.
+    #[error("a previous run could not be checked, so further runs are paused until it is settled")]
+    InterruptionUnresolved,
+
     // ---- Apply control family (v0.5.0 Phase 7: F-608 pause/resume) ----
     //
     // The plain refusals for the pause/resume controls (AC-24). Pausing needs a
@@ -427,6 +442,7 @@ impl AppError {
             AppError::DuplicateVerifyFailed { .. } => "duplicate-verify-failed",
             // Post-apply check family
             AppError::TidyingBlocked => "tidying-blocked",
+            AppError::InterruptionUnresolved => "interruption-unresolved",
             // Apply control family
             AppError::NothingToPause => "nothing-to-pause",
             AppError::NothingToResume => "nothing-to-resume",
@@ -621,6 +637,12 @@ impl AppError {
                 "The last tidy-up's after-the-fact check found a difference that needs a look \
                  before more changes are made. Review the after-the-fact check and acknowledge it; \
                  undoing the last tidy-up is still available. Once acknowledged, tidy-ups resume."
+            }
+            AppError::InterruptionUnresolved => {
+                "The last run stopped early and the app could not work out what it had already \
+                 done, so it will not start another one from a library it cannot read. Open \
+                 History and settle that run first; putting it back is still available. Nothing \
+                 has been changed by this refusal."
             }
             // Apply control family
             AppError::NothingToPause => {
