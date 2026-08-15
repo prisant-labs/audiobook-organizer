@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Component gallery</title>
+    <!--
+      Dev-only entry point. Vite's build input is index.html alone
+      (vite.config.ts declares no build.rollupOptions.input), so this page is
+      served by `pnpm dev` and is never bundled into the app. That is the whole
+      mechanism keeping it out of the shipped product: do not add it to the
+      build input.
+
+      Open http://localhost:1420/gallery.html after `pnpm dev`.
+    -->
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/gallery/main.tsx"></script>
+  </body>
+</html>

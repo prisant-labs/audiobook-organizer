@@ -31,15 +31,15 @@ describe("GoodNewsLine", () => {
         }}
       />,
     );
-    expect(screen.getByText(/582 books already in tidy folders/)).toBeInTheDocument();
-    expect(screen.getByText(/34 series shelved together/)).toBeInTheDocument();
+    expect(screen.getByText(/582 books already in the right folders/)).toBeInTheDocument();
+    expect(screen.getByText(/34 series kept together/)).toBeInTheDocument();
     expect(screen.getByText(/20 empty folders ready to sweep/)).toBeInTheDocument();
     expect(screen.getByText(/10\.1 GB of duplicate copies found/)).toBeInTheDocument();
   });
 
   it("omits a fact whose count is zero even when others are nonzero", () => {
     render(<GoodNewsLine goodNews={{ ...ZERO, already_tidy_books: 5 }} />);
-    expect(screen.getByText(/5 books already in tidy folders/)).toBeInTheDocument();
+    expect(screen.getByText(/5 books already in the right folders/)).toBeInTheDocument();
     expect(screen.queryByText(/series shelved/)).toBeNull();
     expect(screen.queryByText(/empty folders/)).toBeNull();
     expect(screen.queryByText(/duplicate copies/)).toBeNull();

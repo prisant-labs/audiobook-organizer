@@ -72,7 +72,28 @@ const RETIRED_WORDS = [
   // FD-47 (2026-08-06): the word for where books live is "library". The word
   // boundary matters: it must NOT fire on "Audiobookshelf", the product this
   // app complements.
-  "\\bshel(?:f|ves)\\b",
+  //
+  // "ved" and "ving" were added by FD-48's sweep: the original pattern knew only
+  // the NOUN forms, so "34 series shelved together" was live in the shipped
+  // good-news line and swept by nothing. A retirement covers a word family, not
+  // one inflection of it.
+  "\\bshel(?:f|ves|ved|ving)\\b",
+  // FD-48 (2026-08-14, superseding FD-43): the action is "organize". Every
+  // inflection is retired, not just the bare verb, because "tidy-ups", "already
+  // tidy" and "carry on tidying up" were all live in shipped copy and a pattern
+  // matching only "tidy up" would have left the majority of them standing.
+  //
+  // "tidy-up" needs no separate alternative: a hyphen is a word boundary, so
+  // \btidy\b already matches the first half of it.
+  //
+  // NOT retired: the ENGINEERING identifiers. `needs_tidy_books`,
+  // `already_tidy_books`, `blocks_further_tidying` and the `tidying-blocked`
+  // error code are IPC and schema names that no user reads, and renaming them is
+  // a migration rather than a copy change. This sweep covers STRINGS and
+  // ERROR_COPY values, so those identifiers are out of its reach by
+  // construction, which is the correct division: the vocabulary rule governs
+  // surfaces a user reads, never the names the engine calls things internally.
+  "\\btid(?:y|ies|ied|ying)\\b",
 ] as const;
 
 const BANNED_PATTERN = new RegExp(`(${[...BANNED_WORDS, ...RETIRED_WORDS].join("|")})`, "i");
@@ -197,6 +218,31 @@ describe("copy sweep (T-33, AC-37/AC-38, design-system Section 6)", () => {
     expect(BANNED_PATTERN.test("your Audiobookshelf library")).toBe(false);
     // FD-46 kept "copies" for the members of a group; only the group was renamed.
     expect(BANNED_PATTERN.test("this book has four copies")).toBe(false);
+  });
+
+  // FD-48 (superseding FD-43) retired the whole "tidy" family for "organize",
+  // and closed an FD-47 gap in the same sweep. Each inflection is pinned
+  // separately: the bug being prevented is a pattern that knows only the base
+  // form, which is exactly how "shelved" and "already tidy" stayed live under a
+  // guard that was passing.
+  it("flags every retired inflection, not just the base word", () => {
+    // FD-48: the verb, the noun, and the participles.
+    expect(BANNED_PATTERN.test("Tidy up now")).toBe(true);
+    expect(BANNED_PATTERN.test("No tidy-ups yet")).toBe(true);
+    expect(BANNED_PATTERN.test("Your library is already tidy")).toBe(true);
+    expect(BANNED_PATTERN.test("Carry on tidying up")).toBe(true);
+    expect(BANNED_PATTERN.test("the books have been tidied")).toBe(true);
+    expect(BANNED_PATTERN.test("Tidying up your books")).toBe(true);
+
+    // FD-47's gap: the verb form the original noun-only pattern missed.
+    expect(BANNED_PATTERN.test("34 series shelved together")).toBe(true);
+
+    // The replacements must pass, or the sweep would forbid its own successor.
+    expect(BANNED_PATTERN.test("Organize now")).toBe(false);
+    expect(BANNED_PATTERN.test("Organizing your books")).toBe(false);
+    expect(BANNED_PATTERN.test("Nothing organized yet")).toBe(false);
+    expect(BANNED_PATTERN.test("34 series kept together")).toBe(false);
+    expect(BANNED_PATTERN.test("Real run")).toBe(false);
   });
 
   it("STRINGS carries no Section 6.1 banned vocabulary", () => {

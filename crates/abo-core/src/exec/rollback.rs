@@ -117,7 +117,7 @@ fn invert(
             source_path: forward_target.to_string(),
             target_path: forward_source.to_string(),
             byte_size,
-            rationale: "Undo the last tidy-up: put this back where it was.".to_string(),
+            rationale: "Undo the last run: put this back where it was.".to_string(),
         },
         "rename" => InverseOp {
             op_group: op_group.to_string(),
@@ -125,7 +125,7 @@ fn invert(
             source_path: forward_target.to_string(),
             target_path: forward_source.to_string(),
             byte_size,
-            rationale: "Undo the last tidy-up: change this name back to what it was.".to_string(),
+            rationale: "Undo the last run: change this name back to what it was.".to_string(),
         },
         // A created folder is removed again - only if empty, so an undo never
         // clobbers anything that ended up inside it.
@@ -135,7 +135,7 @@ fn invert(
             source_path: forward_target.to_string(),
             target_path: String::new(),
             byte_size: 0,
-            rationale: "Undo the last tidy-up: remove the folder that was created (only if it is \
+            rationale: "Undo the last run: remove the folder that was created (only if it is \
                         empty)."
                 .to_string(),
         },
@@ -146,7 +146,7 @@ fn invert(
             source_path: String::new(),
             target_path: forward_source.to_string(),
             byte_size: 0,
-            rationale: "Undo the last tidy-up: put back the folder that was removed.".to_string(),
+            rationale: "Undo the last run: put back the folder that was removed.".to_string(),
         },
         "no-op" => return Ok(None),
         other => {
@@ -217,7 +217,7 @@ async fn plan_scope_identity(
             detail: e.to_string(),
         })?
         .ok_or_else(|| AppError::RollbackPrepareFailed {
-            detail: format!("the tidy-up plan {plan_id} to undo is no longer recorded"),
+            detail: format!("the plan {plan_id} to undo is no longer recorded"),
         })?;
     let root: Option<String> = sqlx::query_scalar("SELECT root_path FROM scans WHERE id = ?")
         .bind(plan.scan_id)
@@ -490,7 +490,7 @@ fn assemble_inverse_ops(
             source_path: dir.clone(),
             target_path: String::new(),
             byte_size: 0,
-            rationale: "Undo the last tidy-up: remove the now-empty Archive folder.".to_string(),
+            rationale: "Undo the last run: remove the now-empty Archive folder.".to_string(),
         });
     }
     Ok((all, teardown_dirs))
@@ -663,7 +663,7 @@ pub async fn rollback_prepare_partial<V: Vfs>(
     };
     if done.is_empty() {
         return Err(AppError::RollbackPrepareFailed {
-            detail: "this tidy-up completed no changes, so there is nothing to undo".to_string(),
+            detail: "this run completed no changes, so there is nothing to undo".to_string(),
         });
     }
 

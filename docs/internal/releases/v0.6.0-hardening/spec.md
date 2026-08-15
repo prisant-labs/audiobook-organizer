@@ -135,13 +135,13 @@ Hash verification (F-702 (hash verification)) uses BLAKE3 over candidate members
 
 Added 2026-08-05 from the UI round 2 crit pass. jp: *"This seems like a pretty important feature/function. Perhaps showing a summary popup of changes. spec this and add it to the release plan and sample mockups."*
 
-**The problem.** A plan is built from a stored scan snapshot, not a live read of disk. Starting a tidy-up uses the scan you already have, deliberately: silently re-reading 297 GB on a button press would make the app feel broken. But it means the plan can describe a library that no longer exists, and today the interface never says how old the scan is. The app catches the mismatch at apply time and refuses, which is safe but reads as a failure at the worst possible moment.
+**The problem.** A plan is built from a stored scan snapshot, not a live read of disk. Starting a run uses the scan you already have, deliberately: silently re-reading 297 GB on a button press would make the app feel broken. But it means the plan can describe a library that no longer exists, and today the interface never says how old the scan is. The app catches the mismatch at apply time and refuses, which is safe but reads as a failure at the worst possible moment.
 
 **The shape.** Scanning is **event-triggered, never watched.** A filesystem watcher running for the life of the app is a background process, a source of bugs, and unnecessary for the actual risk (jp, same crit pass: *"there should just be key natural triggers when a folder is automatically scanned"*).
 
 - **AC-42** The library screen displays the age of the current scan in plain language ("last looked: 6 minutes ago") beside a manual re-scan control, so staleness is visible before it becomes a surprise. [UI round 2 crit; F-902]
-- **AC-43** A scan is triggered by exactly these events, and by nothing else: (a) the user asks for one; (b) the user enters the tidy-up flow, subject to AC-44; (c) an undo completes; (d) a tidy-up completes; (e) app start, only when the stored scan is older than a configured threshold. No filesystem watcher exists in any build. [UI round 2 crit]
-- **AC-44** On entering the tidy-up flow, the app compares the library against the stored scan using a **cheap** check (directory listing plus modification times, never a full content re-read). If nothing changed, the user is not interrupted and the flow proceeds. [UI round 2 crit]
+- **AC-43** A scan is triggered by exactly these events, and by nothing else: (a) the user asks for one; (b) the user enters the Organize flow, subject to AC-44; (c) an undo completes; (d) a run completes; (e) app start, only when the stored scan is older than a configured threshold. No filesystem watcher exists in any build. [UI round 2 crit; vocabulary per FD-48]
+- **AC-44** On entering the Organize flow, the app compares the library against the stored scan using a **cheap** check (directory listing plus modification times, never a full content re-read). If nothing changed, the user is not interrupted and the flow proceeds. [UI round 2 crit; vocabulary per FD-48]
 - **AC-45** If the cheap check finds changes, the user is shown a summary before the plan is built, naming what changed by count and kind ("4 books added, 1 removed, 2 renamed"), with two choices: re-scan and rebuild the plan, or proceed with the plan as it stands. Neither choice is preselected as safe; both are legitimate. [UI round 2 crit]
 - **AC-46** Proceeding with a stale plan does not bypass the existing apply-time `snapshot-stale` refusal. AC-45 is an earlier and friendlier surface for the same hazard, never a replacement for the safety check. [D-09 safety invariants]
 
@@ -151,13 +151,13 @@ Added 2026-08-05 from the UI round 2 crit pass. jp: *"This seems like a pretty i
 
 ### F-610 (open a folder in the OS file manager) - P1
 
-Added 2026-08-05 from the UI round 2 crit pass. jp asked for clickable paths in three separate places, then confirmed: *"I am not trying to surface file and folder manager in this application. I just want to open the OS file manager/explorer to the clicked folder."* And: *"i still think in-line folder references throughout the tidying and review process should open to the folder."*
+Added 2026-08-05 from the UI round 2 crit pass. jp asked for clickable paths in three separate places, then confirmed: *"I am not trying to surface file and folder manager in this application. I just want to open the OS file manager/explorer to the clicked folder."* And: *"i still think in-line folder references throughout the tidying and review process should open to the folder."* (Quoted verbatim; the vocabulary is superseded by FD-48.)
 
 **Why this needs a feature rather than a link.** `FD-29` gives the web layer no filesystem and no shell access; its capability allowlist is seven permissions and its own description says "no fs, and no shell". Making a path a hyperlink would mean granting shell access to the entire frontend, forever, to serve a convenience.
 
 - **AC-47** A backend command opens the OS file manager at a given path. The frontend never opens anything itself; it asks. The capability allowlist is unchanged. [FD-29]
 - **AC-48** The command **refuses any path not inside the library root or the set-aside root**, and refuses rather than silently doing nothing. The check exists because the path arrives from the untrusted half: without it, the command is a general "open any path on this machine" primitive reachable from the web layer. [FD-29]
-- **AC-49** Inline folder affordances appear throughout the tidy-up and review surfaces wherever a path is displayed, not only in the sidebar. [UI round 2 crit, jp explicit]
+- **AC-49** Inline folder affordances appear throughout the Organize and review surfaces wherever a path is displayed, not only in the sidebar. [UI round 2 crit, jp explicit; vocabulary per FD-48]
 - **AC-50** The sidebar carries two permanent quick links, to the library root and to the set-aside root, so the action does not require finding a row that happens to show a path. [UI round 2 crit]
 
 ### F-1110 (book-level duplicate comparison) - P1
@@ -183,7 +183,7 @@ Added 2026-08-05 per `FD-44`, from the duplicates approach audit. Every criterio
 
 ## Behavior / Examples
 
-- Kill-during-apply, window A (intent then kill): the journal has `intent(op=42, rename A->B)` with no terminal row. On restart the reconciler finds A present and B absent, concludes the rename never ran, writes nothing terminal for op 42 (or a `failed` marker), and offers resume from op 42. The tier-2 surface says: "The last tidy-up was interrupted. Nothing was left half-done. You can pick up where it stopped, or undo what was already done." Paths appear only under "Show file details."
+- Kill-during-apply, window A (intent then kill): the journal has `intent(op=42, rename A->B)` with no terminal row. On restart the reconciler finds A present and B absent, concludes the rename never ran, writes nothing terminal for op 42 (or a `failed` marker), and offers resume from op 42. The tier-2 surface says: "The last run was interrupted. Nothing was left half-done. You can pick up where it stopped, or undo what was already done." Paths appear only under "Show file details."
 - Kill-during-apply, window B (act then kill): the journal has `intent(op=42)` only, but on disk A is gone and B exists. The reconciler concludes the rename completed, records `done(op=42)`, and resumes from op 43.
 - Dedupe end to end on a copy: detect candidates (basename+size groups) -> verify with BLAKE3 -> apply keep-m4b policy -> confirm keepers per group -> losers set aside into `Quarantine\<job-id>\` preserving relative paths -> rollback restores every set-aside copy to its original location, tree byte-identical.
 - Everything view: 982 rows (sample data, per FD-27) grouped under seven campaign groups (FD-26), scrolled smoothly via virtualization; opening a row's "Show file details" reveals from/to plus "Matched pattern 4 (year-author-title), confidence high."
