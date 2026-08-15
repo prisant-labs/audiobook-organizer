@@ -17,7 +17,7 @@ Every item below leads with what it IS; the reference ID in brackets is just the
 
 The fuller version of this list lives in the "What needs you" section of the latest session log under `_local/_session-logs/`, which is untracked on purpose.
 
-- [ ] **Merge the open pull requests**, or say what to change. None can be self-merged: the repo is public, which lapsed `D-11`'s private-repo allowance (`EXECUTION.md` Section 6.2). They are listed with what each does in "In flight right now" below. [#25](https://github.com/prisant-labs/audiobook-organizer/pull/25) (arbitrary-value ratchet) is independent and mergeable any time. [#26](https://github.com/prisant-labs/audiobook-organizer/pull/26) (component gallery) and [#27](https://github.com/prisant-labs/audiobook-organizer/pull/27) (`FD-48`, the organize verb) can go in either order; whichever rebases second needs a known two-line fix in `src/gallery/Gallery.tsx`, verified by merging them locally.
+- [x] **Merge the open pull requests** - DONE 2026-08-15, on your instruction. Five landed (`#25`, `#26`, `#27`, `#29`, `#30`) plus this page's own change; see "In flight right now" for what each was and which single manual fix was needed. `EXECUTION.md` Section 6.2 requires a human decision for any merge to `main`, and your instruction was that decision; it is recorded here rather than only in a session log.
 - [ ] **Reference screenshots: three to five, one line each on what to steal.** Drop them in `_local/gui/references/`. `D-06` (anti-reference: "looks AI-generated") records what you hate; nothing on file records what you want, so every design decision is currently argued from the negative. This is the only open item nobody but you can do, and the only one that raises the ceiling rather than closing a gap.
 - [ ] **Cut the release tags** (v0.1.0 through v0.5.0). Five releases are built and merged; zero are tagged. Human-only. Runbook: [runbook_cut-tag-release.md](docs/internal/release-plans/runbook_cut-tag-release.md)
 - [ ] **Round-trip evidence: accept or extend** (`AC-17`, v0.5.0 acting). Byte-identical SHA-256 before and after is proven on a 3-book subset of two real folders. Say "good enough" or ask for a fuller run. Scratch copies at `E:\tmp\abo-rt\` (~1.5 GB) can be deleted once you decide. Detail: [v0.5.0 spec, AC-17](docs/internal/releases/v0.5.0-acting/spec.md)
@@ -48,22 +48,23 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 | v0.3.0 | planning | yes | yes | no | tag, G-6 |
 | v0.4.0 | seeing | yes | yes | no | tag, G-1 |
 | v0.5.0 | acting | yes | yes | no | tag, AC-17, FD-33/34 |
-| v0.6.0 | hardening | in progress | `P0`/`P1` **complete**, `P2` engine merged | no | `AC-6` walk, `AC-8` walk |
+| v0.6.0 | hardening | in progress | `P0`/`P1` **complete**, `P2` engine merged, **`P2b` complete** | no | `AC-6` walk, `AC-8` walk |
 | M-1 | campaign | planned | - | - | - |
 | v0.9.0 | packaged | planned | - | - | installer, signing decision |
 
 ## In flight right now
 
-`main` is at `62684bf`. **Every pull request below is open and unmerged**, because merging is a human decision now that the repo is public. They are the first item in the queue above.
+`main` is at `ff39a27`. **Nothing is unmerged except this page's own change.** Six pull requests landed on 2026-08-15, in an order chosen so only one needed a manual fix.
 
-| PR | Branch | What it does |
+| PR | Landed as | What |
 |---|---|---|
-| [#25](https://github.com/prisant-labs/audiobook-organizer/pull/25) | `chore/arbitrary-value-ratchet` | Freezes the app's Tailwind arbitrary-value sprawl at its measured count (285 uses of 71 distinct values) and fails CI in **both** directions, so removing values cannot silently bank slack for new ones |
-| [#26](https://github.com/prisant-labs/audiobook-organizer/pull/26) | `feat/component-gallery` | A dev-only gallery of 29 specimens rendering the real components in both themes at once. It cannot ship: `pnpm build` emits no trace of it |
-| [#27](https://github.com/prisant-labs/audiobook-organizer/pull/27) | `feat/fd-48-organize-verb` | `FD-48` end to end: the action is "organize" and the noun is retired rather than replaced. Also carries the ledger entry, so `FD-48` is only citable in the tree once this merges |
-| [#28](https://github.com/prisant-labs/audiobook-organizer/pull/28) | `docs/status-and-changelog-refresh` | This page and `CHANGELOG.md`, both of which drift silently because the CI vocabulary gate covers three governance files and neither of them |
-| [#29](https://github.com/prisant-labs/audiobook-organizer/pull/29) | `feat/p2b-book-level-duplicates` | `P2b` (`F-1110`, book-level duplicate comparison), all of `AC-51` to `AC-55`. Engine-only, no UI, no IPC change |
-| [#30](https://github.com/prisant-labs/audiobook-organizer/pull/30) | `feat/block-forward-after-unresolved-interruption` | The fourth real-apply precondition: refuse a forward run while the last one could not be accounted for. Carries one optional decision, described in the PR |
+| [#25](https://github.com/prisant-labs/audiobook-organizer/pull/25) | `5b1e867` | Arbitrary-value ratchet: freezes the app's Tailwind sprawl at 285 uses of 71 distinct values and fails CI in **both** directions, so removing values cannot silently bank slack for new ones |
+| [#27](https://github.com/prisant-labs/audiobook-organizer/pull/27) | `d9a312a` | `FD-48` end to end: the action is "organize" and the noun is retired rather than replaced |
+| [#26](https://github.com/prisant-labs/audiobook-organizer/pull/26) | `2c2b524` | Component gallery, 29 specimens of the real components in both themes. Dev-only: `pnpm build` emits no trace of it |
+| [#29](https://github.com/prisant-labs/audiobook-organizer/pull/29) | `ccc13e0` | **`P2b`** (`F-1110`, book-level duplicate comparison), all of `AC-51` to `AC-55`. Engine-only |
+| [#30](https://github.com/prisant-labs/audiobook-organizer/pull/30) | `ff39a27` | The fourth real-apply precondition: refuse a forward run while the last one could not be accounted for |
+
+**The one manual fix**, in `#26`: the gallery predated `FD-48` and referenced two renamed identifiers, plus a third line the recorded note had missed - a specimen label reading "tidy-up active", which is free text and so invisible to the type checker. Nothing sweeps `src/gallery` for retired vocabulary; that gap is now the top item under "Cleanup when convenient".
 
 **Merged 2026-08-14:** PR #23 and PR #24, the Dependabot Rust and JavaScript dependency groups.
 
@@ -75,7 +76,7 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 - **PR #14** - closes `D-1`, `D-2` and `D-3` as `FD-43` (keep the old name for the action, since superseded by `FD-48`), `FD-44` (book-level duplicate comparison in as `P2b`) and `FD-45` (paths display one level).
 - **PR #15** - `P2`'s engine half: BLAKE3 content hashing, its persistence, a cancellable verification job, and the gate that decides whether a duplicate group may be resolved automatically. `AC-13` (the two-step override) and `AC-16` (throughput measured on real data) are the remainder of `P2`.
 
-**Next up:** `P2b` (`F-1110`, book-level duplicate comparison) and the fourth real-apply precondition are both implemented and open, as PR #29 and PR #30, so the queue moves to the rest of `P2` (`AC-13`, the two-step override, and `AC-16`, throughput on real data), then `FD-42`'s code rename with its migration path, then `P3` policies written against books rather than files. The spacing and type scale and the wider documentation sweep are both blocked on merges rather than on work: the scale needs the gallery in PR #26 to render against, and the sweep would collide with PR #27 across most of the same files.
+**Next up:** with the merge train done, the unblocked engine work is the rest of `P2` (`AC-13`, the two-step override, and `AC-16`, throughput measured on real data), then `P3`'s resolution policies written against books rather than files - which is exactly what `FD-44` sequenced `P2b` before, and which now has `BookFolder` and `BookMatch` to build on. Two design items also unblocked when the gallery landed: proposing the spacing and type scale rendered in the gallery, and the wider documentation sweep that would have collided with `FD-48`.
 
 **UI round 2** lives in `_local/gui/2026-08-04/round2/`. Prototypes only, nothing in the tracked tree, and superseded by the gallery in PR #26. Round 1 is closed with a full traceability record, and its four follow-up decisions `D-1` to `D-4` are closed as `FD-42` through `FD-45`, with `FD-43` since reversed as `FD-48`.
 
@@ -85,17 +86,19 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 
 ## What the app can and cannot do (kept honest)
 
-Real changes are still not reachable from the UI, by design. The engine can execute against the real filesystem; the frontend pins every run to rehearsal, and it stays that way until all four of these close:
+Real changes are still not reachable from the UI, by design. The engine can execute against the real filesystem; the frontend pins every run to rehearsal, and it stays that way until all four of these close. **One is now closed**: 4 landed 2026-08-15. Of the remaining three, 3 is code and unstarted, and 1 and 2 are decisions only you can make:
 
 1. **Power-loss threat model decided** (`FD-33`, journal durability boundary)
 2. **Cross-volume move policy decided** (content verification before a cross-volume real move)
 3. **A mechanical authorization boundary for real applies** (today the frontend pins dry-run but the command still accepts either mode, so the gate is procedural)
-4. **Forward organizing blocked while an interruption is unresolved** - **implemented in PR #30**, under the narrower of two readings: a run that could not be reconciled at all blocks the forward path, while one that was cut short and successfully reconciled does not. Confirming or widening that scope is optional and described in the PR; shipping it as written is safe either way. (The engine function keeps the retired word in its name on purpose: `FD-48` moved the copy a user reads, not engineering identifiers, because renaming those is a migration.)
+4. **Forward organizing blocked while an interruption is unresolved** - **CLOSED 2026-08-15** (`ff39a27`), under the narrower of two readings: a run that could not be reconciled at all blocks the forward path, while one that was cut short and successfully reconciled does not. Widening that scope is optional and is the one open question left over from the merge; shipping it as written is safe either way. (The engine function keeps the retired word in its name on purpose: `FD-48` moved the copy a user reads, not engineering identifiers, because renaming those is a migration.)
 
 The README states this plainly rather than implying a finished write path.
 
 ## Cleanup when convenient
 
+- **Nothing sweeps `src/gallery` for retired vocabulary.** `vocabulary.test.ts` covers app copy and the CI governance grep covers three markdown files, so the gallery, whose entire job is showing what the product looks like, is the one user-visible surface with no guard. It has now shipped a retired word twice: "already tidy" in a fixture, and a specimen label reading "tidy-up active" that the type checker could not see because it is free text. A one-line addition to the existing sweep.
+- **Extend the CI vocabulary gate to `STATUS.md` and `CHANGELOG.md`.** Deferred while `#25` and `#27` both had a pending `ci.yml` edit; that contention is gone now that both have merged. Verified in advance that the extension passes on the real files and still catches a planted offender.
 - `E:\tmp\abo-rt\` (~1.5 GB of AC-17 round-trip copies) once AC-17 is ratified. The only one still outstanding.
 - `E:\tmp\abo-tracer`, left over from the v0.1.0 tracer-bullet work and almost certainly dead weight.
 

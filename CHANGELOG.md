@@ -9,6 +9,21 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Two copies of the same book are now found even when the book is split across
+  many files** (`P2b`, `F-1110`). Every earlier duplicate check assumed one book
+  is one file, so a book split across twelve mp3s was twelve unrelated files and
+  its copies were never grouped at all. Book folders are now compared on what
+  the scan already knows (title, how many audio files, how many bytes), then on
+  the sizes of those files, and on request by reading the bytes themselves.
+  A one-file copy and a twelve-file copy of the same book are shown together but
+  never resolved automatically: choosing between them is a preference, not a
+  ranking a tool should make.
+- **A run is refused while the previous one cannot be accounted for.** If a run
+  was cut short and the app could not work out what it had already done, it will
+  not start another one from a library it cannot read. Putting the interrupted
+  run back is still offered, because that is the remedy.
+- **A component gallery** for reviewing the app's real components side by side in
+  both themes. Development only; it is not part of any build a user installs.
 - The interruption recovery surface (`P1c`): after a run is cut short, the app
   now says so on next launch instead of recovering in silence. Three states from one
   reconciler result: an interrupted practice run (nothing in the library was touched),
@@ -44,6 +59,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The app's own styling values are frozen at their measured count and checked on
+  every push, in **both** directions. A ratchet that only fails upward goes stale:
+  remove ten values and the slack is silently available for ten new ones.
 - **Non-audio leftovers now stay where they are** (`FD-40`). `.nfo`, `.sfv`, playlist
   and web-link files join ebooks and cover art in defaulting to Keep. The per-type
   setting was always there; only the starting point moved. The reason: a library is not
@@ -84,6 +102,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The duplicate count no longer inflates for a book split across many files.**
+  Two identical copies of a twelve-part book carry twelve identically named,
+  identically sized parts, so each part was counted as its own set of copies: a
+  library with two duplicated books reported fourteen. One duplicated book is
+  one entry now. Found by generating the dry-run report and reading it; every
+  test passed the whole time.
 - A run no longer halts partway through on an ordinary multi-book folder. The
   planner decided a folder had been emptied by counting only its audio files, so once
   leftovers began being kept, it would ask to remove a folder that still had one in it.
