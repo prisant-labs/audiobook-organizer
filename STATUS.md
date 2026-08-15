@@ -75,7 +75,7 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 - **PR #14** - closes `D-1`, `D-2` and `D-3` as `FD-43` (keep the old name for the action, since superseded by `FD-48`), `FD-44` (book-level duplicate comparison in as `P2b`) and `FD-45` (paths display one level).
 - **PR #15** - `P2`'s engine half: BLAKE3 content hashing, its persistence, a cancellable verification job, and the gate that decides whether a duplicate group may be resolved automatically. `AC-13` (the two-step override) and `AC-16` (throughput measured on real data) are the remainder of `P2`.
 
-**Next up:** `P2b` (`F-1110`, book-level duplicate comparison) is implemented and open as PR #29, so the queue moves to the fourth real-apply precondition (block forward organizing while an interruption is unresolved), then the rest of `P2` (`AC-13`, the two-step override, and `AC-16`, throughput on real data), then `FD-42`'s code rename with its migration path, then `P3` policies written against books rather than files.
+**Next up:** `P2b` (`F-1110`, book-level duplicate comparison) and the fourth real-apply precondition are both implemented and open, as PR #29 and PR #30, so the queue moves to the rest of `P2` (`AC-13`, the two-step override, and `AC-16`, throughput on real data), then `FD-42`'s code rename with its migration path, then `P3` policies written against books rather than files. The spacing and type scale and the wider documentation sweep are both blocked on merges rather than on work: the scale needs the gallery in PR #26 to render against, and the sweep would collide with PR #27 across most of the same files.
 
 **UI round 2** lives in `_local/gui/2026-08-04/round2/`. Prototypes only, nothing in the tracked tree, and superseded by the gallery in PR #26. Round 1 is closed with a full traceability record, and its four follow-up decisions `D-1` to `D-4` are closed as `FD-42` through `FD-45`, with `FD-43` since reversed as `FD-48`.
 
@@ -90,7 +90,7 @@ Real changes are still not reachable from the UI, by design. The engine can exec
 1. **Power-loss threat model decided** (`FD-33`, journal durability boundary)
 2. **Cross-volume move policy decided** (content verification before a cross-volume real move)
 3. **A mechanical authorization boundary for real applies** (today the frontend pins dry-run but the command still accepts either mode, so the gate is procedural)
-4. **Forward organizing blocked while an interruption is unresolved** (added 2026-08-04 by the P1c interruption-surface design; the engine pattern already exists as `ensure_forward_tidying_allowed`, and P1c has since merged without it, so this remains genuinely open. The function name keeps the retired word on purpose: `FD-48` moved the copy a user reads, not engineering identifiers, because renaming those is a migration)
+4. **Forward organizing blocked while an interruption is unresolved** - **implemented in PR #30**, under the narrower of two readings: a run that could not be reconciled at all blocks the forward path, while one that was cut short and successfully reconciled does not. Confirming or widening that scope is optional and described in the PR; shipping it as written is safe either way. (The engine function keeps the retired word in its name on purpose: `FD-48` moved the copy a user reads, not engineering identifiers, because renaming those is a migration.)
 
 The README states this plainly rather than implying a finished write path.
 
