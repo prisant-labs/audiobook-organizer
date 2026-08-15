@@ -192,7 +192,7 @@ function Specimens() {
         <Specimen name="LibraryLede" state="needs work" wide>
           <LibraryLede overview={fx.OVERVIEW} />
         </Specimen>
-        <Specimen name="LibraryLede" state="already tidy" wide>
+        <Specimen name="LibraryLede" state="nothing to do" wide>
           <LibraryLede overview={fx.OVERVIEW_TIDY} />
         </Specimen>
         <Specimen name="GoodNewsLine" wide>
@@ -338,8 +338,8 @@ function Specimens() {
         </Specimen>
         <Specimen name="EmptyState" state="good tone">
           <EmptyState
-            heading="Your library is already tidy"
-            body="Nothing needs organizing right now."
+            heading="Your library is already organized"
+            body="Nothing needs doing right now."
             tone="good"
           />
         </Specimen>

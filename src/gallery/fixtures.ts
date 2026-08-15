@@ -51,7 +51,7 @@ export const OVERVIEW: LibraryOverview = {
   metrics: { per_class: [], problems: [], total_bytes: 297 * 1024 ** 3 },
 };
 
-/** The already-tidy library: the lede and good-news line both change register. */
+/** A library with nothing to do: the lede and good-news line change register. */
 export const OVERVIEW_TIDY: LibraryOverview = {
   ...OVERVIEW,
   needs_tidy_books: 0,
@@ -146,7 +146,7 @@ export const GROUPS: readonly PlanGroupView[] = [
   group({
     group: "messy-names",
     label: "messy names",
-    headline: "Tidy up 47 folder names",
+    headline: "Rename 47 messy folders",
     reason: "These folder names carry ripper tags and release noise.",
     op_count: 47,
     byte_size: 18 * 1024 ** 3,
