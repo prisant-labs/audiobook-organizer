@@ -63,6 +63,7 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 | [#27](https://github.com/prisant-labs/audiobook-organizer/pull/27) | `feat/fd-48-organize-verb` | `FD-48` end to end: the action is "organize" and the noun is retired rather than replaced. Also carries the ledger entry, so `FD-48` is only citable in the tree once this merges |
 | [#28](https://github.com/prisant-labs/audiobook-organizer/pull/28) | `docs/status-and-changelog-refresh` | This page and `CHANGELOG.md`, both of which drift silently because the CI vocabulary gate covers three governance files and neither of them |
 | [#29](https://github.com/prisant-labs/audiobook-organizer/pull/29) | `feat/p2b-book-level-duplicates` | `P2b` (`F-1110`, book-level duplicate comparison), all of `AC-51` to `AC-55`. Engine-only, no UI, no IPC change |
+| [#30](https://github.com/prisant-labs/audiobook-organizer/pull/30) | `feat/block-forward-after-unresolved-interruption` | The fourth real-apply precondition: refuse a forward run while the last one could not be accounted for. Carries one optional decision, described in the PR |
 
 **Merged 2026-08-14:** PR #23 and PR #24, the Dependabot Rust and JavaScript dependency groups.
 
