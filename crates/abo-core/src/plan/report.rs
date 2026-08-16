@@ -878,7 +878,7 @@ fn push_warnings(h: &mut String, input: &ReportInput) {
     if !versions.is_empty() {
         h.push_str("<h3 class=\"sub\">Two versions that would land in one folder</h3>\n<ul class=\"decisions\">\n");
         for g in versions.iter().take(MAX_CALLOUT) {
-            let name = dup_display_name(g, sep);
+            let name = crate::dupes::review::display_name(g, sep);
             h.push_str(&format!(
                 "<li><b>{}</b> has more than one version that would land in the same folder. Pick a keeper, or keep both as separate editions. Neither is touched until you decide.</li>\n",
                 esc(&name)
@@ -930,20 +930,6 @@ fn push_warnings(h: &mut String, input: &ReportInput) {
 ///   member IS the book folder, so its own name is the identity. Taking the
 ///   parent here would name every group after the shelf it sits on, and two
 ///   different books under one shelf would both render as that shelf's name.
-fn dup_display_name(g: &DuplicateGroup, sep: char) -> String {
-    let first = g.members.first().map(|m| m.path.as_str()).unwrap_or("");
-    if g.is_version_candidate() {
-        return base_name(first, sep).to_string();
-    }
-    let parent = parent_dir(first, sep);
-    let folder = base_name(parent, sep);
-    if folder.is_empty() || parent == first {
-        base_name(first, sep).to_string()
-    } else {
-        folder.to_string()
-    }
-}
-
 fn push_guarantees(h: &mut String) {
     h.push_str("<h2>What will not happen</h2>\n");
     // The FD-10 canon deletion-guarantee line, verbatim.

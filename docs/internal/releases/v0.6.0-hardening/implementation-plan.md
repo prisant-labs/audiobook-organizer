@@ -58,7 +58,7 @@ recorded in the P1 status note.
 | P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15) BUT NOT REACHABLE FROM THE APP** (see the note below). **`AC-16` MEASURED 2026-08-15: descope trigger NOT met, ship as designed** ([evidence](hash-throughput-2026-08-15.md)). `AC-13` (two-step override) is the remainder, and it is an affordance on a resolve action that does not exist until `P3` (resolution) and a surface that does not exist until `P5` (`F-905`); see the `AC-13` note under Phase 5, step 4 |
 | **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **MERGED 2026-08-15 (PR #29).** All five criteria, engine-only, no IPC change. Descope path not taken |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | **Steps 1-2 MERGED 2026-08-15 (PR #34)**; **steps 3-4 done 2026-08-16**: confirmed resolutions emit ordinary Archive ops (`AC-25`) and the round-trip is proven byte-identical (`AC-27`). Scoped to FILE losers; see the note below. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
-| P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
+| P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | **Engine done 2026-08-16** (`dupes/review.rs`): the group-first review model and the `AC-20` CSV. IPC payloads and writing the file into the Reports folder are **deliberately `P5`'s**; see the note below |
 | P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | Not started |
 | P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | Not started |
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
@@ -280,12 +280,22 @@ Suggested Owner: LLM (Opus) - couples to journal/rollback.
 Steps:
 1. Add IPC payloads (`crates/abo-core/src/ipc.rs`) for a duplicates overview: list of groups, each with copy count, byte total, keeper suggestion, hash state. Counts are GROUPS; members are "copies" (AC-17, AC-18).
 2. Implement CSV export in `crates/abo-core/src/dupes/` (one row per copy, group-key column); language and totals count groups (AC-20). Export lands in the reports folder (F-1002).
-3. Bake the FD-10 guarantee copy and FD-08 register into the report strings module (centralized strings, FD-23). Primary vocabulary "set aside," never "deleted" as primary (AC-21).
+3. Bake the FD-10 guarantee copy and FD-08 register into the report strings module (centralized strings, FD-23). Primary vocabulary is **"moved to the Archive"**, never "deleted" (AC-21). *(Corrected 2026-08-16: this step said "set aside", which `FD-42` retired and which the spec's own amended `AC-21` already replaced. The step escaped the CI vocabulary gate only because that gate covers five governance files and not this one.)*
 4. Ensure no sample numbers are hardcoded; counts derive from the scan (AC-22).
 
 Verification:
-- Snapshot test of the CSV over a fixture with known groups (AC-20).
-- String/register test asserting GROUP counts and the FD-10 guarantee sentence appear; assert "dedupe"/"operations"/"quarantine" absent from user-facing strings (AC-21).
+- Snapshot test of the CSV over a fixture with known groups (AC-20). **Done**, plus a test that the byte column names itself an estimate rather than space saved (AC-18).
+- String/register test asserting GROUP counts and the FD-10 guarantee sentence appear; assert "dedupe"/"operations"/"quarantine" absent from user-facing strings (AC-21). **Done**, and it also forbids "deleted", which is the word `AC-21` actually names.
+
+### P4 note, 2026-08-16
+
+**Where the data comes from, and why the join is by FILE.** Fresh detection owns the groups (the same re-detect-on-read posture the Copies card already uses, over the stored snapshot rather than the live disk); persisted rows own only the hash state, laid over it keyed by `entries.id`. A hash is a fact about a file, so it survives a change in how files are grouped, and group identity does not. `F-1110`'s subsumption rule changed grouping after hashes could already have been persisted, and under this design that is a non-event. Reading persisted GROUPS instead would have made group-id reconciliation a read-path problem; it belongs to the write path, at `P5`, where `insert_duplicate_groups` will need insert-or-reuse by `(scan_id, group_key)` because today it inserts blindly.
+
+**Deliberately deferred to `P5`, decided rather than drifted into.** Step 1's IPC payloads and step 2's "lands in the Reports folder" both need a caller to be worth anything, and `P5` is the phase that knows what shape the surface wants. Adding `specta` types now would grow `bindings.ts` with types nothing imports, which is the same defect as a parameter nothing reads. `P5` therefore owns three things at once: the payload, the command that writes this CSV into the Reports folder, and `dupes_hash_verify`.
+
+**Producer 7.** The CSV's headers and its plain-language labels are user-facing text generated in Rust, reachable by none of the six existing sweeps, so `review.rs` carries its own. It arrives with the code rather than after it, unlike two of the six before it.
+
+**One defect this caught, by rendering the CSV and reading it.** The first draft had a single column headed "book (group)" carrying `Dune.m4b|900`, which promises a book name and delivers a detector artifact. It is now a readable `book` column beside a `group` join key, and naming a duplicate group moved out of `plan::report` into `dupes::review` so there is one implementation rather than two.
 
 Decision Gate: N/A.
 
