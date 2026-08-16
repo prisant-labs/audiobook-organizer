@@ -18,6 +18,7 @@ Every item below leads with what it IS; the reference ID in brackets is just the
 The fuller version of this list lives in the "What needs you" section of the latest session log under `_local/_session-logs/`, which is untracked on purpose.
 
 - [x] **Merge the open pull requests** - DONE 2026-08-15, on your instruction. Five landed (`#25`, `#26`, `#27`, `#29`, `#30`) plus this page's own change; see "In flight right now" for what each was and which single manual fix was needed. `EXECUTION.md` Section 6.2 requires a human decision for any merge to `main`, and your instruction was that decision; it is recorded here rather than only in a session log.
+- [ ] **Accept or reject one recommendation: do NOT descope duplicate hashing** (`AC-16`, v0.6.0 hardening, hash throughput on real data). This was the last undecided thing in `P2` that is a judgement rather than code, and it is now measured rather than guessed. Your library holds 293 exact duplicate candidates totalling 14.96 GB, which is 5% of its 298.72 GB, because `AC-10`'s candidates-only rule already did the narrowing. Verifying **one** duplicate group takes about a second; verifying all 293 takes 3 to 6 minutes, once, in a background job you can cancel and whose results are kept. The hashing code itself runs at 2,765 MB/s while the drive delivers 42 to 80, so **the wait is your disk, not the software, and running duplicates flag-only instead would not save a second of it.** Recommendation: ship `F-702` (hash verification) as designed. Evidence, with its limits stated: [hash-throughput-2026-08-15.md](docs/internal/releases/v0.6.0-hardening/hash-throughput-2026-08-15.md). Arrives as PR #31.
 - [ ] **Reference screenshots: three to five, one line each on what to steal.** Drop them in `_local/gui/references/`. `D-06` (anti-reference: "looks AI-generated") records what you hate; nothing on file records what you want, so every design decision is currently argued from the negative. This is the only open item nobody but you can do, and the only one that raises the ceiling rather than closing a gap.
 - [ ] **Cut the release tags** (v0.1.0 through v0.5.0). Five releases are built and merged; zero are tagged. Human-only. Runbook: [runbook_cut-tag-release.md](docs/internal/release-plans/runbook_cut-tag-release.md)
 - [ ] **Round-trip evidence: accept or extend** (`AC-17`, v0.5.0 acting). Byte-identical SHA-256 before and after is proven on a 3-book subset of two real folders. Say "good enough" or ask for a fuller run. Scratch copies at `E:\tmp\abo-rt\` (~1.5 GB) can be deleted once you decide. Detail: [v0.5.0 spec, AC-17](docs/internal/releases/v0.5.0-acting/spec.md)
@@ -54,7 +55,7 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 
 ## In flight right now
 
-`main` is at `ff39a27`. **Nothing is unmerged except this page's own change.** Six pull requests landed on 2026-08-15, in an order chosen so only one needed a manual fix.
+`main` is at `365fb9b`, CI green. Six pull requests landed on 2026-08-15, in an order chosen so only one needed a manual fix. New work opened since is listed under "Open now" below.
 
 | PR | Landed as | What |
 |---|---|---|
@@ -66,6 +67,16 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 
 **The one manual fix**, in `#26`: the gallery predated `FD-48` and referenced two renamed identifiers, plus a third line the recorded note had missed - a specimen label reading "tidy-up active", which is free text and so invisible to the type checker. Nothing sweeps `src/gallery` for retired vocabulary; that gap is now the top item under "Cleanup when convenient".
 
+### Open now
+
+Agents do not self-merge (`EXECUTION.md` Section 6.2); your 2026-08-15 instruction covered that batch only. These are green and waiting on you.
+
+| PR | What | Needs from you |
+|---|---|---|
+| [#31](https://github.com/prisant-labs/audiobook-organizer/pull/31) | **`AC-16` (hash throughput on real data) measured.** The `F-702` descope trigger is **not** met; recommendation is to ship as designed | Review, and accept or reject the no-descope recommendation |
+| [#32](https://github.com/prisant-labs/audiobook-organizer/pull/32) | **`AC-13` (the two-step override)**, the control that lets duplicate copies be Archived without being compared. `P2`'s last item | Review. One open question inside: whether the dangerous option or the safe one should be the prominent button |
+| [#33](https://github.com/prisant-labs/audiobook-organizer/pull/33) | Closes the two vocabulary-gate gaps below: `src/gallery` is now swept, and this page plus `CHANGELOG.md` joined the CI gate | Review |
+
 **Merged 2026-08-14:** PR #23 and PR #24, the Dependabot Rust and JavaScript dependency groups.
 
 **Merged 2026-08-05 and 2026-08-06:**
@@ -76,7 +87,9 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 - **PR #14** - closes `D-1`, `D-2` and `D-3` as `FD-43` (keep the old name for the action, since superseded by `FD-48`), `FD-44` (book-level duplicate comparison in as `P2b`) and `FD-45` (paths display one level).
 - **PR #15** - `P2`'s engine half: BLAKE3 content hashing, its persistence, a cancellable verification job, and the gate that decides whether a duplicate group may be resolved automatically. `AC-13` (the two-step override) and `AC-16` (throughput measured on real data) are the remainder of `P2`.
 
-**Next up:** with the merge train done, the unblocked engine work is the rest of `P2` (`AC-13`, the two-step override, and `AC-16`, throughput measured on real data), then `P3`'s resolution policies written against books rather than files - which is exactly what `FD-44` sequenced `P2b` before, and which now has `BookFolder` and `BookMatch` to build on. Two design items also unblocked when the gallery landed: proposing the spacing and type scale rendered in the gallery, and the wider documentation sweep that would have collided with `FD-48`.
+**One thing worth knowing about `P2`, found while measuring it.** The hash verification engine merged in August as PR #15 and **cannot be run from the app**. The plan's own step said "wire the `dupes_hash_verify` command to the job (already in the command surface)", and no command by that name exists anywhere; the job has no callers; and until PR #31 there was no code in the product that could read a file's bytes at all, only in-memory test doubles. That last part is what makes it certain rather than likely. This is the same shape as the defect that created `P0`: the audit found undo complete but unreachable. Nothing is wrong with the engine and nothing is being hidden, but "`P2` engine merged" has been quietly meaning "merged and reachable from nothing", and the ladder above now says so. The command belongs with the duplicates surface that calls it (`P5`), so building it now would repeat the mistake pointing the other way.
+
+**Next up:** `P2` is complete once #31 and #32 land: `AC-16` (throughput on real data) is measured, and `AC-13` (the two-step override) turned out smaller than it reads, being an affordance on a duplicate-resolution action that **does not exist yet**. After that: `P3`'s resolution policies written against books rather than files, which is exactly what `FD-44` sequenced `P2b` before and which now has `BookFolder` and `BookMatch` to build on. Two design items also unblocked when the gallery landed: proposing the spacing and type scale rendered in the gallery, and the wider documentation sweep that would have collided with `FD-48`.
 
 **UI round 2** lives in `_local/gui/2026-08-04/round2/`. Prototypes only, nothing in the tracked tree, and superseded by the gallery in PR #26. Round 1 is closed with a full traceability record, and its four follow-up decisions `D-1` to `D-4` are closed as `FD-42` through `FD-45`, with `FD-43` since reversed as `FD-48`.
 

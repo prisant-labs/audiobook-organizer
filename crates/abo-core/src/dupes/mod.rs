@@ -23,7 +23,10 @@ pub use verify::{
     VerifyOutcome,
 };
 
-pub use hash::{group_is_verified_identical, hash_member, ContentSource, MemberHash};
+pub use hash::{
+    group_is_verified_identical, hash_member, ContentSource, FsContentSource, MemberHash,
+    READ_BUFFER_BYTES,
+};
 
 pub use books::{book_folders_from_plan_nodes, match_tier, BookFolder, BookMatch};
 

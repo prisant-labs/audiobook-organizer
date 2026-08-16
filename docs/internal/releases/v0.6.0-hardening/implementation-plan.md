@@ -55,8 +55,8 @@ recorded in the P1 status note.
 |---|---|---|---|---|
 | P0 | History + undo reachable (read model, screen, rollback wiring) | (scope change, see above) | LLM (Opus) | MERGED 2026-07-31 |
 | P1 | Interruption safety + resume (reconciler, cancellation, access-denied) | AC-1..AC-9 | LLM (Opus) | **COMPLETE.** P1a/P1b/P1d MERGED 2026-07-31; P1c MERGED 2026-08-05 (PR #11). AC-8 hand walkthrough still owed by jp |
-| P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15)**: BLAKE3 hashing, its persistence, a cancellable verification job, and the auto-resolve gate. `AC-13` (two-step override) and `AC-16` (throughput on real data) remain |
-| **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **COMPLETE, awaiting review.** All five criteria implemented, engine-only, no IPC change. Descope path not taken |
+| P2 | Hash verification (BLAKE3, candidates-only, gating) | AC-10..AC-16 | LLM (Opus) | **Engine MERGED 2026-08-06 (PR #15) BUT NOT REACHABLE FROM THE APP** (see the note below). **`AC-16` MEASURED 2026-08-15: descope trigger NOT met, ship as designed** ([evidence](hash-throughput-2026-08-15.md)). `AC-13` (two-step override) is the remainder, and it is an affordance on a resolve action that does not exist until `P3` (resolution) and a surface that does not exist until `P5` (`F-905`); see the `AC-13` note under Phase 5, step 4 |
+| **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **MERGED 2026-08-15 (PR #29).** All five criteria, engine-only, no IPC change. Descope path not taken |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | Not started. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | Not started |
 | P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | Not started |
@@ -73,6 +73,18 @@ recorded in the P1 status note.
 `P10` (`F-610`) is jp's request for clickable folder paths, which cannot be a link because `FD-29` gives the web layer no shell access. A narrow backend command that refuses any path outside the library and set-aside roots keeps the capability model unchanged. Inline affordances throughout the tidy-up and review surfaces, plus two permanent sidebar quick links.
 
 **Ordering note.** `F-1110` (multi-file book duplicate comparison) sits between `P2` and `P3` per `FD-44`, because `P3`'s resolution policies should be written against books rather than files. Doing it after `P3` means writing those policies twice. Scheduled as `P2b` on 2026-08-05; unblocked 2026-08-14 when jp settled `AC-53`.
+
+### P2 reachability, found 2026-08-15 while measuring AC-16
+
+**The `F-702` verification job is complete and cannot be run from the app.** Three facts establish it, and each was checked rather than inferred:
+
+1. **Step 4 of Phase 2 below, "Wire `dupes_hash_verify` IPC (already in the command surface) to the job", was never done, and its parenthetical was wrong.** No command by that name exists anywhere in the repository.
+2. **`verify_groups` has no callers** outside its own module's tests and the new `AC-16` measurement.
+3. **Until this change there was no production `ContentSource` at all**: every implementation was an in-memory test double inside a `cfg(test)` module, so nothing shipping could have hashed a real file even if a command had called it. That is the strongest form of the finding, because it means the gap could not have been closed by wiring alone.
+
+This is the same shape as the defect that created `P0`: the 2026-07-30 audit found v0.5.0's undo machinery complete but UNREACHABLE, with the History route a placeholder and no surface calling rollback. "Engine merged" is true and is not the same as "the feature works", and this plan said the first while reading like the second.
+
+**Not fixed here, deliberately.** The command belongs with the surface that calls it (`P5`, `F-905`), and inventing an IPC entry point with no caller repeats the mistake in the other direction. What is fixed is the record: the status column above now says reachable-from-nothing rather than implying otherwise, and `FsContentSource` means the read path exists for `P5` to reach.
 
 ### P2b status detail (2026-08-14)
 
@@ -212,9 +224,9 @@ Verification:
 - Persistence test: hash state survives a surface re-open (AC-15).
 - Performance probe on a real-data copy feeds the descope decision (AC-16); record throughput in the campaign log.
 
-Decision Gate: hash-performance descope trigger (AC-16). If throughput is unacceptable on real data, set the campaign to flag-only and record the decision; F-704 flag-only path (Phase 3) must be complete regardless.
+Decision Gate: hash-performance descope trigger (AC-16). **MEASURED 2026-08-15; the trigger is NOT met. Recommendation: ship F-702 as designed, no descope.** Evidence: [hash-throughput-2026-08-15.md](hash-throughput-2026-08-15.md). The read path plus BLAKE3 sustain 2,765 MB/s while the library's 7200 RPM SATA drive delivers 42 to 80 MB/s, so the hashing code accounts for 2 to 3 percent of the wait and a descope would remove none of it. AC-10's candidates-only rule already cut the work by 95% (14.96 GB of candidates, not the 298.72 GB library): verifying one duplicate group takes about a second, and verifying all 293 takes 3 to 6 minutes once, in a cancellable background job whose results persist. The F-704 flag-only path (Phase 3) is still built regardless, per the original wording.
 
-Output Artifacts: `crates/abo-core/src/dupes/hash.rs`; migration touch if hash-state columns need adding; hash job wiring; dupes hash test suite.
+Output Artifacts: `crates/abo-core/src/dupes/hash.rs`; migration touch if hash-state columns need adding; hash job wiring; dupes hash test suite. **Added 2026-08-15 for AC-16:** `FsContentSource` in `hash.rs` (the production filesystem read path; every prior `ContentSource` was an in-memory test double, so nothing shipping could hash a real file) and `crates/abo-core/tests/real_library_hash_throughput.rs` (three `#[ignore]` operator-run measurements: candidate population, throughput, read-path ceiling).
 
 Suggested Owner: LLM (Opus) - safety-adjacent (gates a destructive-adjacent action).
 
