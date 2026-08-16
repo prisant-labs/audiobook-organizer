@@ -82,6 +82,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::classify::engine::{ClassifyInput, FolderClass, FolderClassification};
+use crate::dupes::ConfirmedResolution;
 use crate::parse::extract::{Confidence, FieldSource, MergedEntry, NodeKind};
 use crate::parse::strip::{strip, StripOptions};
 use crate::plan::disc::conformant_disc_rename;
@@ -696,6 +697,10 @@ struct Builder<'a> {
     quarantine_shells: Vec<(usize, String)>,
     /// Source folders emptied by a move pass, to `rmdir-empty` in cleanup.
     emptied_sources: BTreeSet<String>,
+    /// Duplicate resolutions the USER confirmed (`AC-24`). Empty for every
+    /// caller but the persistence path, which is why `AC-26`'s "flag-only emits
+    /// nothing" needs no code: there is nothing to emit from.
+    confirmed_duplicates: &'a [ConfirmedResolution],
 }
 
 impl<'a> Builder<'a> {
@@ -879,6 +884,11 @@ impl<'a> Builder<'a> {
 /// [`BuiltPlan::to_canonical_json`] (AC-8). `library_root` is the scan root's
 /// stored path (the folder every target is built under); its separator sets the
 /// plan's path style.
+///
+/// Emits no duplicate Archive operations: that needs confirmed resolutions,
+/// which arrive through [`build_plan_with_set_aside_root`]. Passing none is the
+/// `AC-26` flag-only shape and is what every caller but the persistence path
+/// wants.
 pub fn build_plan(
     nodes: &[PlanNode],
     classifications: &[FolderClassification],
@@ -894,6 +904,7 @@ pub fn build_plan(
         ruleset,
         library_root,
         &set_aside_root,
+        &[],
     )
 }
 
@@ -910,6 +921,7 @@ pub fn build_plan_with_set_aside_root(
     ruleset: &Ruleset,
     library_root: &str,
     set_aside_root: &str,
+    confirmed_duplicates: &[ConfirmedResolution],
 ) -> BuiltPlan {
     let index_of: HashMap<usize, usize> =
         nodes.iter().enumerate().map(|(i, n)| (n.id, i)).collect();
@@ -955,6 +967,7 @@ pub fn build_plan_with_set_aside_root(
         ops: Vec::new(),
         quarantine_shells: Vec::new(),
         emptied_sources: BTreeSet::new(),
+        confirmed_duplicates,
     };
 
     for &pass in InternalPass::ALL {
@@ -1605,6 +1618,71 @@ fn detect_parallel_format_losers(b: &Builder) -> Vec<usize> {
 /// path would be wrong). Clutter under a split multi-book folder (emptied in
 /// place, not relocated) is NOT skipped: it is left behind and set aside,
 /// riding the Box sets group per FD-31. Returns file ids sorted by path.
+/// The confirmed duplicate copies to archive (`AC-25`), validated and ordered.
+///
+/// # A confirmation is all-or-nothing
+///
+/// If anything about one confirmation is unusable, the WHOLE confirmation is
+/// refused and that group keeps every copy it has. Archiving the usable subset
+/// would be worse than doing nothing: the user agreed to a specific outcome,
+/// and half of it is an outcome nobody chose. Refusing leaves the duplicate in
+/// place, which is the direction that cannot lose a book, and `FD-39` re-plans
+/// from a fresh scan anyway, so the group comes back around.
+///
+/// # What is refused, and why each one matters
+///
+/// - **An id that is not in this snapshot.** `entry_id`s are per-scan; a
+///   confirmation carried across a re-scan would name whatever file holds that
+///   id next.
+/// - **The keeper among the losers**, or **an id claimed by another
+///   confirmation**. Either would archive every copy of a book, or emit two ops
+///   for one file. The exact detector's subsumption rule (`F-1110`) makes the
+///   second reachable rather than theoretical.
+/// - **A loser that is not a FILE.** Book-group losers are folders, and a
+///   cross-volume archive of a folder would reach `copy_file`, which is
+///   file-only. Out of scope until that is proven; see this pass's tests.
+/// - **A loser under a folder an earlier pass renamed or moved**
+///   ([`Builder::ancestor_relocated`]), or inside staging. Its stored path is
+///   stale by the time the executor reaches it, which is the same reason clutter
+///   under a relocated folder is left alone. This is the existing mechanism, not
+///   a second one.
+fn confirmed_duplicate_losers(b: &Builder, confirmed: &[ConfirmedResolution]) -> Vec<usize> {
+    let mut claimed: HashSet<usize> = HashSet::new();
+    let mut out: Vec<usize> = Vec::new();
+
+    for c in confirmed {
+        let known = |id: usize| b.index_of.contains_key(&id);
+        let archivable = |id: usize| {
+            known(id)
+                && b.node(id).kind == NodeKind::File
+                && !b.ancestor_relocated(id)
+                && !b.inside_staging(id)
+        };
+
+        let usable = !c.losers.is_empty()
+            && known(c.keeper)
+            && !c.losers.contains(&c.keeper)
+            && c.losers.iter().all(|&l| archivable(l))
+            && !claimed.contains(&c.keeper)
+            && c.losers.iter().all(|l| !claimed.contains(l));
+
+        if !usable {
+            continue;
+        }
+
+        claimed.insert(c.keeper);
+        for &l in &c.losers {
+            claimed.insert(l);
+            out.push(l);
+        }
+    }
+
+    // By path, never by confirmation order: the plan must be byte-identical for
+    // the same library however the confirmations happened to be collected.
+    out.sort_by(|&a, &c| b.node(a).path.cmp(&b.node(c).path));
+    out
+}
+
 fn detect_clutter_quarantine(b: &Builder) -> Vec<usize> {
     let mut out: Vec<usize> = Vec::new();
     for n in b.nodes {
@@ -1718,6 +1796,42 @@ fn pass_empty_cleanup(b: &mut Builder) {
                 preferred_ext(b.ruleset.structure.preferred_format)
             ),
             rule_id: "parallel-format-quarantine".to_string(),
+            confidence: "high".to_string(),
+            byte_size: size as i64,
+            provenance_json: None,
+        });
+    }
+
+    // 2b. F-704 confirmed duplicate copies (AC-25). Same shape and same position
+    // as the F-205 losers above, for the same reason: the archive must follow
+    // every move, and the op is tagged with the dedupe-quarantine group so it
+    // folds under the user-facing "Duplicates" card (FD-26, renamed by FD-46).
+    //
+    // AC-26 needs no branch here. flag-only produces no confirmations, so this
+    // loop runs zero times, which is a stronger guarantee than a policy check
+    // in the builder would be: there is no policy in scope to get wrong.
+    //
+    // Nothing distinguishes these ops downstream. They are ordinary `quarantine`
+    // ops, so F-404 validation, the F-601 executor, the journal and F-603
+    // rollback all treat them exactly as they treat a pack shell or a clutter
+    // file, which is what AC-25 means by dedupe not being a special executor
+    // path, and what makes AC-27's round-trip follow rather than need building.
+    for id in confirmed_duplicate_losers(b, b.confirmed_duplicates) {
+        let src = b.node(id).path.clone();
+        let name = base_name(&src, b.sep).to_string();
+        let size = b.node(id).size;
+        ensure_quarantine_dir(b, pass);
+        let target = set_aside_target(b, &src);
+        b.ops.push(PlannedOp {
+            op_group: InternalPass::DedupeQuarantine.as_str().to_string(),
+            kind: "quarantine".to_string(),
+            kind_reason: None,
+            source_path: src,
+            target_path: target,
+            rationale: format!(
+                "\"{name}\" is a duplicate copy you chose to archive; it moves to the Archive (never deleted)."
+            ),
+            rule_id: "dedupe-quarantine".to_string(),
             confidence: "high".to_string(),
             byte_size: size as i64,
             provenance_json: None,
@@ -2051,6 +2165,38 @@ mod tests {
     fn build(nodes: &[PlanNode]) -> BuiltPlan {
         let (cs, merged) = analyze(nodes);
         build_plan(nodes, &cs, &merged, &default_ruleset(), ROOT)
+    }
+
+    /// Build with confirmed duplicate resolutions (`AC-25`).
+    fn build_with_confirmed(nodes: &[PlanNode], confirmed: &[ConfirmedResolution]) -> BuiltPlan {
+        let (cs, merged) = analyze(nodes);
+        build_plan_with_set_aside_root(
+            nodes,
+            &cs,
+            &merged,
+            &default_ruleset(),
+            ROOT,
+            &default_set_aside_root(ROOT),
+            confirmed,
+        )
+    }
+
+    fn dupe_ops(plan: &BuiltPlan) -> Vec<&PlannedOp> {
+        plan.ops
+            .iter()
+            .filter(|o| o.rule_id == "dedupe-quarantine")
+            .collect()
+    }
+
+    /// Two copies of one book in different folders, neither of which any other
+    /// pass relocates, so the confirmed loser is archivable on its own.
+    fn two_copies() -> Vec<PlanNode> {
+        vec![
+            dir(0, None, "lib/Frank Herbert - Dune"),
+            file(1, Some(0), "lib/Frank Herbert - Dune/Dune.m4b", 900),
+            dir(2, None, "lib/Frank Herbert - Dune Copy"),
+            file(3, Some(2), "lib/Frank Herbert - Dune Copy/Dune.m4b", 900),
+        ]
     }
 
     /// Build with every clutter kind set to `Quarantine`.
@@ -3241,6 +3387,303 @@ mod tests {
                 op.provenance_json.as_deref()
             );
             assert_eq!(row.validation_state, "pending");
+        }
+    }
+
+    /// PRODUCER 6: the builder's own `rationale` sentences.
+    ///
+    /// Every op carries one, and it renders on the review surface through the
+    /// plan itself. Nothing swept them until now: `vocabulary.test.ts` walks the
+    /// TypeScript copy objects, `report.rs` sweeps the exported report, and
+    /// `query.rs` sweeps the seven group cards, and none of those can see a
+    /// string built here. The vocabulary test's own header names builder
+    /// rationales as a producer and instructs whoever adds one to add its sweep
+    /// in the same change; this pass adds a rationale, so it adds the sweep.
+    ///
+    /// The sample is every rationale the builder actually emits across the
+    /// fixtures below, not a hand-listed set of format strings, so a new
+    /// rationale is covered the moment a test exercises the pass that emits it.
+    mod rationale_vocabulary {
+        use super::*;
+
+        /// Words a decision retired, with the decision and its successor, so a
+        /// failure says what to write instead. Kept in step with `RETIRED_WORDS`
+        /// in `src/lib/__tests__/vocabulary.test.ts` and the CI governance grep.
+        const RETIRED: &[(&str, &str, &str)] = &[
+            ("aside", "FD-42", "Archive"),
+            ("shelf", "FD-47", "library"),
+            ("shelves", "FD-47", "library"),
+            ("shelved", "FD-47", "library"),
+            ("tidy", "FD-48", "organize"),
+        ];
+
+        /// Engineering words that were never allowed on a user-facing surface
+        /// (design-system Section 6.1). "quarantine" is the one most likely to
+        /// leak here, because it IS the internal name of these very operations.
+        const BANNED: &[&str] = &["quarantine", "dedupe", "manifest", "dashboard"];
+
+        fn assert_clean(rationale: &str) {
+            let text = rationale
+                .to_lowercase()
+                .replace("audiobookshelf", "<the-product>");
+            for (word, decision, successor) in RETIRED {
+                assert!(
+                    !text.contains(word),
+                    "a plan rationale carries {word:?}, retired by {decision} in favour of                      {successor:?}. This renders on the review surface: {rationale}"
+                );
+            }
+            for word in BANNED {
+                assert!(
+                    !text.contains(word),
+                    "a plan rationale carries the internal term {word:?}, which is forbidden on                      any surface a user reads (design-system 6.1): {rationale}"
+                );
+            }
+        }
+
+        /// The new F-704 rationale, which is the one this change adds.
+        #[test]
+        fn the_confirmed_duplicate_rationale_is_clean() {
+            let nodes = two_copies();
+            let plan = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![3],
+                }],
+            );
+            let ops = dupe_ops(&plan);
+            assert_eq!(ops.len(), 1);
+            assert_clean(&ops[0].rationale);
+        }
+
+        /// Every rationale the builder emits for a library that exercises the
+        /// archive passes, swept together. Broader than the test above on
+        /// purpose: it covers the mkdir, the archive op, and whatever else the
+        /// tree provokes.
+        #[test]
+        fn no_rationale_the_builder_emits_carries_forbidden_vocabulary() {
+            let nodes = two_copies();
+            let plan = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![3],
+                }],
+            );
+            assert!(!plan.ops.is_empty(), "the fixture must emit something");
+            for op in &plan.ops {
+                assert_clean(&op.rationale);
+            }
+        }
+
+        /// Guards the guard: the sweep must actually fire on the word most
+        /// likely to leak, since "quarantine" is what the code calls these ops.
+        #[test]
+        #[should_panic(expected = "internal term")]
+        fn the_sweep_catches_the_internal_word_for_these_very_operations() {
+            assert_clean("This copy moves to quarantine.");
+        }
+    }
+
+    /// P3 steps 3-4 (F-704): confirmed duplicate resolutions become Archive ops.
+    mod dedupe_quarantine {
+        use super::*;
+
+        /// AC-25: a confirmed resolution becomes an ordinary `quarantine` op, filed
+        /// under the dedupe-quarantine group so it folds into the user-facing
+        /// "Duplicates" card. Ordinary is the point: nothing downstream needs to
+        /// know it came from a duplicate decision.
+        #[test]
+        fn a_confirmed_resolution_emits_one_archive_op_per_loser() {
+            let nodes = two_copies();
+            let plan = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![3],
+                }],
+            );
+
+            let ops = dupe_ops(&plan);
+            assert_eq!(ops.len(), 1);
+            assert_eq!(ops[0].kind, "quarantine");
+            assert_eq!(ops[0].source_path, "lib/Frank Herbert - Dune Copy/Dune.m4b");
+            assert_eq!(
+                ops[0].op_group,
+                InternalPass::DedupeQuarantine.as_str(),
+                "must fold under the Duplicates card"
+            );
+            assert_eq!(ops[0].byte_size, 900);
+            assert!(ops[0].target_path.contains(QUARANTINE_JOB_PLACEHOLDER));
+        }
+
+        /// AC-26. Asserted as a property of the whole plan, not of a policy branch:
+        /// flag-only produces no confirmations, so there is nothing to emit from.
+        #[test]
+        fn no_confirmations_means_no_archive_ops() {
+            let nodes = two_copies();
+            assert!(dupe_ops(&build_with_confirmed(&nodes, &[])).is_empty());
+        }
+
+        /// The plan must be byte-identical for the same library however the
+        /// confirmations were collected, so ops sort by path and never by the order
+        /// a person happened to click.
+        #[test]
+        fn archive_ops_sort_by_path_not_by_confirmation_order() {
+            let nodes = vec![
+                dir(0, None, "lib/Keep"),
+                file(1, Some(0), "lib/Keep/Dune.m4b", 900),
+                dir(2, None, "lib/Zeta Copy"),
+                file(3, Some(2), "lib/Zeta Copy/Dune.m4b", 900),
+                dir(4, None, "lib/Alpha Copy"),
+                file(5, Some(4), "lib/Alpha Copy/Dune.m4b", 900),
+            ];
+            let forwards = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![3, 5],
+                }],
+            );
+            let backwards = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![5, 3],
+                }],
+            );
+
+            let paths: Vec<&str> = dupe_ops(&forwards)
+                .iter()
+                .map(|o| o.source_path.as_str())
+                .collect();
+            assert_eq!(
+                paths,
+                vec!["lib/Alpha Copy/Dune.m4b", "lib/Zeta Copy/Dune.m4b"]
+            );
+            assert_eq!(forwards.to_canonical_json(), backwards.to_canonical_json());
+        }
+
+        /// The worst input this type can carry: archiving the keeper too would
+        /// remove every copy of a book. Refusing the WHOLE confirmation is the only
+        /// safe reading, because a partial archive is an outcome nobody chose.
+        #[test]
+        fn a_keeper_listed_among_its_own_losers_archives_nothing() {
+            let nodes = two_copies();
+            let plan = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![1, 3],
+                }],
+            );
+            assert!(dupe_ops(&plan).is_empty());
+        }
+
+        /// entry_ids are per-scan (FD-39 re-plans from a fresh scan), so an id this
+        /// snapshot does not contain is a confirmation from another world.
+        #[test]
+        fn an_unknown_entry_id_archives_nothing() {
+            let nodes = two_copies();
+            for c in [
+                ConfirmedResolution {
+                    keeper: 999,
+                    losers: vec![3],
+                },
+                ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![999],
+                },
+            ] {
+                assert!(dupe_ops(&build_with_confirmed(&nodes, &[c])).is_empty());
+            }
+        }
+
+        /// F-1110's subsumption rule makes one file reachable from two groups, so
+        /// two confirmations naming the same copy is a real input, not a theoretical
+        /// one. Two ops for one file would fail the second at execution time.
+        #[test]
+        fn the_same_copy_claimed_twice_is_archived_once_at_most() {
+            let nodes = two_copies();
+            let plan = build_with_confirmed(
+                &nodes,
+                &[
+                    ConfirmedResolution {
+                        keeper: 1,
+                        losers: vec![3],
+                    },
+                    ConfirmedResolution {
+                        keeper: 1,
+                        losers: vec![3],
+                    },
+                ],
+            );
+            assert_eq!(dupe_ops(&plan).len(), 1);
+        }
+
+        /// Folder losers are out of scope until a non-empty directory is proven to
+        /// survive the archive round-trip: a cross-volume archive reaches
+        /// `copy_file`, which is file-only. Refusing is not a dodge, it is the
+        /// population the gates permit today.
+        #[test]
+        fn a_folder_loser_archives_nothing() {
+            let nodes = two_copies();
+            let plan = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![2],
+                }],
+            );
+            assert!(dupe_ops(&plan).is_empty());
+        }
+
+        /// THE HARD CASE, and the reason this pass reuses `ancestor_relocated`
+        /// rather than inventing anything.
+        ///
+        /// Strip-noise renames the folder holding the confirmed loser, so by the
+        /// time the executor reaches an archive op its recorded source path no
+        /// longer exists and the op would fail its TOCTOU re-check. The plan
+        /// records SNAPSHOT paths and the executor does not rebase them, which
+        /// is exactly why clutter under a relocated folder is left alone too.
+        ///
+        /// Refusing the confirmation is the safe direction: the duplicate stays,
+        /// nothing is lost, and `FD-39` re-plans from a fresh scan in which the
+        /// folder already carries its new name.
+        #[test]
+        fn a_loser_under_a_folder_another_pass_renames_archives_nothing() {
+            let nodes = vec![
+                dir(0, None, "lib/Frank Herbert - Dune"),
+                file(1, Some(0), "lib/Frank Herbert - Dune/Dune.m4b", 900),
+                // Strip-noise renames this folder, so its contents move with it.
+                dir(2, None, "lib/Frank Herbert - Dune [64k 471MB]"),
+                file(
+                    3,
+                    Some(2),
+                    "lib/Frank Herbert - Dune [64k 471MB]/Dune.m4b",
+                    900,
+                ),
+            ];
+
+            let plan = build_with_confirmed(
+                &nodes,
+                &[ConfirmedResolution {
+                    keeper: 1,
+                    losers: vec![3],
+                }],
+            );
+
+            // The rename really does happen: without it this test would pass
+            // for the wrong reason, proving only that the tree was inert.
+            assert!(
+                plan.ops.iter().any(|o| o.kind == "rename"
+                    && o.source_path == "lib/Frank Herbert - Dune [64k 471MB]"),
+                "the fixture must actually trigger a rename, or this proves nothing"
+            );
+            assert!(
+                dupe_ops(&plan).is_empty(),
+                "archiving from a path a rename invalidates would fail at apply time"
+            );
         }
     }
 }
