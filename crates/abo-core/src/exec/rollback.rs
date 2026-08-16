@@ -1201,6 +1201,188 @@ mod tests {
         );
     }
 
+    /// `AC-27`: a duplicate copy archived by a CONFIRMED `F-704` resolution
+    /// round-trips, so undoing puts it back byte for byte.
+    ///
+    /// # Why this builds the plan instead of hand-writing the op
+    ///
+    /// The claim `AC-25` makes is that dedupe is not a special executor path,
+    /// and a hand-written `quarantine` op would prove that about a hand-written
+    /// op rather than about the builder. So this runs the real
+    /// `build_plan_with_set_aside_root` with a real `ConfirmedResolution` and
+    /// applies whatever it produces. If the builder ever started emitting
+    /// something the executor or rollback could not handle, this fails.
+    #[tokio::test]
+    async fn a_confirmed_duplicate_archive_round_trips_byte_identically_ac27() {
+        use crate::classify::classify;
+        use crate::dupes::ConfirmedResolution;
+        use crate::parse::extract::NodeKind;
+        use crate::parse::extract::{extract, EntryInput};
+        use crate::plan::builder::{
+            build_plan_with_set_aside_root, classify_inputs_from_plan_nodes, PlanNode,
+        };
+        use crate::ruleset::default_ruleset;
+
+        let db = TempDir::new().expect("db dir");
+        let (pool, _) = open_db(db.path()).await.expect("open_db");
+        let work = TempDir::new().expect("work dir");
+        let library_root = work.path().join("library");
+        let set_aside_root = work.path().join("Audiobook Archive");
+
+        // Two copies of one book, byte-identical, in folders no other pass
+        // relocates. The bytes matter: the round-trip assertion compares
+        // contents, not just names.
+        let keep_dir = library_root.join("Frank Herbert - Dune");
+        let copy_dir = library_root.join("Frank Herbert - Dune Copy");
+        std::fs::create_dir_all(&keep_dir).expect("keep dir");
+        std::fs::create_dir_all(&copy_dir).expect("copy dir");
+        let bytes = b"identical audiobook bytes, twice over".to_vec();
+        std::fs::write(keep_dir.join("Dune.m4b"), &bytes).expect("keep file");
+        std::fs::write(copy_dir.join("Dune.m4b"), &bytes).expect("copy file");
+
+        let root = library_root.to_string_lossy().to_string();
+        let sep = std::path::MAIN_SEPARATOR;
+        let node = |id: usize, parent: Option<usize>, path: String, kind, size: u64| PlanNode {
+            id,
+            parent,
+            name: path.rsplit(sep).next().unwrap().to_string(),
+            path,
+            kind,
+            file_class: Some(crate::scan::typing::classify_path(std::path::Path::new(
+                "x.m4b",
+            ))),
+            size,
+        };
+        let nodes = vec![
+            node(
+                0,
+                None,
+                keep_dir.to_string_lossy().to_string(),
+                NodeKind::Folder,
+                0,
+            ),
+            node(
+                1,
+                Some(0),
+                keep_dir.join("Dune.m4b").to_string_lossy().to_string(),
+                NodeKind::File,
+                bytes.len() as u64,
+            ),
+            node(
+                2,
+                None,
+                copy_dir.to_string_lossy().to_string(),
+                NodeKind::Folder,
+                0,
+            ),
+            node(
+                3,
+                Some(2),
+                copy_dir.join("Dune.m4b").to_string_lossy().to_string(),
+                NodeKind::File,
+                bytes.len() as u64,
+            ),
+        ];
+
+        let inputs = classify_inputs_from_plan_nodes(&nodes);
+        let classifications = classify(&inputs);
+        let entry_inputs: Vec<EntryInput> = nodes
+            .iter()
+            .map(|n| EntryInput {
+                id: n.id,
+                parent: n.parent,
+                name: n.name.clone(),
+                kind: n.kind,
+            })
+            .collect();
+        let merged = extract(&entry_inputs);
+
+        let built = build_plan_with_set_aside_root(
+            &nodes,
+            &classifications,
+            &merged,
+            &default_ruleset(),
+            &root,
+            &set_aside_root.to_string_lossy(),
+            &[ConfirmedResolution {
+                keeper: 1,
+                losers: vec![3],
+            }],
+        );
+
+        let archive_ops: Vec<_> = built
+            .ops
+            .iter()
+            .filter(|o| o.rule_id == "dedupe-quarantine")
+            .collect();
+        assert_eq!(
+            archive_ops.len(),
+            1,
+            "the fixture must actually produce an archive op, or this proves nothing"
+        );
+
+        let specs: Vec<Spec> = built
+            .ops
+            .iter()
+            .map(|o| Spec {
+                op_group: Box::leak(o.op_group.clone().into_boxed_str()),
+                kind: Box::leak(o.kind.clone().into_boxed_str()),
+                source: o.source_path.clone(),
+                target: o.target_path.clone(),
+                byte_size: o.byte_size,
+            })
+            .collect();
+
+        let scope = ApplyScope {
+            library_root: root.clone(),
+            set_aside_root: set_aside_root.to_string_lossy().to_string(),
+        };
+        let original = tree_signature(&library_root);
+
+        let (scan_id, ruleset_id) = seed_scan_and_ruleset(&pool, &scope.library_root).await;
+        let plan_id = persist_forward_plan(&pool, scan_id, ruleset_id, &specs).await;
+        let (job_id, applied) = apply_for_real(&pool, plan_id, &scope).await;
+
+        // The duplicate really left the library.
+        assert!(
+            !copy_dir.join("Dune.m4b").exists(),
+            "the confirmed duplicate copy moved to the Archive"
+        );
+        assert!(keep_dir.join("Dune.m4b").exists(), "the keeper never moves");
+        assert_ne!(
+            original,
+            tree_signature(&library_root),
+            "the forward apply must change the tree"
+        );
+
+        let reports = TempDir::new().expect("reports dir");
+        let export = export_after_apply(
+            &pool,
+            reports.path(),
+            ApplyMode::Real,
+            job_id,
+            plan_id,
+            &applied,
+        )
+        .await
+        .expect("export undo file");
+
+        let prepared = rollback_prepare(&pool, export.manifest_id, NOW)
+            .await
+            .expect("rollback_prepare");
+        apply_inverse_plan(&pool, prepared.plan_id, &scope).await;
+
+        assert_eq!(
+            original,
+            tree_signature(&library_root),
+            "AC-27: undoing a duplicate archive must restore every copy byte for byte"
+        );
+        assert!(
+            !set_aside_root.join(job_id.to_string()).exists(),
+            "the per-job Archive folder is torn down, leaving no residue"
+        );
+    }
+
     /// Undo of an undo (redo), by design: applying an inverse plan exports its own
     /// real reversible undo file, so `rollback_prepare` on THAT manifest re-applies
     /// the original change. Also pins the set-aside interaction documented on

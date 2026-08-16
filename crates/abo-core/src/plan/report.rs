@@ -1312,6 +1312,12 @@ pub async fn build_and_persist_plan(
         &ruleset,
         &root_path,
         &set_aside_root,
+        // No confirmed duplicate resolutions yet: `AC-24` requires a person to
+        // confirm each one, and the surface that asks is `P5` (`F-905`). Until
+        // it exists the plan is flag-only for duplicates, which is exactly
+        // `AC-26` and exactly what this release already promises. `P5` passes
+        // the confirmations it collected, keyed to this scan.
+        &[],
     );
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
     let books = book_folders_from_plan_nodes(&nodes, &merged);
