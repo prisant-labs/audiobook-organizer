@@ -5,6 +5,7 @@ import { Library } from "@/routes/Library";
 import { Review } from "@/routes/Review";
 import { Apply } from "@/routes/Apply";
 import { InterruptionNotice } from "@/components/states/InterruptionNotice";
+import { UnverifiedArchiveConfirm } from "@/components/review/UnverifiedArchiveConfirm";
 import { commands } from "@/lib/bindings";
 import { getCover } from "@/lib/covers";
 import { usePlanReview } from "@/hooks/usePlanReview";
@@ -274,6 +275,30 @@ describe("InterruptionNotice a11y", () => {
         onOpenHistory={vi.fn()}
       />,
     );
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+});
+
+// The F-702 override (v0.6.0 hardening, AC-13). Its own smoke for the same
+// reason the apply FAILED panel gets one: it is the highest-stakes control in
+// the duplicates flow, and it is the one place the FD-09 danger pair carries
+// meaning. Both steps are checked, because the warning step is the one that has
+// to survive a reader who cannot see that it is red (design-system Section 8).
+describe("UnverifiedArchiveConfirm a11y (AC-13)", () => {
+  it("has zero serious/critical violations at the opener", async () => {
+    const { container } = render(<UnverifiedArchiveConfirm onConfirm={vi.fn()} />);
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+
+  it("has zero serious/critical violations at the warning step", async () => {
+    const { container } = render(<UnverifiedArchiveConfirm onConfirm={vi.fn()} />);
+    container.querySelector("button")?.click();
     const results = await axe.run(container);
     expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
       [],

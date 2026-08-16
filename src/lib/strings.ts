@@ -72,6 +72,33 @@ export const STRINGS = {
       "Archived items stay where they are until you empty the Archive yourself. The app never deletes anything there.",
   },
 
+  // The F-702 override (v0.6.0 hardening, AC-13), which is the escape hatch
+  // from the AC-12 gate: a duplicate group may normally only be resolved when
+  // every copy has been read and proved identical, and this is how a person
+  // overrules that.
+  //
+  // The copy carries the whole safety argument, so three things are load-bearing:
+  //
+  //   1. It STATES the copies were not content-verified (AC-12's requirement).
+  //     "Compared file by file" rather than "hash-verified": the reader is
+  //     deciding about their own books, not reading about an algorithm.
+  //   2. The first press is not the action. AC-13 requires a deliberate two-step
+  //     affordance, so `overrideStart` opens a question rather than answering it.
+  //   3. "Archive", never "quarantine" or "delete" (FD-42, FD-10 register). The
+  //     internal engineering term stays internal; it is banned outright from
+  //     copy by `vocabulary.test.ts`.
+  //
+  // Impersonal voice, matching the rest of this file: "nothing has confirmed",
+  // not "we cannot confirm". The app does not refer to itself as a person.
+  duplicatesOverride: {
+    start: "Archive without checking",
+    warning:
+      "These copies have not been compared file by file, so nothing has confirmed they are the same book.",
+    reassurance: "Archiving moves them out of your library. The change can be undone.",
+    goAhead: "Archive anyway",
+    cancel: "Keep them",
+  },
+
   // The ruleset editor (F-906, v0.4.0 Phase 6, AC-32/AC-33): "how your
   // library gets organized", hosted inside Settings. Deliberately never says
   // "ruleset" - plain-language register per design-system Section 6.1 and the

@@ -92,7 +92,7 @@ jobs:
       # copy. If the two drift, this gate checks a subset: weaker, never wrong.
       #
       # WHAT THIS DOES NOT GUARANTEE, stated so nobody over-trusts it. It checks
-      # three governance FILES, not the repository. Retired vocabulary reaching a
+      # five governance FILES, not the repository. Retired vocabulary reaching a
       # user from Rust or TypeScript is caught by the per-surface sweeps
       # (report.rs, error.rs, query.rs, vocabulary.test.ts), not here. An
       # adversarial review found a live leak in query.rs while this gate was
@@ -123,7 +123,14 @@ jobs:
           # "tidy-up" without a separate alternative.
           retired='set(s|ting)?[^.!?]{0,24}aside|\bshel(f|ves|ved|ving)\b|\btid(y|ies|ied|ying)\b'
           bad=0
-          for f in PRODUCT.md CLAUDE.md AGENTS.md; do
+          # STATUS.md and CHANGELOG.md added 2026-08-15. Both were swept by hand
+          # in PR #28 and both are read far more often than AGENTS.md: STATUS.md
+          # is the page jp opens to decide what to do next, and CHANGELOG.md is
+          # the public record. Hand-sweeping a file and then not gating it means
+          # the drift comes back, which is what happened to STATUS.md twice.
+          # Deferred until now only because two pending PRs held edits on these
+          # exact lines; both merged, so the contention is gone.
+          for f in PRODUCT.md CLAUDE.md AGENTS.md STATUS.md CHANGELOG.md; do
             if [ ! -r "$f" ]; then
               echo "::error::$f is missing or unreadable, so this gate cannot pass"
               bad=1
@@ -143,7 +150,7 @@ jobs:
             fi
           done
           [ "$bad" -eq 0 ] || exit 1
-          echo "OK: PRODUCT.md, CLAUDE.md and AGENTS.md carry no retired vocabulary."
+          echo "OK: PRODUCT.md, CLAUDE.md, AGENTS.md, STATUS.md and CHANGELOG.md carry no retired vocabulary."
 
       # Reality adaptation (Phase 7): ci-plan.md's lint job did not enumerate Linux
       # system packages. `cargo clippy --workspace --all-targets` compiles the
