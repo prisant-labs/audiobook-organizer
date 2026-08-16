@@ -176,6 +176,51 @@ pub async fn get_duplicate_members(
         .collect())
 }
 
+/// Every persisted hash state in one scan, keyed by `entries.id` (`F-703`).
+///
+/// # Why keyed by entry, not by group
+///
+/// A hash is a fact about a FILE, not about a group, so this deliberately
+/// forgets which group each member sat in. That is what makes it safe to lay
+/// over FRESH detection: `plan::query` re-detects duplicate groups from the
+/// stored snapshot on every read rather than trusting persisted group rows, and
+/// group identity can legitimately change between a persist and a read (the
+/// `F-1110` subsumption rule did exactly that). Reattaching hashes by file means
+/// the current detector's grouping always wins and no group-id reconciliation is
+/// needed on the read path at all.
+///
+/// Scoped to one scan because `entries.id` is only unique within a snapshot.
+///
+/// Members with no hash and no error are omitted rather than returned as
+/// `Unhashed`: absent and unhashed are the same fact, and a caller reading a
+/// map treats a missing key as "not done yet" anyway.
+pub async fn member_verifications_for_scan(
+    pool: &SqlitePool,
+    scan_id: i64,
+) -> Result<std::collections::HashMap<i64, MemberVerification>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT m.entry_id, m.content_hash, m.hash_error          FROM duplicate_members m          JOIN duplicate_groups g ON g.id = m.group_id          WHERE g.scan_id = ? AND (m.content_hash IS NOT NULL OR m.hash_error IS NOT NULL)          ORDER BY m.id",
+    )
+    .bind(scan_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = std::collections::HashMap::new();
+    for r in rows {
+        let hash: Option<String> = r.get("content_hash");
+        let error: Option<String> = r.get("hash_error");
+        // Same precedence as `DuplicateMemberRow::verification`: a stored hash
+        // wins over a stored error, because a hash means the file WAS read.
+        let v = match (hash, error) {
+            (Some(h), _) => MemberVerification::Verified(h),
+            (None, Some(e)) => MemberVerification::Failed(e),
+            (None, None) => continue,
+        };
+        out.insert(r.get::<i64, _>("entry_id"), v);
+    }
+    Ok(out)
+}
+
 /// Record the outcome of hashing ONE duplicate group member (F-702, AC-15).
 ///
 /// Writes exactly one of the two columns and clears the other, so the pair can
