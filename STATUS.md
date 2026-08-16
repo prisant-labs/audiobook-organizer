@@ -3,7 +3,7 @@ title: "Audiobook Organizer - Status and Decision Queue"
 type: status
 project: audiobook-organizer
 created: 2026-07-20
-updated: 2026-08-14
+updated: 2026-08-15
 status: active
 ---
 
@@ -17,8 +17,9 @@ Every item below leads with what it IS; the reference ID in brackets is just the
 
 The fuller version of this list lives in the "What needs you" section of the latest session log under `_local/_session-logs/`, which is untracked on purpose.
 
-- [x] **Merge the open pull requests** - DONE 2026-08-15, on your instruction. Five landed (`#25`, `#26`, `#27`, `#29`, `#30`) plus this page's own change; see "In flight right now" for what each was and which single manual fix was needed. `EXECUTION.md` Section 6.2 requires a human decision for any merge to `main`, and your instruction was that decision; it is recorded here rather than only in a session log.
-- [ ] **Accept or reject one recommendation: do NOT descope duplicate hashing** (`AC-16`, v0.6.0 hardening, hash throughput on real data). This was the last undecided thing in `P2` that is a judgement rather than code, and it is now measured rather than guessed. Your library holds 293 exact duplicate candidates totalling 14.96 GB, which is 5% of its 298.72 GB, because `AC-10`'s candidates-only rule already did the narrowing. Verifying **one** duplicate group takes about a second; verifying all 293 takes 3 to 6 minutes, once, in a background job you can cancel and whose results are kept. The hashing code itself runs at 2,765 MB/s while the drive delivers 42 to 80, so **the wait is your disk, not the software, and running duplicates flag-only instead would not save a second of it.** Recommendation: ship `F-702` (hash verification) as designed. Evidence, with its limits stated: [hash-throughput-2026-08-15.md](docs/internal/releases/v0.6.0-hardening/hash-throughput-2026-08-15.md). Arrives as PR #31.
+- [x] **Merge the open pull requests** - DONE 2026-08-15, on your instruction, **twice**. First batch of six (`#25`, `#26`, `#27`, `#28`, `#29`, `#30`); second batch of four (`#31`, `#32`, `#33`, `#34`) on "merge and continue based on your best recommendations". `EXECUTION.md` Section 6.2 requires a human decision for any merge to `main`, and each instruction was that decision, recorded here rather than only in a session log. Neither authorisation carries forward to a later batch. Tags and releases were not touched: those are on the Section 3 human-only list.
+- [x] **`AC-16` (v0.6.0 hardening, hash throughput on real data): do NOT descope duplicate hashing - ACCEPTED 2026-08-15**, as part of "continue based on your best recommendations". `F-702` ships as designed. The measurement behind it: your library holds 293 exact duplicate candidates totalling 14.96 GB, 5% of its 298.72 GB, because `AC-10`'s candidates-only rule already did the narrowing; the hashing code runs at 2,765 MB/s while the drive delivers 42 to 80, so **the wait is the disk, not the software**, and flag-only would not have saved a second of it. Evidence, with its limits stated: [hash-throughput-2026-08-15.md](docs/internal/releases/v0.6.0-hardening/hash-throughput-2026-08-15.md)
+- [ ] **Decide how a REAL apply is authorised** (precondition 3 of four, the last one that is not already closed or already recommended). Recorded as "code, not a decision", and it is not: `apply_start` takes the run mode as a parameter from whoever calls it, and the frontend only ever sends practice. The boundary could be a build that cannot do a real run at all, a setting that defaults off, or a one-shot permission issued separately. Those are different safety postures for the thing standing between this app and 299 GB of your books, which is why it is yours rather than mine. Recommendation: a setting that defaults off and cannot be turned on from inside the review flow, so enabling it is a separate deliberate act rather than one more click on the path you are already walking.
 - [ ] **Reference screenshots: three to five, one line each on what to steal.** Drop them in `_local/gui/references/`. `D-06` (anti-reference: "looks AI-generated") records what you hate; nothing on file records what you want, so every design decision is currently argued from the negative. This is the only open item nobody but you can do, and the only one that raises the ceiling rather than closing a gap.
 - [ ] **Cut the release tags** (v0.1.0 through v0.5.0). Five releases are built and merged; zero are tagged. Human-only. Runbook: [runbook_cut-tag-release.md](docs/internal/release-plans/runbook_cut-tag-release.md)
 - [ ] **Round-trip evidence: accept or extend** (`AC-17`, v0.5.0 acting). Byte-identical SHA-256 before and after is proven on a 3-book subset of two real folders. Say "good enough" or ask for a fuller run. Scratch copies at `E:\tmp\abo-rt\` (~1.5 GB) can be deleted once you decide. Detail: [v0.5.0 spec, AC-17](docs/internal/releases/v0.5.0-acting/spec.md)
@@ -49,13 +50,13 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 | v0.3.0 | planning | yes | yes | no | tag, G-6 |
 | v0.4.0 | seeing | yes | yes | no | tag, G-1 |
 | v0.5.0 | acting | yes | yes | no | tag, AC-17, FD-33/34 |
-| v0.6.0 | hardening | in progress | `P0`/`P1` **complete**, `P2` engine merged, **`P2b` complete** | no | `AC-6` walk, `AC-8` walk |
+| v0.6.0 | hardening | in progress | `P0`/`P1` **complete**, **`P2` complete**, **`P2b` complete**, `P3` steps 1-2 done | no | `AC-6` walk, `AC-8` walk |
 | M-1 | campaign | planned | - | - | - |
 | v0.9.0 | packaged | planned | - | - | installer, signing decision |
 
 ## In flight right now
 
-`main` is at `365fb9b`, CI green. Six pull requests landed on 2026-08-15, in an order chosen so only one needed a manual fix. New work opened since is listed under "Open now" below.
+`main` is at `2f92378`, CI green, **zero open pull requests**. Ten landed on 2026-08-15 in two authorised batches: six in the morning, then four more (`#31`, `#32`, `#33`, `#34`) recorded in the second table below.
 
 | PR | Landed as | What |
 |---|---|---|
@@ -67,15 +68,22 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 
 **The one manual fix**, in `#26`: the gallery predated `FD-48` and referenced two renamed identifiers, plus a third line the recorded note had missed - a specimen label reading "tidy-up active", which is free text and so invisible to the type checker. Nothing sweeps `src/gallery` for retired vocabulary; that gap is now the top item under "Cleanup when convenient".
 
-### Open now
+### Merged 2026-08-15, second batch
 
-Agents do not self-merge (`EXECUTION.md` Section 6.2); your 2026-08-15 instruction covered that batch only. These are green and waiting on you.
+Authorised by "merge and continue based on your best recommendations". Merged in an order chosen so only one needed a hand resolution, and every pair was test-merged beforehand rather than trusted.
 
-| PR | What | Needs from you |
-|---|---|---|
-| [#31](https://github.com/prisant-labs/audiobook-organizer/pull/31) | **`AC-16` (hash throughput on real data) measured.** The `F-702` descope trigger is **not** met; recommendation is to ship as designed | Review, and accept or reject the no-descope recommendation |
-| [#32](https://github.com/prisant-labs/audiobook-organizer/pull/32) | **`AC-13` (the two-step override)**, the control that lets duplicate copies be Archived without being compared. `P2`'s last item | Review. One open question inside: whether the dangerous option or the safe one should be the prominent button |
-| [#33](https://github.com/prisant-labs/audiobook-organizer/pull/33) | Closes the two vocabulary-gate gaps below: `src/gallery` is now swept, and this page plus `CHANGELOG.md` joined the CI gate | Review |
+| Order | PR | Landed as | What |
+|---|---|---|---|
+| 1 | [#33](https://github.com/prisant-labs/audiobook-organizer/pull/33) | `04bc23c` | Closes two vocabulary-gate gaps: `src/gallery` is now swept (it had shipped a retired word twice), and this page plus `CHANGELOG.md` joined the CI gate. Went first because it touches nothing the others do |
+| 2 | [#32](https://github.com/prisant-labs/audiobook-organizer/pull/32) | `c189ec6` | **`AC-13`**, the two-step control for Archiving copies that were never compared. Went before `#31` so its new gallery specimen would be swept by `#33`'s new gallery gate in CI, not only on my machine |
+| 3 | [#31](https://github.com/prisant-labs/audiobook-organizer/pull/31) | `04f480d` | **`AC-16` measured**, plus `FsContentSource`, the product's first code that can read a real file's bytes |
+| 4 | [#34](https://github.com/prisant-labs/audiobook-organizer/pull/34) | `2f92378` | **`P3` steps 1-2**, the three resolution policies as pure functions |
+
+**The one hand resolution**, between `#31` and `#34`: both edited the phase table in the implementation plan, `#31` the `P2` row and `#34` the `P3` row, which are adjacent lines in the same hunk. Independent edits, but git cannot merge them. Resolved by keeping each side's own row, which is exactly what had been written on `#34` before the merge started, so the resolution was a lookup rather than a decision.
+
+**Verified on the merged result, not on the parts**: CI green on `main` at `2f92378` (all four checks), and locally `cargo fmt`, clippy, 675 Rust tests, 326 JS tests, the arbitrary-value ratchet exactly at 285/71, and the dash check.
+
+Six remote branches remain because the repo sets `delete_branch_on_merge: false`, which is your configuration to change; the local ones are deleted.
 
 **Merged 2026-08-14:** PR #23 and PR #24, the Dependabot Rust and JavaScript dependency groups.
 
@@ -89,7 +97,7 @@ Agents do not self-merge (`EXECUTION.md` Section 6.2); your 2026-08-15 instructi
 
 **One thing worth knowing about `P2`, found while measuring it.** The hash verification engine merged in August as PR #15 and **cannot be run from the app**. The plan's own step said "wire the `dupes_hash_verify` command to the job (already in the command surface)", and no command by that name exists anywhere; the job has no callers; and until PR #31 there was no code in the product that could read a file's bytes at all, only in-memory test doubles. That last part is what makes it certain rather than likely. This is the same shape as the defect that created `P0`: the audit found undo complete but unreachable. Nothing is wrong with the engine and nothing is being hidden, but "`P2` engine merged" has been quietly meaning "merged and reachable from nothing", and the ladder above now says so. The command belongs with the duplicates surface that calls it (`P5`), so building it now would repeat the mistake pointing the other way.
 
-**Next up:** `P2` is complete once #31 and #32 land: `AC-16` (throughput on real data) is measured, and `AC-13` (the two-step override) turned out smaller than it reads, being an affordance on a duplicate-resolution action that **does not exist yet**. After that: `P3`'s resolution policies written against books rather than files, which is exactly what `FD-44` sequenced `P2b` before and which now has `BookFolder` and `BookMatch` to build on. Two design items also unblocked when the gallery landed: proposing the spacing and type scale rendered in the gallery, and the wider documentation sweep that would have collided with `FD-48`.
+**Next up:** `P3` steps 3 and 4, which are the safety-critical half: turning a confirmed resolution into real Archive operations that flow through the normal plan, apply and undo path (`AC-25`), and proving that undoing one puts every copy back byte for byte (`AC-27`). Steps 1 and 2, the policies themselves, merged as `#34`. After that: `P4` (duplicate review and report) and `P5` (the duplicates surface), which is also where the `AC-13` control built in `#32` finally gets wired to something, and where the `dupes_hash_verify` command noted above belongs. Two design items are also unblocked now that the gallery is on `main` with no open work touching it: proposing the spacing and type scale rendered against real components, and the wider documentation sweep.
 
 **UI round 2** lives in `_local/gui/2026-08-04/round2/`. Prototypes only, nothing in the tracked tree, and superseded by the gallery in PR #26. Round 1 is closed with a full traceability record, and its four follow-up decisions `D-1` to `D-4` are closed as `FD-42` through `FD-45`, with `FD-43` since reversed as `FD-48`.
 
@@ -110,8 +118,7 @@ The README states this plainly rather than implying a finished write path.
 
 ## Cleanup when convenient
 
-- **Nothing sweeps `src/gallery` for retired vocabulary.** `vocabulary.test.ts` covers app copy and the CI governance grep covers three markdown files, so the gallery, whose entire job is showing what the product looks like, is the one user-visible surface with no guard. It has now shipped a retired word twice: "already tidy" in a fixture, and a specimen label reading "tidy-up active" that the type checker could not see because it is free text. A one-line addition to the existing sweep.
-- **Extend the CI vocabulary gate to `STATUS.md` and `CHANGELOG.md`.** Deferred while `#25` and `#27` both had a pending `ci.yml` edit; that contention is gone now that both have merged. Verified in advance that the extension passes on the real files and still catches a planted offender.
+- [x] **Both vocabulary-gate gaps are CLOSED** (PR `#33`, 2026-08-15). `src/gallery` is now swept, globbed rather than listed so the next gallery file is covered too, and `STATUS.md` plus `CHANGELOG.md` joined the CI governance gate. Each was proven to catch a planted offender, not merely to pass: the sweep was tested with the exact label that shipped ("tidy-up active"), and `ShelfSection` was asserted NOT to trip it, so it can never start demanding that engineering identifiers be renamed.
 - `E:\tmp\abo-rt\` (~1.5 GB of AC-17 round-trip copies) once AC-17 is ratified. The only one still outstanding.
 - `E:\tmp\abo-tracer`, left over from the v0.1.0 tracer-bullet work and almost certainly dead weight.
 
