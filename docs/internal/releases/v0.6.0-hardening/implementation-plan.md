@@ -279,12 +279,12 @@ Steps:
 1. Build the duplicates route under `src/` using generated bindings only (no raw `invoke`), TanStack Query for the groups list, Zustand for selection state.
 2. Render group-by-group review with the FD-13 "Show file details" disclosure for copy locations; policy selector for the four F-704 policies (AC-28, AC-30).
 3. Nav badge shows the GROUP count, updated on `job:completed` (event-driven, no polling) (AC-29).
-4. Implement the F-702 override as an explicit warning-confirm dialog using the FD-09 danger token pair (AC-30, AC-13).
+4. Implement the F-702 override as an explicit warning-confirm using the FD-09 danger token pair (AC-30, AC-13). **The CONTROL is already built (2026-08-15): `src/components/review/UnverifiedArchiveConfirm.tsx`, with its copy, its two-step guarantee, component tests, an axe smoke on both steps, and a gallery specimen in both themes. What remains here is WIRING it to a resolve action, which does not exist until Phase 3.** Note the mechanism: spec AC-12 says "warning dialog", design-system Section 7 says confirming is never a modal, and AC-13 asks for consistency with the design system, so it is the canonical inline two-step strip (Section 4.14) rather than a modal.
 5. Wire FD-04 empty ("no duplicates found") and loading ("checking copies") states (AC-31).
 
 Verification:
-- Vitest component tests for selection + policy state and for the override two-step affordance.
-- axe-core smoke on the surface (FD-21); contrast check of the danger token pair in both themes.
+- Vitest component tests for selection + policy state and for the override two-step affordance. **The override half is done**: the two-step guarantee is mutation-tested (making the first press act fails three tests).
+- axe-core smoke on the surface (FD-21); contrast check of the danger token pair in both themes. **The override control's own axe smoke is done, both steps.**
 - Manual QA: keyboard walkthrough item added to the release checklist.
 
 Decision Gate: N/A (consumes Phase 2/4 contracts).

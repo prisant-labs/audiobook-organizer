@@ -19,6 +19,7 @@ import { GroupDetail } from "@/components/review/GroupDetail";
 import { OpRow } from "@/components/review/OpRow";
 import { PlanFilter } from "@/components/review/PlanFilter";
 import { ReviewFooter } from "@/components/review/ReviewFooter";
+import { UnverifiedArchiveConfirm } from "@/components/review/UnverifiedArchiveConfirm";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { Titlebar } from "@/components/shell/Titlebar";
@@ -311,6 +312,17 @@ function Specimens() {
         </Specimen>
         <Specimen name="ConfirmInline" state="disabled">
           <ConfirmInline disabled />
+        </Specimen>
+        <Specimen
+          name="UnverifiedArchiveConfirm"
+          state="step 1, the opener"
+          note="AC-13: press it to see step 2. Not wired to anything yet; resolution is P3"
+          wide
+        >
+          <UnverifiedArchiveConfirm onConfirm={fx.noop} />
+        </Specimen>
+        <Specimen name="UnverifiedArchiveConfirm" state="disabled">
+          <UnverifiedArchiveConfirm onConfirm={fx.noop} disabled />
         </Specimen>
         <Specimen name="ReviewFooter" wide>
           <ReviewFooter groups={fx.GROUPS} planId={1} />
