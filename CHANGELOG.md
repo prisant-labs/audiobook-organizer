@@ -9,6 +9,32 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Duplicate copies can now be resolved into real, undoable changes** (`P3`,
+  `F-704`). Three ways to choose which copy to keep are available (keep the
+  bigger one, prefer a single-file copy, or just flag them and decide later,
+  which stays the default), and nothing is ever chosen for you: a copy only
+  moves to the Archive after you confirm that group. Confirmed copies move as
+  ordinary moves, so undoing a run puts every one of them back exactly where it
+  was, proven byte for byte. Worth knowing about the three ways to choose: on
+  copies that are genuinely identical they usually cannot tell the copies apart,
+  because identical is what makes them a duplicate, so the honest answer in that
+  common case is "these were equivalent" and the copy nearest the top of the
+  library is kept.
+- **The app can now read a book's contents to prove two copies really are the
+  same.** Until this release nothing in the shipped product could read a file's
+  bytes at all; the check existed but had only ever been run against test data.
+  Measured on a real 299 GB library: checking one duplicate takes about a second,
+  and checking every duplicate in the library takes a few minutes, once, in the
+  background, and can be stopped. Files whose names are longer than Windows'
+  old limit are read correctly rather than reported as unreadable.
+- **A confirm step for archiving copies that were never compared.** Deliberately
+  two presses rather than one, and it says plainly that the copies have not been
+  compared file by file before it asks. Built and reviewable in the component
+  gallery; it is not reachable in the app until the duplicates screen arrives.
+- Development only: the component gallery is now checked for words the product
+  has retired, and so are this file and the status page. Retired wording had
+  reached the gallery twice because nothing was looking.
+
 - **Two copies of the same book are now found even when the book is split across
   many files** (`P2b`, `F-1110`). Every earlier duplicate check assumed one book
   is one file, so a book split across twelve mp3s was twelve unrelated files and
