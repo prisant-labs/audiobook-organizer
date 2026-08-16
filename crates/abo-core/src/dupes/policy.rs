@@ -111,6 +111,32 @@ pub struct Resolution {
     pub reason: KeeperReason,
 }
 
+/// A resolution the USER has confirmed (`AC-24`), and the only thing that ever
+/// causes an Archive operation to be emitted for a duplicate group.
+///
+/// Separate from [`Resolution`] on purpose. A `Resolution` is what a policy
+/// proposed; this is what a person agreed to. `AC-24` forbids silent
+/// auto-resolution, so the plan builder accepts only this type, and flag-only
+/// satisfies `AC-26` by producing none of them rather than by being special-cased
+/// anywhere in the builder.
+///
+/// # `entry_id`s are per-scan, and that has a consequence for `P5`
+///
+/// These ids index one snapshot. `FD-39` re-plans from a FRESH scan after an
+/// interruption rather than replaying, so ids do not survive a re-scan. Whatever
+/// persists confirmations must key them to a `scan_id` and drop them when the
+/// scan is superseded; a confirmation carried across a re-scan would archive
+/// whatever file happens to hold that id next, which is the worst failure this
+/// product can have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmedResolution {
+    /// `entries.id` of the copy to keep. Carried rather than dropped because the
+    /// builder validates against it and the rationale names it.
+    pub keeper: usize,
+    /// `entries.id` of each copy to move to the Archive.
+    pub losers: Vec<usize>,
+}
+
 /// Propose a keeper for `group` under `policy`.
 ///
 /// `books` is the book-folder view of the same snapshot, used only to answer
