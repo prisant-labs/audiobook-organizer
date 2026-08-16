@@ -285,3 +285,77 @@ describe("copy sweep (T-33, AC-37/AC-38, design-system Section 6)", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+// ---- Producer 5: the dev-only component gallery ----
+//
+// Added 2026-08-15, closing the gap this file's own header warns about: these
+// gates are keyed on WHICH FILE text lives in, so a new producer of visible text
+// stays silently ungated until someone adds its sweep.
+//
+// `src/gallery` is exactly that. Its whole job is showing what the product looks
+// like, and it was the one visible surface nothing swept: the sweeps above walk
+// copy OBJECTS while the gallery's text is free-form JSX props, and the CI grep
+// covers governance markdown. It shipped a retired word TWICE in one release, a
+// fixture reading "already tidy" and a specimen label reading "tidy-up active",
+// and free text made the second invisible to the type checker. Both were caught
+// by a person reading the page, which is not a gate.
+//
+// GLOB RATHER THAN A FILE LIST, on purpose. A hardcoded list would leave the
+// next gallery file ungated, which is the same failure mode one level down. This
+// is `import.meta.glob` (Vite, eager, `?raw`), the pattern `errorCopy.test.ts`
+// already uses to sweep generated bindings as source text. It also keeps
+// `RETIRED_WORDS` shared instead of forking a third copy of the pattern.
+//
+// SOURCE TEXT, not rendered output. Rendering the gallery needs a browser, and
+// both real defects were string literals, so reading the source catches them at
+// the point they are written.
+//
+// Component IDENTIFIERS are not swept and must not be. `ShelfSection` is a
+// symbol, and FD-47 moved the copy a user reads, not engineering names. That
+// needs no exemption list: word boundaries already do it, since `\bshelf\b`
+// cannot match inside `ShelfSection`, whose "f" is followed by a word character.
+// Asserted below rather than left as a claim.
+describe("the component gallery carries no retired vocabulary (producer 5)", () => {
+  // Only RETIRED_WORDS, not BANNED_WORDS: the gallery's explanatory comments
+  // legitimately discuss internals ("quarantine", "manifest") that no user
+  // reads. What must never appear there is a word a decision replaced.
+  const RETIRED_PATTERN = new RegExp(`(${RETIRED_WORDS.join("|")})`, "i");
+
+  const GALLERY_SOURCES = import.meta.glob("../../gallery/*.{ts,tsx}", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  // The glob resolving to nothing would make every assertion below pass while
+  // checking absolutely nothing, which is the failure mode this whole describe
+  // block exists to prevent. Prove the coverage before using it.
+  it("finds the gallery source files", () => {
+    expect(Object.keys(GALLERY_SOURCES).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each(Object.entries(GALLERY_SOURCES))("%s uses no word a decision has retired", (_path, source) => {
+    const offenders = source
+      .split("\n")
+      .map((line, i) => [i + 1, line] as const)
+      .filter(([, line]) => RETIRED_PATTERN.test(line));
+
+    expect(
+      offenders,
+      `retired vocabulary in the gallery. FD-42 replaced "set aside" with "Archive", ` +
+        `FD-47 replaced "shelf/shelves" with "library", and FD-48 retired the whole ` +
+        `"tidy" family for "organize":\n${offenders.map(([n, l]) => `  line ${n}: ${l.trim()}`).join("\n")}`,
+    ).toEqual([]);
+  });
+
+  // Guards the guard. If this fails, the sweep has started flagging component
+  // names, and the fix is the pattern rather than the component.
+  it("flags a retired word in a label but not a component identifier", () => {
+    expect(RETIRED_PATTERN.test("<ShelfSection wide>")).toBe(false);
+    expect(RETIRED_PATTERN.test('import { ShelfSection } from "@/components/library/ShelfSection"')).toBe(
+      false,
+    );
+    // The exact label that shipped, on the same shape of line.
+    expect(RETIRED_PATTERN.test('<Specimen name="Sidebar" state="tidy-up active">')).toBe(true);
+  });
+});
