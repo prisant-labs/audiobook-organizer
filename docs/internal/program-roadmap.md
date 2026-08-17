@@ -1,6 +1,7 @@
 ---
 title: Audiobook Organizer - Program Roadmap
 date: 2026-07-03
+updated: 2026-08-16
 status: review
 owner: jprisant
 produced-by: AUTHOR agent (roadmap)
@@ -170,6 +171,15 @@ Each release tags only when its composite gate (Section 2, detailed as AC in the
 
 ## 8. Effort tracking table
 
+**Where the current position actually lives.** This table is the release-level
+view and goes stale the moment a phase lands, which is what happened between
+2026-07-03 and 2026-08-16. Two documents are more current by construction and
+should be read first: `STATUS.md` at the repo root is the decision queue and the
+current commit, and each release's own `implementation-plan.md` carries its
+phase-by-phase completion. Update this table when a RELEASE changes state, not
+when a phase does.
+
+
 One row per release folder (FD-16: effort = release). Status is "planned" for all rows until execution starts. The Tracking issue column fills when GitHub issues exist (one issue per release, milestone = version).
 
 | Version | Codename | Spec | Implementation plan | Status | Gate summary | Tracking issue |
@@ -179,10 +189,10 @@ One row per release folder (FD-16: effort = release). Status is "planned" for al
 | v0.3.0 | planning | [spec](releases/v0.3.0-planning/spec.md) | [plan](releases/v0.3.0-planning/implementation-plan.md) | built (gate walked 2026-07-05; G-6 non-engineer read pending jp; tag awaiting jp per D-10) | Deterministic validated plan; HTML report passes non-engineer read test | PRs #14, #15, #16 |
 | v0.4.0 | seeing | [spec](releases/v0.4.0-seeing/spec.md) | [plan](releases/v0.4.0-seeing/implementation-plan.md) | built (gate walked 2026-07-06; merged with CI green same day; G-1 human review loop pending jp; tag awaiting jp per D-10) | Human approves real-library plan in app; preview responsive over 718 folders | PRs #17, #18 |
 | v0.5.0 | acting | [spec](releases/v0.5.0-acting/spec.md) | [plan](releases/v0.5.0-acting/implementation-plan.md) | built and merged to main on green CI 2026-07-20 (PRs #23, #30, #27, #28, #29; macOS honesty leg green on the main-push run); gate walked 2026-07-19, round-trip byte-identical on fixtures and real-data subset copies; AC-17 ratification + tag awaiting jp per D-10 | Rollback round-trip byte-identical on fixtures AND real-data copy | PRs #23, #30, #27, #28, #29 |
-| v0.6.0 | hardening | [spec](releases/v0.6.0-hardening/spec.md) | [plan](releases/v0.6.0-hardening/implementation-plan.md) | planned | Kill-during-apply reconciles both directions; hash-verified dedupe on copies | - |
-| M-1 | campaign | [runbook](releases/M-1-campaign/runbook.md) | (runbook is the artifact) | planned | Health metrics near zero for target problems; ABS imports; backup recorded (D-17) | - |
-| v0.9.0 | packaged | [spec](releases/v0.9.0-packaged/spec.md) | [plan](releases/v0.9.0-packaged/implementation-plan.md) | planned | Fresh-machine install runs full pipeline on a sample tree | - |
-| v1.0.0 | ga | (folder not yet scaffolded) | (folder not yet scaffolded) | planned | All prior gates re-verified; schema frozen; tag cut by human | - |
+| v0.6.0 | hardening | [spec](releases/v0.6.0-hardening/spec.md) | [plan](releases/v0.6.0-hardening/implementation-plan.md) | **IN PROGRESS: 5 of 11 phases done** (P0, P1, P2, P2b, P3 complete; P4 engine complete, its IPC deferred to P5). Remaining: P5 duplicates surface, P6 ruleset import/export (blocked on OQ-2), P7 everything view, P8 long-path + release gate, P9 library freshness, P10 open-in-file-manager | Kill-during-apply reconciles both directions; hash-verified dedupe on copies | PRs #11 to #38 |
+| M-1 | campaign | [runbook](releases/M-1-campaign/runbook.md) | (runbook is the artifact) | **BLOCKED ON DECISIONS, NOT CODE.** Four preconditions gate the first real (non-practice) run against the library. Two are jp's open decisions (power-loss threat model, cross-volume move policy), one is jp's decision reclassified from code on 2026-08-16 (how a real apply is authorised), and one closed on 2026-08-15. `D-17` (backup) is also owed before any group runs | Health metrics near zero for target problems; ABS imports; backup recorded (D-17) | - |
+| v0.9.0 | packaged | [spec](releases/v0.9.0-packaged/spec.md) | [plan](releases/v0.9.0-packaged/implementation-plan.md) | not started; 6 phases scaffolded (release artifact, user docs, first-run polish, app-data lifecycle, fresh-machine gate, release ceremony) | Fresh-machine install runs full pipeline on a sample tree | - |
+| v1.0.0 | ga | (folder not yet scaffolded) | (folder not yet scaffolded) | not started. **Its gate is the accumulated human gates, not new code**: five untagged releases, `G-1` (approve a plan in the app), `G-6` (non-engineer reads the report), the `AC-6` and `AC-8` hand walkthroughs, and `AC-17` round-trip ratification are all still open | All prior gates re-verified; schema frozen; tag cut by human | - |
 | v1.1.x | enrichment | (folder not yet scaffolded) | (folder not yet scaffolded) | planned | Per-feature spec | - |
 
 Release folders are scaffolded via `/jp-release-plan --create vX.Y.Z` when execution starts; specs own AC from that point. v1.0.0 and v1.1.x folders are created at their time (no spec authored in this suite).
@@ -216,6 +226,27 @@ Directional estimates from the release plan Section 7, restated with the trust-g
 | v1.0.0 (ga) | ~0.5 week |
 
 Total ~11-12 focused weeks to GA, with genuinely useful artifacts far earlier: a reviewed reorganization plan plus a shareable HTML dry-run report at v0.3.0 (planning), a working review app at v0.4.0 (seeing), and the early mini-campaign option on v0.5.x. Trust the gates and the descope triggers, not the numbers. Per D-10, each version boundary produces a non-blocking release report; the report informs but does not gate the next release (only the human-only stops gate).
+
+**Restated 2026-08-16, because the release these numbers sized is not the one
+that exists.** The ~1.5 weeks against v0.6.0 was written on 2026-07-03 for a
+release of six phases. It now has eleven: `P0` (History and undo reachable) was
+added on 2026-07-30 after an audit found v0.5.0's undo machinery complete but
+UNREACHABLE, `P2b` (book-level duplicate comparison) on 2026-08-05 per `FD-44`,
+and `P9` plus `P10` on 2026-08-05 from the round 2 crit. Five of the eleven are
+done. Treat the original figure as sizing roughly half of what the release
+became.
+
+**The honest shape of what remains, which is not mostly code.** Six phases of
+v0.6.0 and six of v0.9.0 are the engineering. The longer pole is the decision
+and gate backlog, because **nothing has ever run for real against the library**:
+every apply to date has been a practice run or a run against copies. Four
+preconditions gate the first real run and three of them are now decisions rather
+than code. Beyond those sit five untagged releases and four human gates never
+walked (`G-1`, `G-6`, `AC-6`, `AC-8`) plus `AC-17` ratification and `D-17`
+(backup) before M-1 may start.
+
+That ordering matters for planning: adding engineering capacity moves the first
+column and not the second.
 
 ## 11. Supersession note
 
