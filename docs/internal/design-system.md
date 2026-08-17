@@ -32,13 +32,13 @@ Section 4 (component inventory) and Section 5 (state definitions) are written to
 
 The five `PRODUCT.md` principles govern every surface. Restated as design-system obligations, not at length:
 
-1. Plain language first. Books, shelves, copies, tidy-up. Technical detail lives behind one consistent "Show file details" disclosure (Section 6, Section 7).
+1. Plain language first. Books, library, duplicates, organize. Technical detail lives behind one consistent "Show file details" disclosure (Section 6, Section 7).
 2. Preview before touch. Every destructive-adjacent flow is scan then review then confirm. The review screen and the exported HTML report are the trust ceremony.
 3. Nothing irreversible. No deletion vocabulary in the UI. Duplicates are "moved to the Archive", changes are "undoable", and the interface says so where the anxiety happens (Section 6 reassurance canon).
 4. The books are the interface. Covers and spines carry warmth and recognition; app chrome stays quiet and neutral so the collection is the color.
 5. One calm primary action per screen. Every surface answers "what should I do next" with exactly one obvious button (Section 7).
 
-The design bar is set by tier 2 (household non-engineers, D-03 (audience: all three tiers)): if a household member could not confidently review and confirm a tidy-up, the surface is wrong.
+The design bar is set by tier 2 (household non-engineers, D-03 (audience: all three tiers)): if a household member could not confidently review and confirm a run, the surface is wrong.
 
 ### 1.2 Anti-references (D-06 (anti-reference: AI-dashboard look))
 
@@ -117,7 +117,7 @@ Evening theme (`data-theme="evening"`):
 | `--primary-hover` | `#7264d8` (corrected from the prototype's `#7a6ce0`; see Section 8 note) | `--link` | `#b3a6f2` |
 | `--primary-ink` | `#ffffff` | | |
 
-Semantic status pairs map to product meaning: `--good` = tidy / included / verified; `--warn` = held / checking / needs-you-soft; `--alert` = structural attention (box set, multiple copies). `--alert` (terracotta) is NOT an error color; error/danger gets its own pair below.
+Semantic status pairs map to product meaning: `--good` = organized / included / verified; `--warn` = held / checking / needs-you-soft; `--alert` = structural attention (box set, multiple copies). `--alert` (terracotta) is NOT an error color; error/danger gets its own pair below.
 
 ### 2.3 New error/danger token pair (FD-09)
 
@@ -143,7 +143,7 @@ The prototypes have no error color. The one red present is the window-close hove
 | Headings, cover titles, big percent | `--serif` (Literata) | Bundled webfont, FD-11 |
 | Path disclosures only | `--mono` (Cascadia Code) | Inside "Show file details" `<pre>` only; never a primary surface (D-06 dev-tool anti-reference) |
 
-Observed scale from the prototypes: `h1` 26-30px Literata weight 500, letter-spacing -.01em, `text-wrap:balance`; section `h2` 19-21px Literata weight 500; body lede 13.5-14.5px `--ink-2` with `max-width` 46-56ch and `text-wrap:pretty`; control text 13px weight 600; metadata 11.5-12.5px `--ink-3` with `font-variant-numeric:tabular-nums` on all counts. The scan/tidy "big percent" is Literata 64px weight 500, tabular-nums, with a 0.35em `--ink-3` percent sign.
+Observed scale from the prototypes: `h1` 26-30px Literata weight 500, letter-spacing -.01em, `text-wrap:balance`; section `h2` 19-21px Literata weight 500; body lede 13.5-14.5px `--ink-2` with `max-width` 46-56ch and `text-wrap:pretty`; control text 13px weight 600; metadata 11.5-12.5px `--ink-3` with `font-variant-numeric:tabular-nums` on all counts. The scan and organize "big percent" is Literata 64px weight 500, tabular-nums, with a 0.35em `--ink-3` percent sign.
 
 ### 3.2 Literata bundling (FD-11 (fonts bundled, zero network))
 
@@ -151,7 +151,7 @@ Literata (SIL OFL) is bundled in-app as self-hosted `woff2`, loaded via `@font-f
 
 ### 3.3 Font-variant discipline
 
-All numeric counts (change counts, GB figures, series counts, nav badges, progress percent) use `font-variant-numeric:tabular-nums` so digits do not jitter as values update during scan and tidy progress.
+All numeric counts (change counts, GB figures, series counts, nav badges, progress percent) use `font-variant-numeric:tabular-nums` so digits do not jitter as values update during scan and organize progress.
 
 ### 3.4 Report register (FD-28 (report format spec))
 
@@ -164,13 +164,13 @@ The exported dry-run HTML report (F-506 (dry-run HTML report), 06-dryrun-report.
 Each component cites the prototype file it is extracted from. Measurements are the prototype values and are the default target; shadcn/ui primitives may back them as long as the rendered result matches.
 
 ### 4.1 Titlebar (custom, `decorations:false`)
-Source: 04, 05, 07. 40px tall custom titlebar (Tauri window decorations off). Left: bookshelf logo glyph plus "Audiobook Organizer" (optionally " - Tidy-up" on the review window) at 12.5px `--ink-2`. Right, before caption buttons: the theme segmented control. Far right: minimize / maximize / close caption buttons, 46px wide; close hovers to `#c4262e` white. Background `--titlebar`, bottom `1px solid --border`.
+Source: 04, 05, 07. 40px tall custom titlebar (Tauri window decorations off). Left: bookshelf logo glyph plus "Audiobook Organizer" (optionally " - Organize" on the review window) at 12.5px `--ink-2`. Right, before caption buttons: the theme segmented control. Far right: minimize / maximize / close caption buttons, 46px wide; close hovers to `#c4262e` white. Background `--titlebar`, bottom `1px solid --border`.
 
 ### 4.2 Theme segmented control
 Source: 04, 05, 07. Pill (`border-radius:999px`) with two buttons Day / Evening. Selected button carries `aria-pressed="true"`, `--surface-2` background, `--ink`, weight 600; unselected `--ink-3` transparent. `:focus-visible` outline 2px `--primary`. This is the canonical theme toggle (Section 7 interaction AC).
 
 ### 4.3 Sidebar nav with count badges
-Source: 04, 07. 212px column, `--titlebar` background, `1px` right border. Items: Library, Tidy-up, Duplicates, History, Settings. Active item carries `aria-current="page"`, `--surface-2`, weight 600. Right-aligned count badge `.n` in `--ink-3` tabular-nums (e.g. Duplicates count, Tidy-up "ready"/"done", History count). Footer `.end` block: two quiet lines, e.g. "Everything stays on this computer." / "Nothing is ever deleted." Nav counts follow the duplicates-unit canon (FD-08, Section 6): the Duplicates badge counts GROUPS, not copies. Settings is a real destination (FD-05), never a dead link (the prototype 07 disabled Settings is a prototype limitation).
+Source: 04, 07. 212px column, `--titlebar` background, `1px` right border. Items: Library, Organize, Duplicates, History, Settings. Active item carries `aria-current="page"`, `--surface-2`, weight 600. Right-aligned count badge `.n` in `--ink-3` tabular-nums (e.g. Duplicates count, Organize "ready"/"done", History count). Footer `.end` block: two quiet lines, e.g. "Everything stays on this computer." / "Nothing is ever deleted." Nav counts follow the duplicates-unit canon (FD-08, Section 6): the Duplicates badge counts GROUPS, not copies. Settings is a real destination (FD-05), never a dead link (the prototype 07 disabled Settings is a prototype limitation).
 
 ### 4.4 Cover tile (square 1:1)
 Source: 04, 05, 07. Square cover, `aspect-ratio:1/1`, `border-radius` 4-6px, `--cover-shadow`. Title in `--serif` weight 600; author in uppercase 0.04em tracked micro-caps at bottom (`margin-top:auto`, opacity .85). Size scale: `sz-lg` 112px (home shelf), `sz-md` 64px (review examples, duplicates). Deterministic decorative "pattern variants" drawn in CSS, never bitmap: `f-band` (horizontal band), `f-circle` (corner disc), `f-frame` (inset frame), `f-lines` (stacked rules). These stand in for real cover art until F-907 (cover extraction) lands. Covers are never 2:3 and never carry fake spine shading (D-06).
@@ -200,28 +200,28 @@ Source: 05, 07. `.flag` inline pill in `--warn`/`--warn-bg` with a warning glyph
 Source: 05, 07 (`<details><summary>`). A single consistent disclosure per example, closed by default, summary in `--link`. Open reveals a `--mono` `<pre>` with `--surface-2` background. Prototype content is the raw before/after path. Extended canon (F-504 (explainability), FD-13): the disclosure holds (1) the raw source and target paths, (2) the matched pattern in plain terms (e.g. "Matched pattern: year-author-title"), and (3) a confidence indication. This is the one sanctioned place raw paths appear on primary surfaces, for tier 1 (Section 9 path-exception rule). Everything outside the disclosure stays plain-language.
 
 ### 4.13 Sticky footer action bar
-Source: 05 (`.footer`), 07 (`.footbar`). Bottom bar, `--titlebar` background, top border. Left: a reassurance line with a shield-check glyph in `--good`: "Nothing is deleted. Every change can be undone." Right cluster: a count summary ("6 of 7 groups - 982 changes", tabular-nums), a "Save report" secondary button, and one primary button "Tidy up now". Exactly one primary action (Section 7).
+Source: 05 (`.footer`), 07 (`.footbar`). Bottom bar, `--titlebar` background, top border. Left: a reassurance line with a shield-check glyph in `--good`: "Nothing is deleted. Every change can be undone." Right cluster: a count summary ("6 of 7 groups - 982 changes", tabular-nums), a "Save report" secondary button, and one primary button "Organize now". Exactly one primary action (Section 7).
 
 ### 4.14 Two-step inline confirm strip
-Source: 07 (`.confirm`). Clicking "Tidy up now" does NOT open a modal. It swaps the primary button for an inline confirm strip in the same footer: "Ready: 982 changes, undo will be available." plus a primary "Go ahead" and a quiet "Not yet". This is the canonical confirm pattern: inline, reversible, never a modal dialog (Section 7).
+Source: 07 (`.confirm`). Clicking "Organize now" does NOT open a modal. It swaps the primary button for an inline confirm strip in the same footer: "Ready: 982 changes, undo will be available." plus a primary "Go ahead" and a quiet "Not yet". This is the canonical confirm pattern: inline, reversible, never a modal dialog (Section 7).
 
 ### 4.15 Toast
-Source: 07 (`.toast`). Transient bottom-center pill, `--ink` background / `--bg` text, fades in and auto-dismisses (~3.6s), `pointer-events:none`, `max-width` ~520px, centered. For lightweight confirmations ("Saved: Reports\tidy-up-1-dry-run.html"). Not for errors that need a decision; those are surfaces (Section 5), not toasts.
+Source: 07 (`.toast`). Transient bottom-center pill, `--ink` background / `--bg` text, fades in and auto-dismisses (~3.6s), `pointer-events:none`, `max-width` ~520px, centered. For lightweight confirmations ("Saved: Reports\dry-run-report.html"). Not for errors that need a decision; those are surfaces (Section 5), not toasts.
 
 ### 4.16 Progress set
-Source: 07 (scan and tidy screens). A `.centercol` (max ~660px) holding, top to bottom: the big percent (`.bigpct`, Literata 64px, tabular-nums), a thin progress bar (`.pbar` with a `--primary` `.pbar i` fill, transform-scaled), a one-line status (`.pline`, e.g. "8,540 of 13,970 files read" using a friendly location name, not a raw path, FD-13), an optional step checklist (`.plist`/`.pitem` with done/active states and per-step counts, ✓ marks in `--good`), and a rolling feed (`.feed`, last ~4 human-readable lines, e.g. "Moved **Sapiens** into Yuval Noah Harari > Sapiens (2011)"). The prototype's "Skip ahead" link is demo-only and NEVER ships (FD-02 (pause/resume + stop)). Every progress screen carries a real Stop control; the tidy screen also carries Pause (Section 5.4, Section 7).
+Source: 07 (scan and organize screens). A `.centercol` (max ~660px) holding, top to bottom: the big percent (`.bigpct`, Literata 64px, tabular-nums), a thin progress bar (`.pbar` with a `--primary` `.pbar i` fill, transform-scaled), a one-line status (`.pline`, e.g. "8,540 of 13,970 files read" using a friendly location name, not a raw path, FD-13), an optional step checklist (`.plist`/`.pitem` with done/active states and per-step counts, ✓ marks in `--good`), and a rolling feed (`.feed`, last ~4 human-readable lines, e.g. "Moved **Sapiens** into Yuval Noah Harari > Sapiens (2011)"). The prototype's "Skip ahead" link is demo-only and NEVER ships (FD-02 (pause/resume + stop)). Every progress screen carries a real Stop control; the organize screen also carries Pause (Section 5.4, Section 7).
 
 ### 4.17 Delta list (done screen)
-Source: 07 (`.deltas`/`.delta`). Post-tidy summary rows: a bold label plus a right-aligned before-to-after count where the old value is struck (`<s>582</s>1,013`), tabular-nums. Includes the guarantee row "Books deleted - 0, as always". Numbers live inside labeled rows, not in a stat band (D-06).
+Source: 07 (`.deltas`/`.delta`). Post-run summary rows: a bold label plus a right-aligned before-to-after count where the old value is struck (`<s>582</s>1,013`), tabular-nums. Includes the guarantee row "Books deleted - 0, as always". Numbers live inside labeled rows, not in a stat band (D-06).
 
 ### 4.18 Next-step card
 Source: 07 (`.nextcard`). A single bordered card on the done screen: "One step left, in Audiobookshelf", with the one place a raw path is allowed on a primary surface outside the disclosure (the ABS library path in a `code` span, FD-13), so tier 2 can configure ABS. Copy corrected per FD-12 (genre replacement copy, Section 6.5): no "old genre view lives on as tags" claim.
 
 ### 4.19 History item
-Source: 07 (`.hitem`). A bordered row per tidy-up: title with date ("Tidy-up #1 - today, 6:31 pm"), a plain summary ("982 changes across 6 groups - verified afterwards - 0 deletions - undo available"), and right-aligned "Report" and "Undo" buttons. Undo stays available until cleared.
+Source: 07 (`.hitem`). A bordered row per run: title with date ("Real run - today, 6:31 pm"), a plain summary ("982 changes across 6 groups - verified afterwards - 0 deletions - undo available"), and right-aligned "Report" and "Undo" buttons. Undo stays available until cleared.
 
 ### 4.20 Duplicate row
-Source: 07 (`.dupe`). A row per duplicate GROUP (FD-08): `sz-md` cover, the book title `h4`, a plain description of the overlap ("Identical in the Hugo and Nebula bundles. Keeper: the Locked Tomb shelf copy."), and a status tag ("checked, identical" `--good`; "waiting" `--ink-3`; "needs you" `--warn`). The unit is the group; member files are "copies" in the description (Section 6.3).
+Source: 07 (`.dupe`). A row per duplicate GROUP (FD-08): `sz-md` cover, the book title `h4`, a plain description of the overlap ("Identical in the Hugo and Nebula bundles. Keeper: the Locked Tomb library copy."), and a status tag ("checked, identical" `--good`; "waiting" `--ink-3`; "needs you" `--warn`). The unit is the group; member files are "copies" in the description (Section 6.3).
 
 ---
 
@@ -235,9 +235,9 @@ Blocked campaign group (in review). Layout: the affected group card shows the `.
 
 Scan failure. Layout: the scan screen's percent and feed are replaced by a centered short message with a `--danger` icon: "The scan stopped before it finished." One plain sentence on what is safe ("Nothing was changed - a scan only reads."). Primary action: "Try the scan again". Secondary: "Show file details" disclosure with the technical error and the folder involved. Tokens: `--danger`, `--danger-bg`.
 
-Apply failure plus resume choice. Layout: the tidy screen stops; a `--danger` surface states which book the tidy-up stopped on and that everything up to that point is safe and already recorded for undo ("Everything done so far is saved and can be undone."). Primary action: "Resume the tidy-up" (F-608 (pause/resume apply) resume semantics). Secondary: "Undo what was done" and a "Show file details" disclosure. Retry-once-then-halt-group executor behavior on access-denied (FD-19 (Windows path and Defender reality)) surfaces here as the halt message. Tokens: `--danger`.
+Apply failure plus resume choice. Layout: the organize screen stops; a `--danger` surface states which book the run stopped on and that everything up to that point is safe and already recorded for undo ("Everything done so far is saved and can be undone."). Primary action: "Resume the run" (F-608 (pause/resume apply) resume semantics). Secondary: "Undo what was done" and a "Show file details" disclosure. Retry-once-then-halt-group executor behavior on access-denied (FD-19 (Windows path and Defender reality)) surfaces here as the halt message. Tokens: `--danger`.
 
-Interrupted tidy-up, recovery choice (v0.6.0 P1c, F-606 (interruption safety)). Trigger: a previous session was killed mid-apply, and the startup reconciler verified the outcome and repaired the record before the app opened. Distinct from "Apply failure plus resume choice" above, which is the in-session halt using F-608 (pause/resume apply) semantics; this is the across-a-restart case, where no live job exists to resume. Layout: replaces the screen area, sidebar left live. Navigation is deliberately NOT blocked: the dangerous action is starting a new tidy-up rather than using the app, and a navigation block would be a procedural gate that stops nothing an IPC caller can reach. The gate that matters is engine-side, beside `ensure_forward_tidying_allowed`, and is recorded in STATUS.md as a precondition for enabling real changes. Three states from one component. (a) An interrupted practice run: `--warn`, flask glyph, "Nothing on your shelves was touched", one calm action back to the library, because a rehearsal has nothing to carry on from and nothing to put back. (b) A real tidy-up stopped early with a verified outcome: `--warn` (this is "needs you", not a failure), warning glyph, the count of books moved, primary "Carry on tidying up" which re-scans and re-plans (FD-39 (carry-on by re-planning)) and never replays, secondary the engine-resolved undo. (c) A real tidy-up stopped early with an unconfirmed outcome: `--danger`, warning glyph, carrying on is NOT offered, because a cross-volume copy killed mid-write leaves a target that exists but may be truncated and a fresh scan would read it as a whole book; the only actions are whatever undo the engine allows and opening History. All three carry a "Show details" disclosure holding plain facts only: no paths, no ids, no journal (AC-6 in v0.6.0 hardening, FD-13). The surface renders the engine's answers (`resume_offered`, `UndoOffer`) and derives neither, per FD-36 (History and undo).
+Interrupted run, recovery choice (v0.6.0 P1c, F-606 (interruption safety)). Trigger: a previous session was killed mid-apply, and the startup reconciler verified the outcome and repaired the record before the app opened. Distinct from "Apply failure plus resume choice" above, which is the in-session halt using F-608 (pause/resume apply) semantics; this is the across-a-restart case, where no live job exists to resume. Layout: replaces the screen area, sidebar left live. Navigation is deliberately NOT blocked: the dangerous action is starting a new run rather than using the app, and a navigation block would be a procedural gate that stops nothing an IPC caller can reach. The gate that matters is engine-side, beside `ensure_forward_tidying_allowed`, and is recorded in STATUS.md as a precondition for enabling real changes. Three states from one component. (a) An interrupted practice run: `--warn`, flask glyph, "Nothing in your library was touched", one calm action back to the library, because a rehearsal has nothing to carry on from and nothing to put back. (b) A real run stopped early with a verified outcome: `--warn` (this is "needs you", not a failure), warning glyph, the count of books moved, primary "Carry on organizing" which re-scans and re-plans (FD-39 (carry-on by re-planning)) and never replays, secondary the engine-resolved undo. (c) A real run stopped early with an unconfirmed outcome: `--danger`, warning glyph, carrying on is NOT offered, because a cross-volume copy killed mid-write leaves a target that exists but may be truncated and a fresh scan would read it as a whole book; the only actions are whatever undo the engine allows and opening History. All three carry a "Show details" disclosure holding plain facts only: no paths, no ids, no journal (AC-6 in v0.6.0 hardening, FD-13). The surface renders the engine's answers (`resume_offered`, `UndoOffer`) and derives neither, per FD-36 (History and undo).
 
 Snapshot-stale re-validation prompt. Trigger: the library changed on disk since the plan was built. Layout: a calm inline banner above the review, `--warn`: "Your library changed since this plan was made. A quick re-check keeps the plan accurate." Primary action: "Re-check now" (re-validate). The plan is not applied until re-validated. Tokens: `--warn` (this is caution, not failure).
 
@@ -247,23 +247,23 @@ Permission denied. Trigger: a target path cannot be accessed (Defender / Control
 
 ### 5.2 Empty and edge states
 
-Already-tidy library (zero changes). Layout: review/home shows a warm, positive state: "Your library is already tidy - nothing to change." A `--good` check glyph, no group cards. Primary action: "Back to the library". Not an error; a success.
+Nothing-to-do library (zero changes). Layout: review/home shows a warm, positive state: "Your library is already in good shape - nothing to change." A `--good` check glyph, no group cards. Primary action: "Back to the library". Not an error; a success.
 
 Empty library root. Trigger: the chosen root has no audio. Layout: a gentle first-run-adjacent state: "This folder doesn't have any audiobooks yet." Primary action: "Choose a different folder" (opens the picker, F-909). Tokens: neutral `--ink-2`.
 
-All-groups-excluded. Trigger: the user has toggled every group off in review. Layout: the footer count reads "0 of 7 groups - 0 changes"; the primary "Tidy up now" button is DISABLED with an explanatory line beside it: "Turn on at least one group to tidy up." Tokens: neutral; disabled button uses the standard disabled treatment. The primary action is present but explicitly disabled with a reason (Section 7).
+All-groups-excluded. Trigger: the user has toggled every group off in review. Layout: the footer count reads "0 of 7 groups - 0 changes"; the primary "Organize now" button is DISABLED with an explanatory line beside it: "Turn on at least one group to organize." Tokens: neutral; disabled button uses the standard disabled treatment. The primary action is present but explicitly disabled with a reason (Section 7).
 
 No duplicates found. Layout: the Duplicates screen shows "No duplicate copies found - every book is unique." `--good` glyph, empty list. Nav badge reads 0 groups (FD-08).
 
 ### 5.3 Loading states
 
-Plan-building (between scan and review). This is a DISTINCT state, not reuse of the scan screen. Layout: the `.centercol` progress pattern with copy "Building the tidy-up plan" and a `--ink-2` sub-line "Working out the safest set of changes." A Stop control is present. This closes the gap the prototypes leave (scan jumps straight to review).
+Plan-building (between scan and review). This is a DISTINCT state, not reuse of the scan screen. Layout: the `.centercol` progress pattern with copy "Building the plan" and a `--ink-2` sub-line "Working out the safest set of changes." A Stop control is present. This closes the gap the prototypes leave (scan jumps straight to review).
 
 Re-scan progress (from home). Layout: the scan progress pattern (4.16) reachable from the home "Scan again" action, with the friendly-location status line (FD-13) and a real Stop control.
 
 ### 5.4 Stop and pause on progress (FD-02)
 
-Every progress screen (scan, plan-building, tidy) carries a real Stop control: cooperative cancel at safe boundaries only (F-104 (job progress + cancel) semantics; never mid-file-move). The tidy screen additionally carries Pause (F-608), which takes effect between books only and leaves the undo record intact. The prototype's "Pause between books" button is F-608; the prototype's "Skip ahead" is demo-only and never ships.
+Every progress screen (scan, plan-building, organize) carries a real Stop control: cooperative cancel at safe boundaries only (F-104 (job progress + cancel) semantics; never mid-file-move). The organize screen additionally carries Pause (F-608), which takes effect between books only and leaves the undo record intact. The prototype's "Pause between books" button is F-608; the prototype's "Skip ahead" is demo-only and never ships.
 
 ---
 
@@ -275,20 +275,45 @@ All user-facing copy is centralized in one strings module (FD-23 (localization: 
 
 | Use this | Not this |
 |---|---|
-| tidy-up, tidy | operation, op, job (in UI) |
+| organize | operation, op, job (in UI) |
 | changes | operations, mutations |
 | groups | batches |
 | move to the Archive | delete, remove, trash, quarantine, set aside |
 | copies (within a group) | duplicates-as-files, pairs |
 | held, checking, needs you | blocked, error (for soft states) |
 | library home, your library | dashboard |
+
+**Corrected 2026-08-16.** This document had drifted 34 instances behind the
+vocabulary it defines, including the first design principle in Section 1, which
+read "Books, shelves, copies, tidy-up" and named three retired terms in the
+sentence that sets the register. `FD-46` renamed the group to Duplicates,
+`FD-47` replaced shelves with library, and `FD-48` retired the whole tidy family
+for organize. A design system that teaches the wrong words is worse than no
+design system, because it is quotable.
+
+**What the word "shelf" still legitimately names here, and why it stays.**
+`FD-47` retired "shelves" as the word for WHERE BOOKS LIVE; that is the library.
+It did not rename the shelf-row component, its CSS (`--shelf-rail`,
+`.shelfhead`), or the bookshelf-edge visual metaphor those produce, any more
+than `FD-48` renamed `ensure_forward_tidying_allowed`. The rule is the same one
+every vocabulary decision here follows: copy a user reads moves, engineering and
+component names do not. Sentences a user reads have been changed; identifiers
+and the metaphor have not.
+
+**Not yet gated by CI, deliberately.** `STATUS.md` and `CHANGELOG.md` joined the
+governance vocabulary gate on 2026-08-15, and this file did not. The gate strips
+quoted spans to tell a mention from a use, which is not enough here: `--shelf-rail`
+and "home shelf" are legitimate and would fail it. Gating this file needs the
+pattern to understand the component-versus-copy distinction described above,
+which is a larger change than the sweep it would protect. Recorded so the gap is
+a known one rather than an oversight.
 | Show file details | show paths, show journal, show logs |
 
 Forbidden on primary surfaces: operations, ops, dedupe, manifest, quarantine, dashboard (plain-language register per the suite's standing rules; D-06). "quarantine" is an engine/internal term only; the UI says "set aside".
 
 ### 6.2 Numbers inside sentences
 
-Counts and sizes live inside sentences, not in stat bands or KPI tiles (D-06). Example (home lede, 04): "**1,022 audiobooks**, about 297 GB. Most are already in good shape for Audiobookshelf. **412** could use a tidy." Any GB figure states which quantity it refers to (FD-08): "10.1 GB across 403 duplicate groups", not a bare "10.1 GB".
+Counts and sizes live inside sentences, not in stat bands or KPI tiles (D-06). Example (home lede, 04): "**1,022 audiobooks**, about 297 GB. Most are already in good shape for Audiobookshelf. **412** could use organizing." Any GB figure states which quantity it refers to (FD-08): "10.1 GB across 403 duplicate groups", not a bare "10.1 GB".
 
 ### 6.3 Duplicates unit canon (FD-08 (duplicates canonical unit))
 
@@ -302,7 +327,7 @@ The deletion guarantee, used verbatim wherever the guarantee appears (report, re
 
 This exact register replaces the prototypes' overclaim "no delete anywhere" (which conflicts with the 20 empty-folder removals, planning audit stream 2 item 7). Primary quarantine vocabulary stays "set aside". Negated "deleted" wording is allowed ONLY in reassurance contexts that enumerate this guarantee (e.g. the done-screen "Books deleted - 0, as always" delta row); everywhere else the vocabulary is "set aside" (FD-10, planning audit stream 2 item 21).
 
-Standing reassurance lines (from 04, 05, 07), sanctioned: "Nothing is deleted. Every change can be undone." (footer); "Tidying never deletes anything. Duplicate copies are set aside, and every change can be undone." (home); "Everything stays on this computer." (nav / provenance).
+Standing reassurance lines (from 04, 05, 07), sanctioned: "Nothing is deleted. Every change can be undone." (footer); "Organizing never deletes anything. Duplicate copies are set aside, and every change can be undone." (home); "Everything stays on this computer." (nav / provenance).
 
 ### 6.5 Genre replacement copy (FD-12 (genre replacement copy))
 
@@ -320,7 +345,7 @@ Seven user-facing groups, exactly as prototyped in 05/07, and the review UI and 
 2. Give loose books their own folders (loose)
 3. Clean up messy folder names (names)
 4. Split box-set folders into separate books (box sets)
-5. Unpack collection bundles onto the shelves (bundles)
+5. Unpack books out of collection bundles (bundles)
 6. Move duplicate copies to the Archive (duplicates)
 7. Sweep out empty folders (empties)
 
@@ -337,9 +362,9 @@ Written as testable statements for F-908 / the v0.4.0 surfaces.
 - Group cards are keyboard-selectable: `tabindex="0"`, `aria-pressed` reflects selection (corrected from `aria-selected`, v0.4.0 Phase 8 T-36; see Section 4.9), Enter selects the card and updates the detail pane.
 - All interactive controls show a visible `:focus-visible` outline: 2px solid `--primary`, offset 2px.
 - `prefers-reduced-motion:reduce` collapses all transitions and animations to ~0ms (crossfade or instant alternatives); the theme-change and progress-bar transitions honor it.
-- Confirming a tidy-up is a two-step inline confirm strip in the footer (4.14), NEVER a modal dialog.
+- Confirming a run is a two-step inline confirm strip in the footer (4.14), NEVER a modal dialog.
 - Exactly one calm primary action per screen. Where the only reasonable primary action is unavailable (all-groups-excluded, 5.2), the primary button is present but DISABLED with an adjacent explanatory line, not hidden.
-- Every progress screen (scan, plan-building, tidy) has a real Stop control (cooperative cancel at safe boundaries, F-104); the tidy screen also has Pause (F-608). "Skip ahead" is demo-only and never ships (FD-02).
+- Every progress screen (scan, plan-building, organize) has a real Stop control (cooperative cancel at safe boundaries, F-104); the organize screen also has Pause (F-608). "Skip ahead" is demo-only and never ships (FD-02).
 - Toasts are for transient confirmations only and auto-dismiss; anything requiring a decision is a surface, not a toast.
 
 ---
@@ -400,7 +425,7 @@ Raw filesystem paths do not appear on primary surfaces, with exactly two sanctio
 1. Inside the "Show file details" disclosure (4.12), for tier 1, where paths appear alongside the matched pattern and confidence (F-504).
 2. The Audiobookshelf setup path on the done-screen next-step card (4.18), because tier 2 needs it to configure ABS.
 
-Everywhere else, including the scanning/tidying status line, a friendly location name is used, never a raw path (FD-13, planning audit stream 2 item 17). The frontend never touches the filesystem directly; folder access is via `tauri-plugin-dialog` and all paths originate from the backend (FD-29 (Tauri capability/security model), F-909).
+Everywhere else, including the scanning and organizing status line, a friendly location name is used, never a raw path (FD-13, planning audit stream 2 item 17). The frontend never touches the filesystem directly; folder access is via `tauri-plugin-dialog` and all paths originate from the backend (FD-29 (Tauri capability/security model), F-909).
 
 ---
 
