@@ -15,8 +15,10 @@
 //! minutes. A command that blocked until it finished would freeze the surface
 //! that is meant to be showing the progress.
 
+use abo_core::db::dupes::{clear_confirmation, confirm_resolution};
 use abo_core::dupes::{
-    review_for_scan, review_view_for_scan, verify_scan_duplicates, FsContentSource,
+    review_for_scan, review_view_for_scan, verify_scan_duplicates, ConfirmedResolution,
+    FsContentSource,
 };
 use abo_core::ipc::{AppError, DuplicatesReviewView, ExportedFile, JobStarted};
 use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
@@ -157,6 +159,67 @@ pub async fn dupes_export_csv(
     Ok(ExportedFile {
         path: path.to_string_lossy().to_string(),
     })
+}
+
+/// Record the user's decision for one duplicate group (AC-24, AC-30).
+///
+/// `keeper_entry_id` and `loser_entry_ids` are `entries.id` values from
+/// `scan_id`'s snapshot, and the confirmation is stored against that scan. That
+/// is what stops a decision outliving the thing it was made about: ids are
+/// per-snapshot, FD-39 re-plans from a fresh scan after an interruption, and a
+/// confirmation carried across a re-scan would archive whatever file happens to
+/// hold that id next.
+///
+/// Re-confirming a group REPLACES the previous answer rather than adding one.
+/// Nothing is archived by this call: it records a decision, and the Archive
+/// operations appear the next time a plan is built from this scan.
+#[tauri::command]
+#[specta::specta]
+pub async fn dupes_confirm(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+    method: String,
+    group_key: String,
+    keeper_entry_id: i64,
+    loser_entry_ids: Vec<i64>,
+) -> Result<(), AppError> {
+    let resolution = ConfirmedResolution {
+        keeper: keeper_entry_id as usize,
+        losers: loser_entry_ids.into_iter().map(|l| l as usize).collect(),
+    };
+    confirm_resolution(
+        &state.pool,
+        scan_id,
+        &method,
+        &group_key,
+        &resolution,
+        &now_iso8601_utc(),
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| AppError::DuplicateVerifyFailed {
+        detail: format!("could not record the decision: {e}"),
+    })
+}
+
+/// Withdraw a decision for one duplicate group, putting it back to undecided.
+///
+/// The losers go with it. A confirmation without its losers is not a record of
+/// anything, and a half-withdrawn decision is the shape that archives a file
+/// nobody meant to archive.
+#[tauri::command]
+#[specta::specta]
+pub async fn dupes_clear_confirmation(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+    method: String,
+    group_key: String,
+) -> Result<(), AppError> {
+    clear_confirmation(&state.pool, scan_id, &method, &group_key)
+        .await
+        .map_err(|e| AppError::DuplicateVerifyFailed {
+            detail: format!("could not withdraw the decision: {e}"),
+        })
 }
 
 /// Insert the initial `running` verification `jobs` row and return its id.

@@ -874,6 +874,15 @@ pub struct DuplicateGroupCard {
     /// blocks the automatic path and is what `AC-13`'s two-step override
     /// overrides.
     pub content_verified: bool,
+    /// `entries.id` of the copy the user CONFIRMED to keep (`AC-24`), or `None`
+    /// while the group is still undecided.
+    ///
+    /// A decision, not a suggestion: `suggested_keeper` on a copy is what the
+    /// app proposes, this is what a person chose, and only this one produces
+    /// Archive operations. Keeping them as separate fields is deliberate, since
+    /// a surface that showed one as the other would imply the app had already
+    /// decided something it has not.
+    pub confirmed_keeper: Option<i64>,
 }
 
 /// The duplicates surface's whole read model for one scan (`F-905`).

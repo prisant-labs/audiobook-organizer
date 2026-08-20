@@ -388,6 +388,29 @@ export const commands = {
 	 */
 	dupesExportCsv: (scanId: number) => typedError<ExportedFile, AppError>(__TAURI_INVOKE("dupes_export_csv", { scanId })),
 	/**
+	 *  Record the user's decision for one duplicate group (AC-24, AC-30).
+	 * 
+	 *  `keeper_entry_id` and `loser_entry_ids` are `entries.id` values from
+	 *  `scan_id`'s snapshot, and the confirmation is stored against that scan. That
+	 *  is what stops a decision outliving the thing it was made about: ids are
+	 *  per-snapshot, FD-39 re-plans from a fresh scan after an interruption, and a
+	 *  confirmation carried across a re-scan would archive whatever file happens to
+	 *  hold that id next.
+	 * 
+	 *  Re-confirming a group REPLACES the previous answer rather than adding one.
+	 *  Nothing is archived by this call: it records a decision, and the Archive
+	 *  operations appear the next time a plan is built from this scan.
+	 */
+	dupesConfirm: (scanId: number, method: string, groupKey: string, keeperEntryId: number, loserEntryIds: number[]) => typedError<null, AppError>(__TAURI_INVOKE("dupes_confirm", { scanId, method, groupKey, keeperEntryId, loserEntryIds })),
+	/**
+	 *  Withdraw a decision for one duplicate group, putting it back to undecided.
+	 * 
+	 *  The losers go with it. A confirmation without its losers is not a record of
+	 *  anything, and a half-withdrawn decision is the shape that archives a file
+	 *  nobody meant to archive.
+	 */
+	dupesClearConfirmation: (scanId: number, method: string, groupKey: string) => typedError<null, AppError>(__TAURI_INVOKE("dupes_clear_confirmation", { scanId, method, groupKey })),
+	/**
 	 *  The status of one apply job and its after-the-fact check (F-604): lifecycle
 	 *  state, whether it raised an unacknowledged discrepancy blocking further
 	 *  FORWARD tidy-ups (AC-20), how many differences the check found, and whether
@@ -1136,6 +1159,17 @@ export type DuplicateGroupCard = {
 	 *  overrides.
 	 */
 	content_verified: boolean,
+	/**
+	 *  `entries.id` of the copy the user CONFIRMED to keep (`AC-24`), or `None`
+	 *  while the group is still undecided.
+	 * 
+	 *  A decision, not a suggestion: `suggested_keeper` on a copy is what the
+	 *  app proposes, this is what a person chose, and only this one produces
+	 *  Archive operations. Keeping them as separate fields is deliberate, since
+	 *  a surface that showed one as the other would imply the app had already
+	 *  decided something it has not.
+	 */
+	confirmed_keeper: number | null,
 };
 
 /**  The duplicates surface's whole read model for one scan (`F-905`). */

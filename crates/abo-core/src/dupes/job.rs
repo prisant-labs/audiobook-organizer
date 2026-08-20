@@ -176,10 +176,24 @@ pub async fn review_view_for_scan(
     scan_id: i64,
     sep: char,
 ) -> Result<crate::ipc::DuplicatesReviewView, AppError> {
+    use crate::db::dupes::confirmations_for_scan;
     use crate::dupes::review::{keeper_reason_label, CopyCheck};
     use crate::ipc::{CopyCheckState, DuplicateCopyView, DuplicateGroupCard, DuplicatesReviewView};
 
     let review = review_for_scan(pool, scan_id, sep).await?;
+
+    // Confirmations for THIS scan only, which the query guarantees. Keyed by
+    // (method, group_key) to match a group's identity rather than by a persisted
+    // group id, because a group can be confirmed before anything has persisted a
+    // row for it: `AC-12`'s override exists precisely so a group nobody hashed
+    // can still be resolved.
+    let confirmed: std::collections::HashMap<(String, String), i64> =
+        confirmations_for_scan(pool, scan_id)
+            .await
+            .map_err(db_error)?
+            .into_iter()
+            .map(|c| ((c.method, c.group_key), c.resolution.keeper as i64))
+            .collect();
 
     Ok(DuplicatesReviewView {
         scan_id,
@@ -200,6 +214,9 @@ pub async fn review_view_for_scan(
                     .keeper_reason
                     .map(|r| keeper_reason_label(Some(r)).to_string()),
                 content_verified: g.content_verified,
+                confirmed_keeper: confirmed
+                    .get(&(g.method.to_string(), g.group_key.clone()))
+                    .copied(),
                 copies: g
                     .copies
                     .iter()
