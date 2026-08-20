@@ -55,6 +55,80 @@
   --font-mono: var(--mono);
 
   --radius-DEFAULT: var(--r);
+
+  /* ---- The type scale (ratified 2026-08-19, from PR #40's proposal) --------
+   *
+   * Seven steps, DERIVED rather than chosen. Before this the app set text size
+   * 161 times through inline values across 18 distinct sizes, including 6.8px,
+   * 10.5px, 12.5px, 13.5px and 14.5px. The design system governed colour exactly
+   * and copy mechanically and neither drifted; it stated type as RANGES and said
+   * nothing about spacing, and this is what that produced.
+   *
+   * The rules the numbers came from, so a future step can be argued with rather
+   * than guessed at:
+   *
+   *   - Whole pixels only. A half-pixel step invites a neighbouring half-pixel
+   *     step, which is how this app came to ship both 12.5 and 13.
+   *   - No two steps closer than 2px. The disease being cured is 12.5 against 13
+   *     being used as though they were different steps.
+   *   - Anchored on 13px, the app's own most-used size at 42 inline uses, so the
+   *     change is smallest where the app is densest.
+   *   - The ratio holds near 1.18, and every step is a size the app already
+   *     shipped or a whole pixel between two it shipped.
+   *
+   * EVERY LINE BOX IS A MULTIPLE OF 4px, so type and spacing compose instead of
+   * fighting. That rule came from the app rather than from taste: its own 1.55
+   * line height works out at 20.15px on 13px text, a sixth of a pixel off the
+   * 20px this produces.
+   *
+   * Size is not the only thing separating these roles. Weight, family and colour
+   * carry the rest, which is why `lead` serves both a card headline (semibold,
+   * sans) and a screen's lede paragraph (regular). A scale that gave every role
+   * its own size would need twice as many steps and say less.
+   */
+  --text-meta: 11px; /* counts, sizes, paths, timestamps */
+  --text-meta--line-height: 16px;
+  --text-body: 13px; /* the sentence a user actually reads */
+  --text-body--line-height: 20px;
+  --text-lead: 15px; /* a card headline, or the line under a screen title */
+  --text-lead--line-height: 24px;
+  --text-heading: 18px; /* a heading inside a screen */
+  --text-heading--line-height: 24px;
+  --text-title: 22px; /* a callout, or a screen that is mostly one message */
+  --text-title--line-height: 28px;
+  --text-display: 26px; /* the heading on a full-screen state */
+  --text-display--line-height: 32px;
+  --text-hero: 30px; /* the one h1 a screen is allowed */
+  --text-hero--line-height: 36px;
+
+  /* The optical correction the app already applied at its two largest sizes,
+   * named so it stops being retyped inline. Only the three top steps use it:
+   * tightening body text hurts rather than helps. */
+  --tracking-display: -0.01em;
+
+  /* ---- Spacing ------------------------------------------------------------
+   *
+   * DELIBERATELY NO TOKENS HERE, and that is the finding rather than an omission.
+   *
+   * Measured 2026-08-19: only 5 of the app's inline values were spacing, while
+   * 292 uses of 16 STANDARD utility steps carried the real decisions. The app was
+   * already on Tailwind's 4px grid; what it lacked was a rule about which steps
+   * exist. So the spacing scale is a subset rule, not a token set, and adopting
+   * it renames nothing:
+   *
+   *   ALLOWED   0.5 (2px)  1 (4px)  2 (8px)  3 (12px)  4 (16px)  6 (24px)  8 (32px)
+   *   RETIRED   1.5  2.5  3.5  5  7  9  10  11  16
+   *
+   * The retired steps fold to the nearest allowed one, ties upward, because on a
+   * desktop app growing a gap is safer than shrinking a hit target. 2px is for
+   * optical alignment only and never for layout: nine of its sixteen uses are a
+   * top margin lining a small icon up with a line of text.
+   *
+   * Not enforced mechanically yet. `scripts/check-arbitrary-values.mjs` freezes
+   * the inline sprawl but has no opinion about which standard step a component
+   * picked, which is the larger half of the consistency problem and needs more
+   * than a regex.
+   */
 }
 
 /* Shared, theme-independent (design-system Section 2.2). */
