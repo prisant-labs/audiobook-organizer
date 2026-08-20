@@ -597,10 +597,16 @@ fn db_err(e: sqlx::Error) -> AppError {
 /// pipeline `plan::report::build_and_persist_plan` runs, steps 2-4 minus the
 /// classify+build steps this query does not need). Cheap: one snapshot read
 /// plus pure logic, no filesystem I/O.
-async fn duplicate_groups_for_scan(
+///
+/// Returns the book-folder view alongside the groups because every consumer past
+/// the Copies card needs both: the policies rank book folders, the review names
+/// them, and `verify_book_group` hashes their files. `P5` calls this through
+/// [`crate::dupes::job`] rather than running a second copy of the pipeline,
+/// which is the shape that has already drifted twice in this repository.
+pub(crate) async fn detected_duplicates_for_scan(
     pool: &SqlitePool,
     scan_id: i64,
-) -> Result<Vec<DuplicateGroup>, AppError> {
+) -> Result<(Vec<DuplicateGroup>, Vec<crate::dupes::BookFolder>), AppError> {
     use crate::parse::extract::EntryInput as ExtractEntryInput;
 
     let rows = crate::scan::get_scan_entries(pool, scan_id).await?;
@@ -617,7 +623,16 @@ async fn duplicate_groups_for_scan(
     let merged = extract(&entry_inputs);
     let dupe_entries = dupe_entries_from_plan_nodes(&nodes, &merged);
     let books = book_folders_from_plan_nodes(&nodes, &merged);
-    Ok(detect_duplicates(&dupe_entries, &books))
+    let groups = detect_duplicates(&dupe_entries, &books);
+    Ok((groups, books))
+}
+
+/// The groups alone, for the Copies card, which has no use for the book view.
+async fn duplicate_groups_for_scan(
+    pool: &SqlitePool,
+    scan_id: i64,
+) -> Result<Vec<DuplicateGroup>, AppError> {
+    Ok(detected_duplicates_for_scan(pool, scan_id).await?.0)
 }
 
 /// Build the [`PlanReview`] (the seven group cards) for a persisted plan,

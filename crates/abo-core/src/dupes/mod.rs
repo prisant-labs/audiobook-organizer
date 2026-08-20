@@ -16,6 +16,7 @@
 pub mod books;
 pub mod detect;
 pub mod hash;
+pub mod job;
 pub mod policy;
 pub mod review;
 pub mod verify;
@@ -35,6 +36,10 @@ pub use books::{book_folders_from_plan_nodes, match_tier, BookFolder, BookMatch}
 pub use policy::{propose, ConfirmedResolution, KeeperReason, Resolution, ResolutionPolicy};
 
 pub use review::{build_review, CopyCheck, DuplicateCopy, DuplicateGroupView, DuplicatesReview};
+
+pub use job::{
+    ensure_duplicate_groups, review_for_scan, verify_scan_duplicates, PersistedDuplicates,
+};
 
 pub use detect::{
     detect_duplicates, detect_exact_duplicates, detect_version_candidates,

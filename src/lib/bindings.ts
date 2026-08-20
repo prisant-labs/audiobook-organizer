@@ -351,6 +351,21 @@ export const commands = {
 	 */
 	rollbackPreparePartial: (jobId: number, tailOpIds: number[]) => typedError<RollbackPrepared, AppError>(__TAURI_INVOKE("rollback_prepare_partial", { jobId, tailOpIds })),
 	/**
+	 *  Start the duplicate verification job for one scan (F-702, AC-10, AC-11).
+	 * 
+	 *  Returns as soon as the `jobs` row exists, carrying the id the caller listens
+	 *  for. The work runs in the background and reports `job:progress` per file,
+	 *  then `job:completed` or `job:failed`. Cancel it with the existing
+	 *  [`super::scan_cancel`], which flips the flag this registers: the registry is
+	 *  keyed by `jobs.id` and a job id is unique across every kind, so one Stop
+	 *  control serves both without either knowing about the other.
+	 * 
+	 *  Hashing is candidates-only (`AC-10`): the job hashes the duplicate groups
+	 *  detected for this scan and nothing else. There is no hash-everything path
+	 *  here or anywhere below it.
+	 */
+	dupesHashVerify: (scanId: number) => typedError<JobStarted, AppError>(__TAURI_INVOKE("dupes_hash_verify", { scanId })),
+	/**
 	 *  The status of one apply job and its after-the-fact check (F-604): lifecycle
 	 *  state, whether it raised an unacknowledged discrepancy blocking further
 	 *  FORWARD tidy-ups (AC-20), how many differences the check found, and whether

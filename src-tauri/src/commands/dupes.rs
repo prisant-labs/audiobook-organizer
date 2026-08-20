@@ -1,0 +1,131 @@
+//! F-702 / F-905 duplicate verification commands (v0.6.0 P5).
+//!
+//! [`dupes_hash_verify`] is the production caller the hash engine never had.
+//! Phase 2's plan claimed this command was "already in the command surface"; it
+//! never was, and `verify_groups` sat complete and unreachable for two releases
+//! as a result. Everything here is orchestration: the detect / persist / hash
+//! chain lives in `abo_core::dupes::job`, and this module owns only the `jobs`
+//! row, the cancel flag, and the events, exactly like [`super::scan_start`].
+//!
+//! # Why it is a job rather than a call that returns an answer
+//!
+//! `AC-11` requires progress events and cancellation at safe boundaries, and
+//! FD-49 measured why: the hashing code runs at 2,765 MB/s while the library's
+//! drive delivers 42 to 80, so on a real library this waits on the disk for
+//! minutes. A command that blocked until it finished would freeze the surface
+//! that is meant to be showing the progress.
+
+use abo_core::dupes::{verify_scan_duplicates, FsContentSource};
+use abo_core::ipc::{AppError, JobStarted};
+use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
+use abo_core::scan::walk::now_iso8601_utc;
+use sqlx::SqlitePool;
+
+use crate::commands::{run_job_to_terminal, JobEnd};
+use crate::events::{emit_job_completed, emit_job_failed, emit_job_progress};
+use crate::AppState;
+
+/// Start the duplicate verification job for one scan (F-702, AC-10, AC-11).
+///
+/// Returns as soon as the `jobs` row exists, carrying the id the caller listens
+/// for. The work runs in the background and reports `job:progress` per file,
+/// then `job:completed` or `job:failed`. Cancel it with the existing
+/// [`super::scan_cancel`], which flips the flag this registers: the registry is
+/// keyed by `jobs.id` and a job id is unique across every kind, so one Stop
+/// control serves both without either knowing about the other.
+///
+/// Hashing is candidates-only (`AC-10`): the job hashes the duplicate groups
+/// detected for this scan and nothing else. There is no hash-everything path
+/// here or anywhere below it.
+#[tauri::command]
+#[specta::specta]
+pub async fn dupes_hash_verify(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+) -> Result<JobStarted, AppError> {
+    let started_at = now_iso8601_utc();
+    let job_id = insert_verify_job(&state.pool, &started_at).await?;
+
+    let cancel = CancelFlag::new();
+    state
+        .jobs
+        .lock()
+        .expect("jobs registry mutex poisoned")
+        .insert(job_id, cancel.clone());
+
+    // Everything the spawned task needs is owned: the task outlives this command
+    // and must borrow nothing from State.
+    let pool = state.pool.clone();
+    let verify_pool = pool.clone();
+    let handle_completed = app.clone();
+    let handle_failed = app.clone();
+    let handle_progress = app.clone();
+    let jobs_registry = state.jobs.clone();
+
+    tauri::async_runtime::spawn(async move {
+        // Unthrottled, unlike the scan's progress: the scan reports per entry and
+        // can walk hundreds of thousands of them, while this reports once per
+        // FILE HASHED, and a file that took a second of disk is worth an event.
+        let progress = std::sync::Arc::new(move |update: ProgressUpdate| {
+            emit_job_progress(
+                &handle_progress,
+                job_id,
+                update.done as i64,
+                update.total_estimate.map(|t| t as i64),
+                &update.current_label,
+            );
+        });
+        let ctx = JobContext::new(cancel, progress);
+
+        run_job_to_terminal(
+            pool,
+            job_id,
+            async move {
+                let now = now_iso8601_utc();
+                verify_scan_duplicates(&verify_pool, &FsContentSource, scan_id, &now, &ctx)
+                    .await
+                    .map(|outcome| {
+                        // A cancelled pass is NOT a failure: it kept every hash it
+                        // finished, and the next run resumes by finding fewer
+                        // unhashed members. Reporting it as failed would tell the
+                        // user their work was lost when it was not.
+                        if outcome.cancelled {
+                            JobEnd::Cancelled(scan_id)
+                        } else {
+                            JobEnd::Completed(scan_id)
+                        }
+                    })
+            },
+            move |scan_id| emit_job_completed(&handle_completed, job_id, scan_id),
+            || {},
+            move |code| emit_job_failed(&handle_failed, job_id, code),
+        )
+        .await;
+
+        jobs_registry
+            .lock()
+            .expect("jobs registry mutex poisoned")
+            .remove(&job_id);
+    });
+
+    Ok(JobStarted { job_id })
+}
+
+/// Insert the initial `running` verification `jobs` row and return its id.
+///
+/// `kind` is its own value rather than reusing `'scan'`: the two are different
+/// work with different failure modes, and a history that cannot tell them apart
+/// cannot explain what the app was doing.
+async fn insert_verify_job(pool: &SqlitePool, started_at: &str) -> Result<i64, AppError> {
+    let result = sqlx::query(
+        "INSERT INTO jobs (kind, state, started_at) VALUES ('dupes-verify', 'running', ?)",
+    )
+    .bind(started_at)
+    .execute(pool)
+    .await
+    .map_err(|e| AppError::DuplicateVerifyFailed {
+        detail: format!("could not record verification job: {e}"),
+    })?;
+    Ok(result.last_insert_rowid())
+}
