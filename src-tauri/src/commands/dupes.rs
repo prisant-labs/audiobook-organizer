@@ -15,9 +15,13 @@
 //! minutes. A command that blocked until it finished would freeze the surface
 //! that is meant to be showing the progress.
 
-use abo_core::dupes::{verify_scan_duplicates, FsContentSource};
-use abo_core::ipc::{AppError, JobStarted};
+use abo_core::dupes::{
+    review_for_scan, review_view_for_scan, verify_scan_duplicates, FsContentSource,
+};
+use abo_core::ipc::{AppError, DuplicatesReviewView, ExportedFile, JobStarted};
 use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
+use abo_core::paths::app_data_dir;
+use abo_core::reports::{duplicates_export_dir, write_duplicates_csv};
 use abo_core::scan::walk::now_iso8601_utc;
 use sqlx::SqlitePool;
 
@@ -110,6 +114,49 @@ pub async fn dupes_hash_verify(
     });
 
     Ok(JobStarted { job_id })
+}
+
+/// The duplicates surface's read model for one scan (F-905, AC-17 to AC-19).
+///
+/// Cheap and filesystem-free: it re-detects from the snapshot and lays whatever
+/// has been hashed over the result. Safe to call before anything has ever been
+/// verified, which is the ordinary first visit: every copy simply reads "not
+/// checked yet", which is true.
+#[tauri::command]
+#[specta::specta]
+pub async fn dupes_review(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+) -> Result<DuplicatesReviewView, AppError> {
+    review_view_for_scan(&state.pool, scan_id, std::path::MAIN_SEPARATOR).await
+}
+
+/// Write the F-703 duplicates CSV into the Reports folder (AC-20) and return
+/// where it landed.
+///
+/// The file is built from the SAME review the surface renders, so the export and
+/// the screen cannot disagree: `AC-20`'s actual bar is that they match, and the
+/// way that breaks is one of them quietly counting a different population.
+///
+/// Writes only into the Reports folder, never the library. The destination is a
+/// pure function of the scan, so exporting twice overwrites one file rather than
+/// growing a pile of near-identical folders.
+#[tauri::command]
+#[specta::specta]
+pub async fn dupes_export_csv(
+    state: tauri::State<'_, AppState>,
+    scan_id: i64,
+) -> Result<ExportedFile, AppError> {
+    let review = review_for_scan(&state.pool, scan_id, std::path::MAIN_SEPARATOR).await?;
+    let dir = duplicates_export_dir(&app_data_dir(), scan_id, &now_iso8601_utc());
+    let path = write_duplicates_csv(&dir, &review.to_csv()).map_err(|e| {
+        AppError::DuplicateExportFailed {
+            detail: format!("could not write the duplicates export: {e}"),
+        }
+    })?;
+    Ok(ExportedFile {
+        path: path.to_string_lossy().to_string(),
+    })
 }
 
 /// Insert the initial `running` verification `jobs` row and return its id.

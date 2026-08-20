@@ -811,6 +811,94 @@ pub struct JobProgressPayload {
     pub current_label: String,
 }
 
+// ---- F-703 / F-905 duplicates surface (v0.6.0 P5) ----------------------------
+
+/// What is known about one copy's content (`F-702`).
+///
+/// `NotChecked` and `CouldNotRead` are deliberately different states rather than
+/// one "not verified": the first is work nobody has done, the second is a file
+/// the app tried to read and could not, and `AC-12`'s gate treats them the same
+/// while the person deciding does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum CopyCheckState {
+    NotChecked,
+    Checked,
+    CouldNotRead,
+}
+
+/// One copy inside a duplicate group (`AC-17`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct DuplicateCopyView {
+    /// `entries.id` in the scan this review was built from. Per-snapshot, which
+    /// is why a confirmation carrying it is keyed to its scan.
+    pub entry_id: i64,
+    pub path: String,
+    pub size_bytes: i64,
+    pub check: CopyCheckState,
+    /// The plain-language label for `check`, produced by `dupes::review` so the
+    /// wording stays inside the sweep that governs it rather than being invented
+    /// again in TypeScript.
+    pub check_label: String,
+    /// Why the read failed. `Some` only when `check` is `could-not-read`.
+    pub check_reason: Option<String>,
+    /// Whether the default suggestion would keep this copy (`AC-19`). A
+    /// SUGGESTION, carrying no permission to act (`AC-26`).
+    pub suggested_keeper: bool,
+}
+
+/// One duplicate group: one book, N copies (`FD-08`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct DuplicateGroupCard {
+    /// A readable name for the book (`AC-17`).
+    pub book: String,
+    /// The detector's join key. Never rendered as if it were a book name: it
+    /// reads like `Dune.m4b|900`, and a card that showed it would be lying about
+    /// what it is.
+    pub group_key: String,
+    /// The detector that found the group. With `group_key` this is the group's
+    /// identity, and what a confirmation is recorded against.
+    pub method: String,
+    /// How the group was found, in plain language.
+    pub found_by: String,
+    pub copies: Vec<DuplicateCopyView>,
+    pub copy_count: i64,
+    /// Sum of every copy's bytes: an ESTIMATE of what is duplicated, never the
+    /// space a resolution would reclaim (`AC-18`).
+    pub candidate_bytes_estimate: i64,
+    /// Why the suggested keeper was suggested, in plain language. Expect
+    /// "the copies were equivalent" to be the COMMON answer rather than a rare
+    /// one: the policies discriminate almost nowhere resolution is permitted.
+    pub keeper_reason: Option<String>,
+    /// `AC-12`'s gate: every copy hashed and all the hashes agreeing. False
+    /// blocks the automatic path and is what `AC-13`'s two-step override
+    /// overrides.
+    pub content_verified: bool,
+}
+
+/// The duplicates surface's whole read model for one scan (`F-905`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct DuplicatesReviewView {
+    /// The scan this was detected from. The surface sends it back with any
+    /// confirmation, which is what keeps a confirmation from outliving its
+    /// snapshot.
+    pub scan_id: i64,
+    pub groups: Vec<DuplicateGroupCard>,
+    /// The headline number, and it counts GROUPS (`AC-18`).
+    pub group_count: i64,
+    /// Copies across every group, reported BESIDE the group count and never
+    /// instead of it: "14 copies" and "6 duplicated books" answer different
+    /// questions, and a past release shipped the first while meaning the second.
+    pub copy_count: i64,
+    pub candidate_bytes_estimate: i64,
+}
+
+/// Where an export landed, so the surface can say so and offer to open it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+pub struct ExportedFile {
+    pub path: String,
+}
+
 #[cfg(test)]
 mod contract {
     use super::*;
@@ -888,5 +976,11 @@ mod contract {
         assert_ipc_ready::<RulesetSaveRequest>();
         assert_ipc_ready::<PresetExampleView>();
         assert_ipc_ready::<PlanPreview>();
+        // F-703/F-905 duplicates surface (v0.6.0 P5).
+        assert_ipc_ready::<CopyCheckState>();
+        assert_ipc_ready::<DuplicateCopyView>();
+        assert_ipc_ready::<DuplicateGroupCard>();
+        assert_ipc_ready::<DuplicatesReviewView>();
+        assert_ipc_ready::<ExportedFile>();
     }
 }

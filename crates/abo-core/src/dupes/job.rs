@@ -164,6 +164,67 @@ pub async fn review_for_scan(
     Ok(build_review(&groups, &books, &verifications, sep))
 }
 
+/// The same review, in the shape the surface renders (`F-905`).
+///
+/// The mapping lives here rather than in TypeScript so the plain-language labels
+/// stay inside `dupes::review`, which is the producer the vocabulary sweep
+/// governs. A label re-invented on the frontend would be an eighth producer of
+/// user-facing text, and three of the existing seven were only added after a
+/// retired word had already shipped through them.
+pub async fn review_view_for_scan(
+    pool: &SqlitePool,
+    scan_id: i64,
+    sep: char,
+) -> Result<crate::ipc::DuplicatesReviewView, AppError> {
+    use crate::dupes::review::{keeper_reason_label, CopyCheck};
+    use crate::ipc::{CopyCheckState, DuplicateCopyView, DuplicateGroupCard, DuplicatesReviewView};
+
+    let review = review_for_scan(pool, scan_id, sep).await?;
+
+    Ok(DuplicatesReviewView {
+        scan_id,
+        group_count: review.group_count() as i64,
+        copy_count: review.copy_count() as i64,
+        candidate_bytes_estimate: review.candidate_bytes_estimate() as i64,
+        groups: review
+            .groups
+            .iter()
+            .map(|g| DuplicateGroupCard {
+                book: g.book.clone(),
+                group_key: g.group_key.clone(),
+                method: g.method.to_string(),
+                found_by: g.found_by.to_string(),
+                copy_count: g.copy_count() as i64,
+                candidate_bytes_estimate: g.candidate_bytes_estimate as i64,
+                keeper_reason: g
+                    .keeper_reason
+                    .map(|r| keeper_reason_label(Some(r)).to_string()),
+                content_verified: g.content_verified,
+                copies: g
+                    .copies
+                    .iter()
+                    .map(|c| DuplicateCopyView {
+                        entry_id: c.entry_id as i64,
+                        path: c.path.clone(),
+                        size_bytes: c.size_bytes as i64,
+                        check: match c.check {
+                            CopyCheck::NotChecked => CopyCheckState::NotChecked,
+                            CopyCheck::Checked => CopyCheckState::Checked,
+                            CopyCheck::CouldNotRead(_) => CopyCheckState::CouldNotRead,
+                        },
+                        check_label: c.check.label().to_string(),
+                        check_reason: match &c.check {
+                            CopyCheck::CouldNotRead(why) => Some(why.clone()),
+                            _ => None,
+                        },
+                        suggested_keeper: c.suggested_keeper,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

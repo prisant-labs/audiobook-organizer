@@ -156,6 +156,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::rollback::rollback_prepare,
             commands::rollback::rollback_prepare_partial,
             commands::dupes::dupes_hash_verify,
+            commands::dupes::dupes_review,
+            commands::dupes::dupes_export_csv,
             commands::job::job_status,
             commands::job::acknowledge_check,
             commands::job::job_pause,

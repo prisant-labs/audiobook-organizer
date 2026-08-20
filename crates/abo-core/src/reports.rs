@@ -74,6 +74,30 @@ pub fn plan_export_dir(app_data_dir: &Path, plan_id: i64, created_at: &str) -> P
     ))
 }
 
+/// Stable base name for the F-703 duplicates export (`AC-20`).
+pub const DUPLICATES_CSV_BASENAME: &str = "duplicates.csv";
+
+/// The deterministic per-scan duplicates subfolder:
+/// `<reports_root>\<sanitized created_at>_duplicates-<scan_id>`.
+///
+/// Keyed by SCAN rather than by plan, because that is what the export is about:
+/// duplicates are detected from a snapshot and a snapshot can be exported
+/// without a plan ever being built. Pure in its inputs like
+/// [`plan_export_dir`], so exporting the same scan twice overwrites its own
+/// file rather than growing a pile of near-identical folders.
+pub fn duplicates_export_dir(app_data_dir: &Path, scan_id: i64, created_at: &str) -> PathBuf {
+    reports_root(app_data_dir).join(format!(
+        "{}_duplicates-{scan_id}",
+        sanitize_created_at(created_at)
+    ))
+}
+
+/// Write the duplicates CSV into `dir` (creating it if missing) and return its
+/// path. Same one-line write path as every other artifact here.
+pub fn write_duplicates_csv(dir: &Path, csv: &str) -> io::Result<PathBuf> {
+    write_file(dir, DUPLICATES_CSV_BASENAME, csv)
+}
+
 /// Every file [`write_plan_reports`]/[`write_plan_reports_to`] writes for one
 /// plan: the three F-505 exports plus the two F-507 provenance exports.
 /// Returned so a caller (a future IPC command, or a test) can find every

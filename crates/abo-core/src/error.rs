@@ -329,6 +329,18 @@ pub enum AppError {
     #[error("the copies could not be checked: {detail}")]
     DuplicateVerifyFailed { detail: String },
 
+    /// Writing the duplicates export into the Reports folder failed. `detail` is
+    /// the developer-facing cause (usually a filesystem error: no space, or the
+    /// Reports folder not writable).
+    ///
+    /// Its own variant rather than folding into
+    /// [`DuplicateVerifyFailed`](AppError::DuplicateVerifyFailed), because the
+    /// two need opposite reassurances: a failed check means nothing was decided,
+    /// while a failed export means everything on screen is still correct and only
+    /// the file did not get written. One message cannot say both.
+    #[error("the duplicates export could not be written: {detail}")]
+    DuplicateExportFailed { detail: String },
+
     // ---- Post-apply check family (v0.5.0 Phase 6: F-604 after-the-fact check) ----
     /// A previous tidy-up's after-the-fact check found a difference between what
     /// was planned and what is on disk, and that difference has not been
@@ -440,6 +452,7 @@ impl AppError {
             AppError::RollbackSelectionNotContiguous => "rollback-selection-not-contiguous",
             AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
             AppError::DuplicateVerifyFailed { .. } => "duplicate-verify-failed",
+            AppError::DuplicateExportFailed { .. } => "duplicate-export-failed",
             // Post-apply check family
             AppError::TidyingBlocked => "tidying-blocked",
             AppError::InterruptionUnresolved => "interruption-unresolved",
@@ -633,6 +646,11 @@ impl AppError {
                 "The check on your duplicate copies could not finish, so nothing was decided \
                  about them. Your books are untouched. You can run the check again."
             }
+            AppError::DuplicateExportFailed { .. } => {
+                "The list of duplicate copies could not be saved to a file. What you see on \
+                 screen is still correct and your books are untouched. Check there is room on \
+                 the drive, then try saving it again."
+            }
             // Post-apply check family
             AppError::TidyingBlocked => {
                 "The last run's after-the-fact check found a difference that needs a look \
@@ -682,6 +700,9 @@ mod tests {
             // the remediation vocabulary sweep. A helper named "one of each" that
             // is not one of each is worse than no helper: callers trust the name.
             AppError::DuplicateVerifyFailed {
+                detail: "boom".into(),
+            },
+            AppError::DuplicateExportFailed {
                 detail: "boom".into(),
             },
             AppError::HistoryUnavailable {

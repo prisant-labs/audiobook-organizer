@@ -291,6 +291,19 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "warn",
   },
 
+  // Saving the list failed, which is NOT the same as the check failing, and the
+  // two need opposite reassurances. A failed check means nothing is known; this
+  // means everything on screen is still correct and only the file is missing.
+  // One message covering both would have to hedge, and a hedge here reads as
+  // "something might be wrong with your books", which is never true of this.
+  "duplicate-export-failed": {
+    sentence: "The list of duplicate copies couldn't be saved to a file.",
+    nextStep:
+      "What you see on screen is still correct and your books are untouched. Check there's room on the drive, then try saving it again.",
+    retryable: true,
+    tone: "warn",
+  },
+
   // -- The record of past runs (v0.6.0 History) -------------------------------
   // A read-only failure: the record could not be SHOWN. Past runs and their
   // undo files are untouched, and an undo file is self-contained (AC-11), so it
