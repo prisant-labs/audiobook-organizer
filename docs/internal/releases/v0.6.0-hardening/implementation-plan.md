@@ -303,6 +303,20 @@ Output Artifacts: duplicates IPC payloads; CSV exporter; report/strings entries;
 
 Suggested Owner: LLM (Sonnet) - mechanical, table/serde-driven.
 
+### Scale proposal, 2026-08-19: ordered BEFORE P5, and why that is a measurement rather than a preference
+
+**Proposed, not ratified**, on `design/spacing-and-type-scale-proposal`: seven type steps and seven spacing steps, rendered in both themes as the first section of the dev gallery (`src/gallery/scale.ts` plus `src/gallery/ScaleProposal.tsx`). Nothing was written into `src/styles/tokens.css`, which is normative: writing steps there is the ratification, not the proposal. Both files are deleted whichever way jp decides.
+
+**Why before `P5` rather than after.** The review surface's components are studded with inline sizes, and PR #25 (the arbitrary-value ratchet) fails in BOTH directions precisely so that an improvement cannot bank slack for new sprawl. A whole new surface built the same way pushes the baseline UP; building `P5` first means adding to the sprawl and then redoing it.
+
+**The measurement corrected the brief, and the correction is the transferable part.** The plan was to derive both scales from the 71 inline values the ratchet counts. That is right for type, where 161 of those uses are sizes across 18 distinct values. It is wrong for spacing: only 5 inline uses are spacing, while 292 uses of 16 standard utility steps carry the real decisions. A spacing scale derived from the inline values alone would have been derived from a sample of three numbers.
+
+**Consequence for `P5`, worth knowing before it starts.** Every proposed spacing step is a standard step the app already uses, so ratifying that half adds no token and renames nothing: it rules 9 of the 16 steps out and leaves 7. The type half is the real work, because the app reaches type almost entirely through inline sizes. `P5` written against a ratified scale therefore costs nothing extra on spacing and lowers the ratchet on type.
+
+**Two defects in the proposal were caught by rendering it and reading the output**, which is now four sessions running. A hand-written claim that nothing moved by more than 1.5px sat directly above a table showing two rows moving 2px, and is now computed from the table it describes. And the only uses of the 20px and 24px standard steps in the tree are the gallery's own headings rather than product UI, which had put a step in the scale that no product screen asks for; the standard-utility counts now exclude `src/gallery` and say so on the page.
+
+**Waiting on jp:** ratify, amend or reject. Ratification means transcribing the steps into `@theme` in `tokens.css` and deleting the gallery section, then lowering the ratchet as components adopt it.
+
 ## Phase 5: Duplicates surface (F-905)
 
 **Goal:** the React surface hosting F-703 review and F-704 policy selection. **Addresses:** AC-28, AC-29, AC-30, AC-31.

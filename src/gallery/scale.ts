@@ -83,8 +83,9 @@ export interface SpacingStep {
 /** The one rule the type scale is derived from, stated so it can be attacked. */
 export const GRID_RULE =
   "Every line box is a multiple of 4px, so type and spacing compose instead of " +
-  "fighting. The app's own 1.55 line height is 20px on 13px text, which is exactly " +
-  "what this rule produces.";
+  "fighting. The app's own 1.55 line height comes to 20.15px on 13px text, a " +
+  "sixth of a pixel off the 20px this rule produces, which is where the rule came " +
+  "from rather than a coincidence it can claim credit for.";
 
 export const DERIVATION = [
   "Whole pixels only. A half-pixel step invites a neighbouring half-pixel step, " +
