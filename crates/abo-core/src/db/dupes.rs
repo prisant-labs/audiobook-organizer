@@ -79,9 +79,23 @@ impl DuplicateMemberRow {
 }
 
 /// Persist every detected duplicate group and its members for `scan_id` in one
-/// transaction (all groups commit, or none do). Returns the new group ids, in
-/// the same order as `groups`. Each member's `entry_id` must reference a real
+/// transaction (all groups commit, or none do). Returns the group ids, in the
+/// same order as `groups`. Each member's `entry_id` must reference a real
 /// `entries` row from the same scan (the FK is enforced).
+///
+/// # Insert or reuse, never insert twice
+///
+/// A group this scan already holds is REUSED and its id returned; only genuinely
+/// new groups are inserted. `P5` calls this every time the duplicates surface
+/// opens, so a blind insert (what this did until migration 0009) would write a
+/// second copy of every group and every member on the second open.
+///
+/// Member rows are ADDED where missing and never deleted or rewritten. That
+/// asymmetry is the point: the content hashes live on those rows (migration
+/// 0007), so re-inserting them would throw away work that cost a read of the
+/// disk, which `AC-15` exists to avoid. A member the detector no longer returns
+/// keeps its row and simply stops being asked about, because the read path
+/// re-detects groups fresh and looks hashes up by `entries.id`.
 pub async fn insert_duplicate_groups(
     pool: &SqlitePool,
     scan_id: i64,
@@ -92,20 +106,46 @@ pub async fn insert_duplicate_groups(
     let mut ids = Vec::with_capacity(groups.len());
 
     for group in groups {
-        let group_result = sqlx::query(
-            "INSERT INTO duplicate_groups (scan_id, method, group_key, total_bytes, created_at) \
-             VALUES (?, ?, ?, ?, ?)",
+        // The unique index on (scan_id, method, group_key) is what makes this
+        // lookup total: at most one row can match, so there is no "which one"
+        // question to answer here or anywhere downstream.
+        let existing: Option<i64> = sqlx::query_scalar(
+            "SELECT id FROM duplicate_groups WHERE scan_id = ? AND method = ? AND group_key = ?",
         )
         .bind(scan_id)
         .bind(group.method)
         .bind(&group.group_key)
-        .bind(group.total_bytes as i64)
-        .bind(now)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        let group_id = group_result.last_insert_rowid();
+
+        let group_id = match existing {
+            Some(id) => id,
+            None => {
+                let inserted = sqlx::query(
+                    "INSERT INTO duplicate_groups (scan_id, method, group_key, total_bytes, created_at) \
+                     VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(scan_id)
+                .bind(group.method)
+                .bind(&group.group_key)
+                .bind(group.total_bytes as i64)
+                .bind(now)
+                .execute(&mut *tx)
+                .await?;
+                inserted.last_insert_rowid()
+            }
+        };
+
+        let recorded: Vec<i64> =
+            sqlx::query_scalar("SELECT entry_id FROM duplicate_members WHERE group_id = ?")
+                .bind(group_id)
+                .fetch_all(&mut *tx)
+                .await?;
 
         for member in &group.members {
+            if recorded.contains(&(member.entry_id as i64)) {
+                continue;
+            }
             sqlx::query(
                 "INSERT INTO duplicate_members (group_id, entry_id, path, size) \
                  VALUES (?, ?, ?, ?)",
@@ -405,11 +445,150 @@ pub async fn count_duplicate_groups(pool: &SqlitePool, scan_id: i64) -> Result<i
     Ok(count)
 }
 
+/// One confirmed resolution as stored, with the group identity the surface needs
+/// to show which groups are settled.
+///
+/// The resolution itself is the core's [`ConfirmedResolution`] rather than a
+/// second shape of the same idea, so what the plan builder consumes is exactly
+/// what came out of the database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredConfirmation {
+    pub method: String,
+    pub group_key: String,
+    pub confirmed_at: String,
+    pub resolution: crate::dupes::ConfirmedResolution,
+}
+
+/// Record the user's confirmed resolution for ONE duplicate group (`AC-24`).
+///
+/// Replaces any previous confirmation for the same group in the same scan: the
+/// unique index makes at most one possible, and two would need a rule for which
+/// one wins, which is a coin toss about which files get archived. The delete
+/// cascades to the loser rows, so there is no window where new losers sit beside
+/// old ones.
+///
+/// `losers` is stored verbatim, never derived by removing the keeper from a
+/// freshly detected member list. What gets archived must be exactly what the
+/// user confirmed.
+///
+/// All in one transaction: a confirmation with no losers, or with half of them,
+/// is not a smaller confirmation, it is a different and wrong one.
+pub async fn confirm_resolution(
+    pool: &SqlitePool,
+    scan_id: i64,
+    method: &str,
+    group_key: &str,
+    resolution: &crate::dupes::ConfirmedResolution,
+    now: &str,
+) -> Result<i64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query(
+        "DELETE FROM duplicate_confirmations WHERE scan_id = ? AND method = ? AND group_key = ?",
+    )
+    .bind(scan_id)
+    .bind(method)
+    .bind(group_key)
+    .execute(&mut *tx)
+    .await?;
+
+    let inserted = sqlx::query(
+        "INSERT INTO duplicate_confirmations (scan_id, method, group_key, keeper_entry_id, confirmed_at) \
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(scan_id)
+    .bind(method)
+    .bind(group_key)
+    .bind(resolution.keeper as i64)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    let confirmation_id = inserted.last_insert_rowid();
+
+    for loser in &resolution.losers {
+        sqlx::query(
+            "INSERT INTO duplicate_confirmation_losers (confirmation_id, entry_id) VALUES (?, ?)",
+        )
+        .bind(confirmation_id)
+        .bind(*loser as i64)
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(confirmation_id)
+}
+
+/// Every confirmation recorded against `scan_id`, in confirmation order.
+///
+/// # The `scan_id` filter is a safety mechanism, not a convenience
+///
+/// `entries.id` is unique only within one snapshot, and `FD-39` re-plans from a
+/// FRESH scan after an interruption. A confirmation read back against a
+/// different scan would name whatever files happen to hold those ids now, and
+/// the plan builder would archive them. Filtering here makes a stale
+/// confirmation UNREACHABLE rather than merely unlikely: there is no code path
+/// that returns one, so no caller can forget to check.
+pub async fn confirmations_for_scan(
+    pool: &SqlitePool,
+    scan_id: i64,
+) -> Result<Vec<StoredConfirmation>, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT id, method, group_key, keeper_entry_id, confirmed_at \
+         FROM duplicate_confirmations WHERE scan_id = ? ORDER BY id",
+    )
+    .bind(scan_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let id: i64 = r.get("id");
+        let losers: Vec<i64> = sqlx::query_scalar(
+            "SELECT entry_id FROM duplicate_confirmation_losers WHERE confirmation_id = ? ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+
+        out.push(StoredConfirmation {
+            method: r.get("method"),
+            group_key: r.get("group_key"),
+            confirmed_at: r.get("confirmed_at"),
+            resolution: crate::dupes::ConfirmedResolution {
+                keeper: r.get::<i64, _>("keeper_entry_id") as usize,
+                losers: losers.into_iter().map(|l| l as usize).collect(),
+            },
+        });
+    }
+    Ok(out)
+}
+
+/// Withdraw a confirmation. The loser rows go with it (the FK cascades), because
+/// a confirmation without its losers is not a record of anything.
+pub async fn clear_confirmation(
+    pool: &SqlitePool,
+    scan_id: i64,
+    method: &str,
+    group_key: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "DELETE FROM duplicate_confirmations WHERE scan_id = ? AND method = ? AND group_key = ?",
+    )
+    .bind(scan_id)
+    .bind(method)
+    .bind(group_key)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::open_db;
     use crate::dupes::detect::{DuplicateMember, METHOD_EXACT, METHOD_VERSION};
+    use crate::dupes::ConfirmedResolution;
     use tempfile::TempDir;
 
     /// Insert a scan plus two entries and return (scan_id, [entry_id, ...]) so
@@ -532,5 +711,258 @@ mod tests {
         let methods: Vec<&str> = stored.iter().map(|g| g.method.as_str()).collect();
         assert!(methods.contains(&METHOD_EXACT));
         assert!(methods.contains(&METHOD_VERSION));
+    }
+
+    /// One group, built the way both idempotence tests need it.
+    fn one_exact_group(entry_ids: &[i64]) -> Vec<DuplicateGroup> {
+        vec![DuplicateGroup {
+            method: METHOD_EXACT,
+            group_key: "Book.m4b|100".to_string(),
+            total_bytes: 200,
+            members: entry_ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| DuplicateMember {
+                    entry_id: *id as usize,
+                    path: format!("E:\\Books\\{}\\Book.m4b", if i == 0 { "a" } else { "b" }),
+                    size: 100,
+                })
+                .collect(),
+            book_match: None,
+            subsumed_by_book_group: false,
+        }]
+    }
+
+    /// P5's write path runs the insert every time the duplicates surface opens,
+    /// so running it twice has to be a no-op rather than a second copy of
+    /// everything. Before the insert-or-reuse fix this doubled the rows.
+    #[tokio::test]
+    async fn inserting_the_same_groups_twice_reuses_them_rather_than_duplicating() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_id, entry_ids) = scan_with_entries(&pool).await;
+        let groups = one_exact_group(&entry_ids);
+
+        let first = insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-04T00:00:00Z")
+            .await
+            .unwrap();
+        let second = insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-05T00:00:00Z")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            first, second,
+            "the second call must reuse the same group ids"
+        );
+        assert_eq!(get_duplicate_groups(&pool, scan_id).await.unwrap().len(), 1);
+        assert_eq!(
+            get_duplicate_members(&pool, first[0]).await.unwrap().len(),
+            2
+        );
+    }
+
+    /// The reason reuse must not delete and reinsert members: the hash state
+    /// hangs off the member rows, and re-opening the surface must never throw
+    /// away work that cost a read of the disk (`AC-15`).
+    #[tokio::test]
+    async fn reusing_a_group_preserves_hashes_already_recorded_against_its_members() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_id, entry_ids) = scan_with_entries(&pool).await;
+        let groups = one_exact_group(&entry_ids);
+
+        let ids = insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-04T00:00:00Z")
+            .await
+            .unwrap();
+        let members = get_duplicate_members(&pool, ids[0]).await.unwrap();
+        set_member_hash(
+            &pool,
+            members[0].id,
+            &crate::dupes::MemberHash::Hashed("abc123".to_string()),
+        )
+        .await
+        .unwrap();
+
+        insert_duplicate_groups(&pool, scan_id, &groups, "2026-07-05T00:00:00Z")
+            .await
+            .unwrap();
+
+        let after = member_verifications_for_scan(&pool, scan_id).await.unwrap();
+        assert_eq!(
+            after.get(&entry_ids[0]),
+            Some(&MemberVerification::Verified("abc123".to_string())),
+            "a hash recorded before the second insert must survive it"
+        );
+    }
+
+    /// Two scans can hold the same group key without colliding: the uniqueness is
+    /// per snapshot, because that is the scope `entries.id` is meaningful in.
+    #[tokio::test]
+    async fn the_same_group_key_in_two_scans_is_two_groups() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_a, entries_a) = scan_with_entries(&pool).await;
+        let (scan_b, entries_b) = scan_with_entries(&pool).await;
+
+        let a = insert_duplicate_groups(
+            &pool,
+            scan_a,
+            &one_exact_group(&entries_a),
+            "2026-07-04T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        let b = insert_duplicate_groups(
+            &pool,
+            scan_b,
+            &one_exact_group(&entries_b),
+            "2026-07-04T00:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        assert_ne!(a, b);
+        assert_eq!(get_duplicate_groups(&pool, scan_a).await.unwrap().len(), 1);
+        assert_eq!(get_duplicate_groups(&pool, scan_b).await.unwrap().len(), 1);
+    }
+
+    // -- confirmations (AC-24) ------------------------------------------------
+
+    #[tokio::test]
+    async fn a_confirmation_round_trips_with_its_keeper_and_every_loser() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_id, entry_ids) = scan_with_entries(&pool).await;
+
+        let resolution = ConfirmedResolution {
+            keeper: entry_ids[0] as usize,
+            losers: vec![entry_ids[1] as usize],
+        };
+        confirm_resolution(
+            &pool,
+            scan_id,
+            METHOD_EXACT,
+            "Book.m4b|100",
+            &resolution,
+            "2026-08-19T00:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        let stored = confirmations_for_scan(&pool, scan_id).await.unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].method, METHOD_EXACT);
+        assert_eq!(stored[0].group_key, "Book.m4b|100");
+        assert_eq!(stored[0].resolution, resolution);
+    }
+
+    /// Changing your mind must REPLACE the previous answer. Two confirmations for
+    /// one group would need a rule for which one wins, and that rule decides
+    /// which files get archived.
+    #[tokio::test]
+    async fn re_confirming_a_group_replaces_the_previous_answer_rather_than_adding_one() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_id, entry_ids) = scan_with_entries(&pool).await;
+
+        for (keeper, loser) in [(0, 1), (1, 0)] {
+            confirm_resolution(
+                &pool,
+                scan_id,
+                METHOD_EXACT,
+                "Book.m4b|100",
+                &ConfirmedResolution {
+                    keeper: entry_ids[keeper] as usize,
+                    losers: vec![entry_ids[loser] as usize],
+                },
+                "2026-08-19T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        }
+
+        let stored = confirmations_for_scan(&pool, scan_id).await.unwrap();
+        assert_eq!(stored.len(), 1, "one group, one confirmation");
+        assert_eq!(stored[0].resolution.keeper, entry_ids[1] as usize);
+        assert_eq!(stored[0].resolution.losers, vec![entry_ids[0] as usize]);
+
+        // The replaced answer's losers went with it rather than lingering.
+        let orphans: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM duplicate_confirmation_losers")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(orphans, 1);
+    }
+
+    /// THE INVARIANT THIS WHOLE SCHEME EXISTS FOR. `entries.id` is per snapshot
+    /// and `FD-39` re-plans from a fresh scan, so a confirmation read back
+    /// against a different scan would name whatever files hold those ids now.
+    /// Archiving those is the worst failure this product can have.
+    #[tokio::test]
+    async fn a_confirmation_made_against_one_scan_is_invisible_to_another() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_a, entries_a) = scan_with_entries(&pool).await;
+        let (scan_b, _entries_b) = scan_with_entries(&pool).await;
+
+        confirm_resolution(
+            &pool,
+            scan_a,
+            METHOD_EXACT,
+            "Book.m4b|100",
+            &ConfirmedResolution {
+                keeper: entries_a[0] as usize,
+                losers: vec![entries_a[1] as usize],
+            },
+            "2026-08-19T00:00:00Z",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            confirmations_for_scan(&pool, scan_a).await.unwrap().len(),
+            1
+        );
+        assert!(
+            confirmations_for_scan(&pool, scan_b)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a re-scan must start with no confirmations, not inherit them"
+        );
+    }
+
+    #[tokio::test]
+    async fn clearing_a_confirmation_takes_its_losers_with_it() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let (scan_id, entry_ids) = scan_with_entries(&pool).await;
+
+        confirm_resolution(
+            &pool,
+            scan_id,
+            METHOD_EXACT,
+            "Book.m4b|100",
+            &ConfirmedResolution {
+                keeper: entry_ids[0] as usize,
+                losers: vec![entry_ids[1] as usize],
+            },
+            "2026-08-19T00:00:00Z",
+        )
+        .await
+        .unwrap();
+        clear_confirmation(&pool, scan_id, METHOD_EXACT, "Book.m4b|100")
+            .await
+            .unwrap();
+
+        assert!(confirmations_for_scan(&pool, scan_id)
+            .await
+            .unwrap()
+            .is_empty());
+        let losers: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM duplicate_confirmation_losers")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(losers, 0, "the cascade removed them");
     }
 }
