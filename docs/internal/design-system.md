@@ -143,7 +143,43 @@ The prototypes have no error color. The one red present is the window-close hove
 | Headings, cover titles, big percent | `--serif` (Literata) | Bundled webfont, FD-11 |
 | Path disclosures only | `--mono` (Cascadia Code) | Inside "Show file details" `<pre>` only; never a primary surface (D-06 dev-tool anti-reference) |
 
-Observed scale from the prototypes: `h1` 26-30px Literata weight 500, letter-spacing -.01em, `text-wrap:balance`; section `h2` 19-21px Literata weight 500; body lede 13.5-14.5px `--ink-2` with `max-width` 46-56ch and `text-wrap:pretty`; control text 13px weight 600; metadata 11.5-12.5px `--ink-3` with `font-variant-numeric:tabular-nums` on all counts. The scan/tidy "big percent" is Literata 64px weight 500, tabular-nums, with a 0.35em `--ink-3` percent sign.
+### 3.1a The type scale (normative, ratified 2026-08-19)
+
+Seven steps, defined in `src/styles/tokens.css` under `@theme` and reached as ordinary Tailwind utilities (`text-body`, `text-hero`). **A size set inline is a defect, not a shortcut.**
+
+| Step | Size / line box | Utility | For |
+|---|---|---|---|
+| meta | 11px / 16px | `text-meta` | counts, sizes, paths, timestamps |
+| body | 13px / 20px | `text-body` | the sentence a user actually reads |
+| lead | 15px / 24px | `text-lead` | a card headline, or the line under a screen title |
+| heading | 18px / 24px | `text-heading` | a heading inside a screen |
+| title | 22px / 28px | `text-title` | a callout, or a screen that is mostly one message |
+| display | 26px / 32px | `text-display` | the heading on a full-screen state |
+| hero | 30px / 36px | `text-hero` | the one `h1` a screen is allowed |
+
+`tracking-display` (-0.01em) applies to the top three steps only; tightening body text hurts rather than helps.
+
+**Where the numbers came from.** They were derived from the app's own usage rather than chosen: whole pixels only, no two steps closer than 2px, anchored on 13px (the most-used size at 42 inline uses), ratio near 1.18, and every line box a multiple of 4px so type and spacing compose. That last rule is the app's own: its 1.55 line height works out at 20.15px on 13px text.
+
+**Size is not the only separator.** Weight, family and colour carry the rest, which is why `lead` serves both a semibold sans card headline and a regular lede paragraph. A scale giving every role its own size would need twice as many steps and say less.
+
+**Two deliberate exceptions**, both text inside drawn book art rather than interface text, scaled to the drawing: `SpineCluster`'s rotated spine label and `FallbackTile`'s stand-in cover title.
+
+### 3.1b Spacing (normative, ratified 2026-08-19)
+
+**Seven steps, and no tokens**, because the app was already on Tailwind's 4px grid: what it lacked was a rule about which steps exist. Measured 2026-08-19, only 5 inline values were spacing while 292 uses of 16 standard steps carried the real decisions.
+
+| Allowed | 0.5 (2px) | 1 (4px) | 2 (8px) | 3 (12px) | 4 (16px) | 6 (24px) | 8 (32px) |
+|---|---|---|---|---|---|---|---|
+| **Retired** | 1.5 | 2.5 | 3.5 | 5 | 7 | 9, 10, 11, 16 | |
+
+Retired steps fold to the nearest allowed one, ties upward, because growing a gap is safer than shrinking a hit target. **2px is optical alignment only, never layout**: nine of its sixteen uses are a top margin lining a small icon up with a line of text.
+
+Not yet enforced mechanically. `scripts/check-arbitrary-values.mjs` freezes inline sprawl but has no opinion about which standard step a component picked, which is the larger half of the problem and needs more than a regex.
+
+### 3.1c What the prototypes showed, for the record
+
+The scale above REPLACES this observation, which is kept because it is the evidence the drift was measured against: `h1` 26-30px Literata weight 500, letter-spacing -.01em, `text-wrap:balance`; section `h2` 19-21px Literata weight 500; body lede 13.5-14.5px `--ink-2` with `max-width` 46-56ch and `text-wrap:pretty`; control text 13px weight 600; metadata 11.5-12.5px `--ink-3` with `font-variant-numeric:tabular-nums` on all counts. The scan and organize "big percent" is Literata 64px weight 500, tabular-nums, with a 0.35em `--ink-3` percent sign, and is outside the scale as a display figure rather than text.
 
 ### 3.2 Literata bundling (FD-11 (fonts bundled, zero network))
 
