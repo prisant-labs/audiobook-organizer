@@ -114,6 +114,9 @@ async fn a_confirmed_resolution_becomes_an_archive_op_and_does_not_outlive_its_s
             keeper,
             losers: vec![loser],
         },
+        // Recorded as an override: this fixture confirms without hashing, which
+        // is exactly the case AC-13 exists for, and the flag says so honestly.
+        true,
         &now_iso8601_utc(),
     )
     .await

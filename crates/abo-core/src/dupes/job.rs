@@ -164,6 +164,67 @@ pub async fn review_for_scan(
     Ok(build_review(&groups, &books, &verifications, sep))
 }
 
+/// Record a confirmed resolution, refusing it unless `AC-12` is satisfied.
+///
+/// # The gate lives here, not in the caller
+///
+/// `AC-12` permits archiving a duplicate group only when every copy carries a
+/// matching hash, or when the user supplies an explicit override. Enforcing that
+/// in whichever screen happens to call the command would make it a CONVENTION:
+/// true for exactly as long as every present and future caller remembers it. The
+/// same shape was found in `apply_start`, which takes the run mode as a parameter
+/// from whoever calls it, and reclassified as a decision rather than code for
+/// exactly this reason. This is the thing standing between the app and a file
+/// nobody can get back, so the refusal is its own.
+///
+/// A group with no persisted row has certainly never been hashed, so the gate is
+/// closed for it. That is why a missing row is a plain `false` rather than an
+/// error: "not verified" is the honest answer, and it is the same answer the
+/// user needs either way.
+pub async fn confirm_resolution_gated(
+    pool: &SqlitePool,
+    scan_id: i64,
+    method: &str,
+    group_key: &str,
+    resolution: &crate::dupes::ConfirmedResolution,
+    unverified_override: bool,
+    now: &str,
+) -> Result<(), AppError> {
+    use crate::db::dupes::{confirm_resolution, duplicate_group_id};
+    use crate::dupes::verify::group_may_auto_resolve;
+
+    if !unverified_override {
+        let verified = match duplicate_group_id(pool, scan_id, method, group_key)
+            .await
+            .map_err(|e| AppError::DuplicateConfirmFailed {
+                detail: format!("could not look up the group: {e}"),
+            })? {
+            Some(group_id) => group_may_auto_resolve(pool, group_id).await?,
+            None => false,
+        };
+        if !verified {
+            return Err(AppError::DuplicateNotVerified {
+                group_key: group_key.to_string(),
+            });
+        }
+    }
+
+    confirm_resolution(
+        pool,
+        scan_id,
+        method,
+        group_key,
+        resolution,
+        unverified_override,
+        now,
+    )
+    .await
+    .map(|_| ())
+    .map_err(|e| AppError::DuplicateConfirmFailed {
+        detail: format!("could not record the decision: {e}"),
+    })
+}
+
 /// The same review, in the shape the surface renders (`F-905`).
 ///
 /// The mapping lives here rather than in TypeScript so the plain-language labels
@@ -247,6 +308,7 @@ mod tests {
     use super::*;
     use crate::db::open_db;
     use crate::dupes::review::CopyCheck;
+    use crate::dupes::ConfirmedResolution;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -435,5 +497,147 @@ mod tests {
 
         assert_eq!(second.hashed, 0, "nothing left to hash");
         assert_eq!(second.skipped, 2, "both copies already carried a hash");
+    }
+
+    // -- AC-12's gate ---------------------------------------------------------
+
+    /// The resolution the fixture's two copies support: keep the first.
+    async fn keep_the_first(
+        pool: &SqlitePool,
+        scan_id: i64,
+    ) -> (String, String, ConfirmedResolution) {
+        let persisted = ensure_duplicate_groups(pool, scan_id, "2026-08-19T00:00:00Z")
+            .await
+            .unwrap();
+        let (_, group) = &persisted.groups[0];
+        (
+            group.method.to_string(),
+            group.group_key.clone(),
+            ConfirmedResolution {
+                keeper: group.members[0].entry_id,
+                losers: vec![group.members[1].entry_id],
+            },
+        )
+    }
+
+    /// The refusal, on the ordinary path: nobody has checked these copies, and no
+    /// override was given. Without this the gate would exist only in whichever
+    /// screen remembered to apply it.
+    #[tokio::test]
+    async fn confirming_unchecked_copies_is_refused() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let scan_id = seed_two_copies(&pool).await;
+        let (method, key, resolution) = keep_the_first(&pool, scan_id).await;
+
+        let refused = confirm_resolution_gated(
+            &pool,
+            scan_id,
+            &method,
+            &key,
+            &resolution,
+            false,
+            "2026-08-19T00:00:00Z",
+        )
+        .await;
+
+        assert!(matches!(
+            refused,
+            Err(AppError::DuplicateNotVerified { .. })
+        ));
+        assert!(
+            crate::db::dupes::confirmations_for_scan(&pool, scan_id)
+                .await
+                .unwrap()
+                .is_empty(),
+            "a refused confirmation must not be half-recorded"
+        );
+    }
+
+    /// Verified copies need no override: the automatic path is open exactly when
+    /// the app can prove the copies are the same book.
+    #[tokio::test]
+    async fn confirming_checked_copies_is_allowed_without_an_override() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let scan_id = seed_two_copies(&pool).await;
+        verify_scan_duplicates(
+            &pool,
+            &source(),
+            scan_id,
+            "2026-08-19T00:00:00Z",
+            &JobContext::inert(),
+        )
+        .await
+        .unwrap();
+        let (method, key, resolution) = keep_the_first(&pool, scan_id).await;
+
+        confirm_resolution_gated(
+            &pool,
+            scan_id,
+            &method,
+            &key,
+            &resolution,
+            false,
+            "2026-08-19T00:00:00Z",
+        )
+        .await
+        .expect("verified copies need no override");
+
+        let stored = crate::db::dupes::confirmations_for_scan(&pool, scan_id)
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(
+            !stored[0].unverified_override,
+            "this decision was made on evidence, and the record says so"
+        );
+    }
+
+    /// `AC-13`: the override is what gets past the gate, and the confirmation
+    /// REMEMBERS that it was used. Inferring it later from the hashes would be
+    /// wrong, because hashes can arrive after the decision.
+    #[tokio::test]
+    async fn the_override_gets_past_the_gate_and_is_recorded_as_having_been_used() {
+        let dir = TempDir::new().unwrap();
+        let (pool, _) = open_db(dir.path()).await.unwrap();
+        let scan_id = seed_two_copies(&pool).await;
+        let (method, key, resolution) = keep_the_first(&pool, scan_id).await;
+
+        confirm_resolution_gated(
+            &pool,
+            scan_id,
+            &method,
+            &key,
+            &resolution,
+            true,
+            "2026-08-19T00:00:00Z",
+        )
+        .await
+        .expect("the override is the sanctioned way past the gate");
+
+        let stored = crate::db::dupes::confirmations_for_scan(&pool, scan_id)
+            .await
+            .unwrap();
+        assert!(
+            stored[0].unverified_override,
+            "the record must say this was decided without checking"
+        );
+
+        // And hashing afterwards does not rewrite history: the decision was still
+        // made without evidence, whatever is known now.
+        verify_scan_duplicates(
+            &pool,
+            &source(),
+            scan_id,
+            "2026-08-19T01:00:00Z",
+            &JobContext::inert(),
+        )
+        .await
+        .unwrap();
+        let after = crate::db::dupes::confirmations_for_scan(&pool, scan_id)
+            .await
+            .unwrap();
+        assert!(after[0].unverified_override);
     }
 }

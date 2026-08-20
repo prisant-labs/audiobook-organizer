@@ -456,6 +456,10 @@ pub struct StoredConfirmation {
     pub method: String,
     pub group_key: String,
     pub confirmed_at: String,
+    /// Whether this decision was made without the copies being proven identical
+    /// (`AC-13`'s two-step override). A fact about the moment of decision, which
+    /// is why it is stored rather than re-derived from the hashes later.
+    pub unverified_override: bool,
     pub resolution: crate::dupes::ConfirmedResolution,
 }
 
@@ -479,6 +483,7 @@ pub async fn confirm_resolution(
     method: &str,
     group_key: &str,
     resolution: &crate::dupes::ConfirmedResolution,
+    unverified_override: bool,
     now: &str,
 ) -> Result<i64, sqlx::Error> {
     let mut tx = pool.begin().await?;
@@ -493,13 +498,15 @@ pub async fn confirm_resolution(
     .await?;
 
     let inserted = sqlx::query(
-        "INSERT INTO duplicate_confirmations (scan_id, method, group_key, keeper_entry_id, confirmed_at) \
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO duplicate_confirmations \
+         (scan_id, method, group_key, keeper_entry_id, unverified_override, confirmed_at) \
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(scan_id)
     .bind(method)
     .bind(group_key)
     .bind(resolution.keeper as i64)
+    .bind(unverified_override)
     .bind(now)
     .execute(&mut *tx)
     .await?;
@@ -534,7 +541,7 @@ pub async fn confirmations_for_scan(
     scan_id: i64,
 ) -> Result<Vec<StoredConfirmation>, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT id, method, group_key, keeper_entry_id, confirmed_at \
+        "SELECT id, method, group_key, keeper_entry_id, unverified_override, confirmed_at \
          FROM duplicate_confirmations WHERE scan_id = ? ORDER BY id",
     )
     .bind(scan_id)
@@ -555,6 +562,7 @@ pub async fn confirmations_for_scan(
             method: r.get("method"),
             group_key: r.get("group_key"),
             confirmed_at: r.get("confirmed_at"),
+            unverified_override: r.get::<i64, _>("unverified_override") != 0,
             resolution: crate::dupes::ConfirmedResolution {
                 keeper: r.get::<i64, _>("keeper_entry_id") as usize,
                 losers: losers.into_iter().map(|l| l as usize).collect(),
@@ -562,6 +570,31 @@ pub async fn confirmations_for_scan(
         });
     }
     Ok(out)
+}
+
+/// The persisted group id for one detected group, when it has one.
+///
+/// `None` means nothing has ever persisted this group, which happens whenever
+/// the verification job has not run for this scan. That is a meaningful answer
+/// rather than an error: a group with no row has certainly not been hashed, so
+/// `AC-12`'s gate is closed for it.
+///
+/// Total by construction: the unique index on (scan_id, method, group_key) means
+/// at most one row can match.
+pub async fn duplicate_group_id(
+    pool: &SqlitePool,
+    scan_id: i64,
+    method: &str,
+    group_key: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT id FROM duplicate_groups WHERE scan_id = ? AND method = ? AND group_key = ?",
+    )
+    .bind(scan_id)
+    .bind(method)
+    .bind(group_key)
+    .fetch_optional(pool)
+    .await
 }
 
 /// Withdraw a confirmation. The loser rows go with it (the FK cascades), because
@@ -844,6 +877,7 @@ mod tests {
             METHOD_EXACT,
             "Book.m4b|100",
             &resolution,
+            false,
             "2026-08-19T00:00:00Z",
         )
         .await
@@ -875,6 +909,7 @@ mod tests {
                     keeper: entry_ids[keeper] as usize,
                     losers: vec![entry_ids[loser] as usize],
                 },
+                false,
                 "2026-08-19T00:00:00Z",
             )
             .await
@@ -914,6 +949,7 @@ mod tests {
                 keeper: entries_a[0] as usize,
                 losers: vec![entries_a[1] as usize],
             },
+            false,
             "2026-08-19T00:00:00Z",
         )
         .await
@@ -947,6 +983,7 @@ mod tests {
                 keeper: entry_ids[0] as usize,
                 losers: vec![entry_ids[1] as usize],
             },
+            false,
             "2026-08-19T00:00:00Z",
         )
         .await

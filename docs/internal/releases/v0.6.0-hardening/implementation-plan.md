@@ -59,7 +59,7 @@ recorded in the P1 status note.
 | **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **MERGED 2026-08-15 (PR #29).** All five criteria, engine-only, no IPC change. Descope path not taken |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | **Steps 1-2 MERGED 2026-08-15 (PR #34)**; **steps 3-4 done 2026-08-16**: confirmed resolutions emit ordinary Archive ops (`AC-25`) and the round-trip is proven byte-identical (`AC-27`). Scoped to FILE losers; see the note below. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | **Engine done 2026-08-16** (`dupes/review.rs`): the group-first review model and the `AC-20` CSV. IPC payloads and writing the file into the Reports folder are **deliberately `P5`'s**; see the note below |
-| P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | Not started |
+| P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | **BACKEND COMPLETE 2026-08-19** on `feat/p5-duplicate-write-path`: `dupes_hash_verify` (the caller `P2`'s engine never had), the review and CSV commands, confirmations reaching the plan, and `AC-12`'s gate moved into the backend. **The React surface is NOT built**; see the note below Phase 4 |
 | P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | Not started |
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
 | P8 | Long-path battle testing + release gate | AC-40, AC-41 | LLM (Opus) + Fable | Not started |
@@ -302,6 +302,27 @@ Decision Gate: N/A.
 Output Artifacts: duplicates IPC payloads; CSV exporter; report/strings entries; dupes report test suite.
 
 Suggested Owner: LLM (Sonnet) - mechanical, table/serde-driven.
+
+### P5 backend note, 2026-08-19: the engine is reachable, the surface is not built
+
+**The whole `P5` backend landed on `feat/p5-duplicate-write-path`** (four commits), and it closes the reachability finding recorded under Phase 2 above. `dupes_hash_verify` now EXISTS, and with it the chain a `scan_id` goes into and a rendered review comes out of. What remains of `P5` is the React surface (`AC-28`, `AC-29`, `AC-31`) and wiring the already-built `AC-13` control.
+
+**What it owns, all four things the `P4` note deferred plus two that were not on the list:**
+
+1. **`dupes_hash_verify`** as a background job (`AC-11`): its own `jobs` row (`kind = 'dupes-verify'`, filtered out of History, which reads `kind = 'apply'` only), `job:progress` per file, and cancellation through the existing `scan_cancel`, since the flag registry is keyed by `jobs.id` and job ids are unique across kinds. A cancelled pass ends as `cancelled`, never `failed`: it kept every hash it finished.
+2. **`dupes_review`** and **`dupes_export_csv`**, both built from the same review so the export and the screen cannot disagree (`AC-20`).
+3. **`dupes_confirm` and `dupes_clear_confirmation`**, with the confirmation tables migration 0009 adds.
+4. **The plan build reads this scan's confirmations**, which is what makes a decision produce Archive operations. Until this it passed an empty slice and a confirmed resolution did nothing at all.
+5. **`insert_duplicate_groups` is idempotent** (migration 0009's unique index on `(scan_id, method, group_key)`), because the verification job runs on every open of the surface.
+6. **`AC-12`'s gate is now a MECHANISM rather than a convention.** `confirm_resolution_gated` refuses a resolution whose copies are not proven identical unless the caller passes an explicit override, and the override is RECORDED on the confirmation. This was found in review: the gate had been written into the command's caller, which is the same shape as precondition 3's `apply_start` taking its run mode from whoever calls it. Enforcing it in the backend means the guarantee holds for every caller, present and future.
+
+**Three findings worth not re-deriving:**
+
+- **`insert_duplicate_groups` had no production caller at all**, not merely a blind-insert bug. The whole duplicate persistence path was unreachable, the same shape as `P2`'s engine and `v0.5.0`'s undo machinery. That is the third instance; the cheap standing check is an import count against non-test, non-gallery files.
+- **A test can pass and prove nothing.** The new integration test asserts a second scan plans clean; it passed with the `scan_id` filter deliberately removed, because `entries.id` is a global rowid so a second scan's ids never coincide with the first's. Its module doc now records which of three guards each test exercises.
+- **`FD-20` snapshot retention will need to delete confirmations deliberately.** `entries.id` is a plain rowid and SQLite reuses rowids after deletion; the confirmation's foreign key currently refuses to let an entry be deleted out from under it, which is the guard retention will collide with.
+
+**Known and accepted:** nothing stops a verification job running during an apply. The apply's single-writer lock counts `kind = 'apply'` only. The failure mode is mild (a file moved mid-hash records a read failure, which is never auto-retried) and the snapshot is stale after an apply regardless, so this is recorded rather than fixed.
 
 ### Scale proposal, 2026-08-19: ordered BEFORE P5, and why that is a measurement rather than a preference
 

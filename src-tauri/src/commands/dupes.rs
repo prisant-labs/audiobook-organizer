@@ -15,10 +15,10 @@
 //! minutes. A command that blocked until it finished would freeze the surface
 //! that is meant to be showing the progress.
 
-use abo_core::db::dupes::{clear_confirmation, confirm_resolution};
+use abo_core::db::dupes::clear_confirmation;
 use abo_core::dupes::{
-    review_for_scan, review_view_for_scan, verify_scan_duplicates, ConfirmedResolution,
-    FsContentSource,
+    confirm_resolution_gated, review_for_scan, review_view_for_scan, verify_scan_duplicates,
+    ConfirmedResolution, FsContentSource,
 };
 use abo_core::ipc::{AppError, DuplicatesReviewView, ExportedFile, JobStarted};
 use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
@@ -150,7 +150,12 @@ pub async fn dupes_export_csv(
     scan_id: i64,
 ) -> Result<ExportedFile, AppError> {
     let review = review_for_scan(&state.pool, scan_id, std::path::MAIN_SEPARATOR).await?;
-    let dir = duplicates_export_dir(&app_data_dir(), scan_id, &now_iso8601_utc());
+    // The scan's OWN timestamp, never the wall clock at export time. Reading the
+    // clock here would contradict this function's own promise and grow a new
+    // folder on every export, which is the behaviour `plan_export_dir`'s contract
+    // exists to forbid.
+    let started_at = scan_started_at(&state.pool, scan_id).await?;
+    let dir = duplicates_export_dir(&app_data_dir(), scan_id, &started_at);
     let path = write_duplicates_csv(&dir, &review.to_csv()).map_err(|e| {
         AppError::DuplicateExportFailed {
             detail: format!("could not write the duplicates export: {e}"),
@@ -173,6 +178,23 @@ pub async fn dupes_export_csv(
 /// Re-confirming a group REPLACES the previous answer rather than adding one.
 /// Nothing is archived by this call: it records a decision, and the Archive
 /// operations appear the next time a plan is built from this scan.
+///
+/// # AC-12's gate is enforced HERE, not by the screen that calls this
+///
+/// A resolution is accepted only when the group's copies are proven identical
+/// (every one hashed, all the hashes agreeing), or when `unverified_override` is
+/// explicitly true. Otherwise it is refused with
+/// [`AppError::DuplicateNotVerified`].
+///
+/// Putting the check in the caller would make the guarantee a convention: it
+/// would hold for exactly as long as every present and future caller remembered
+/// it, which is the same shape as a run mode taken as a parameter from whoever
+/// calls. This is the thing standing between the app and a file it cannot get
+/// back, so it refuses on its own behalf.
+///
+/// The override is RECORDED on the confirmation rather than inferred later.
+/// Hashes can arrive after the fact, so "were the copies verified when this was
+/// decided?" is unanswerable from the hashes alone an hour afterwards.
 #[tauri::command]
 #[specta::specta]
 pub async fn dupes_confirm(
@@ -182,24 +204,22 @@ pub async fn dupes_confirm(
     group_key: String,
     keeper_entry_id: i64,
     loser_entry_ids: Vec<i64>,
+    unverified_override: bool,
 ) -> Result<(), AppError> {
     let resolution = ConfirmedResolution {
         keeper: keeper_entry_id as usize,
         losers: loser_entry_ids.into_iter().map(|l| l as usize).collect(),
     };
-    confirm_resolution(
+    confirm_resolution_gated(
         &state.pool,
         scan_id,
         &method,
         &group_key,
         &resolution,
+        unverified_override,
         &now_iso8601_utc(),
     )
     .await
-    .map(|_| ())
-    .map_err(|e| AppError::DuplicateVerifyFailed {
-        detail: format!("could not record the decision: {e}"),
-    })
 }
 
 /// Withdraw a decision for one duplicate group, putting it back to undecided.
@@ -217,8 +237,23 @@ pub async fn dupes_clear_confirmation(
 ) -> Result<(), AppError> {
     clear_confirmation(&state.pool, scan_id, &method, &group_key)
         .await
-        .map_err(|e| AppError::DuplicateVerifyFailed {
+        .map_err(|e| AppError::DuplicateConfirmFailed {
             detail: format!("could not withdraw the decision: {e}"),
+        })
+}
+
+/// The scan's own `started_at`, so an export destination is a pure function of
+/// the scan rather than of when the button was pressed.
+async fn scan_started_at(pool: &SqlitePool, scan_id: i64) -> Result<String, AppError> {
+    sqlx::query_scalar::<_, String>("SELECT started_at FROM scans WHERE id = ?")
+        .bind(scan_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::DuplicateExportFailed {
+            detail: format!("could not read the scan: {e}"),
+        })?
+        .ok_or_else(|| AppError::DuplicateExportFailed {
+            detail: format!("scan {scan_id} does not exist"),
         })
 }
 

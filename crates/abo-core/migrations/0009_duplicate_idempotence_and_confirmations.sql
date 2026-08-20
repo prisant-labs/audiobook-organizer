@@ -53,6 +53,16 @@ CREATE TABLE duplicate_confirmations (
     -- `entries.id` of the copy to keep. Never a path: the executor validates
     -- against the snapshot, and a path would be a second source of truth.
     keeper_entry_id INTEGER NOT NULL REFERENCES entries(id),
+    -- Whether this decision was made WITHOUT the copies being proven identical,
+    -- through `AC-13`'s two-step override.
+    --
+    -- Recorded rather than inferred. "Were the copies verified when this was
+    -- decided?" cannot be answered later by looking at the hashes, because
+    -- hashes can arrive after the fact: a group verified an hour after an
+    -- override would read as though the override never happened. The whole point
+    -- of `AC-12` is the difference between knowing and not knowing, and that is a
+    -- fact about the MOMENT OF DECISION.
+    unverified_override INTEGER NOT NULL DEFAULT 0,
     confirmed_at    TEXT NOT NULL
 );
 

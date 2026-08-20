@@ -38,8 +38,8 @@ pub use policy::{propose, ConfirmedResolution, KeeperReason, Resolution, Resolut
 pub use review::{build_review, CopyCheck, DuplicateCopy, DuplicateGroupView, DuplicatesReview};
 
 pub use job::{
-    ensure_duplicate_groups, review_for_scan, review_view_for_scan, verify_scan_duplicates,
-    PersistedDuplicates,
+    confirm_resolution_gated, ensure_duplicate_groups, review_for_scan, review_view_for_scan,
+    verify_scan_duplicates, PersistedDuplicates,
 };
 
 pub use detect::{
