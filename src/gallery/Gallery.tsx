@@ -29,7 +29,6 @@ import { ErrorCallout } from "@/components/states/ErrorCallout";
 import { InterruptionNotice } from "@/components/states/InterruptionNotice";
 import { LoadingSkeleton } from "@/components/states/LoadingSkeleton";
 
-import { ScaleProposal } from "./ScaleProposal";
 import { Section, Specimen } from "./Specimen";
 import * as fx from "./fixtures";
 
@@ -162,11 +161,6 @@ function Pane() {
 function Specimens() {
   return (
     <>
-      {/* First on the page on purpose: it is a proposal waiting on a decision,
-          and everything below it is the "before" it would change. Delete this
-          line, ScaleProposal.tsx and scale.ts together, whichever way the
-          decision goes. */}
-      <ScaleProposal />
       <Section
         title="Shell"
         blurb="The window frame and navigation. Present on every screen, so any inconsistency here is inconsistency everywhere."
