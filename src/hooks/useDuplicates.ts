@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { commands, events, type DuplicatesReviewView } from "@/lib/bindings";
+import {
+  commands,
+  events,
+  type DuplicatesReviewView,
+  type ResolutionPolicy,
+} from "@/lib/bindings";
 import { codeOf, formatAppError, type AppErrorCode } from "@/lib/appError";
 
 // The duplicates screen's data (F-905, v0.6.0 P5).
@@ -31,6 +36,9 @@ export interface ActionError {
 
 export interface UseDuplicates {
   review: DuplicatesReviewView | null;
+  /** Which copy each group suggests keeping (AC-28). */
+  policy: ResolutionPolicy;
+  setPolicy: (policy: ResolutionPolicy) => void;
   status: DuplicatesStatus;
   errorCode: AppErrorCode | null;
   errorDetail: string | null;
@@ -63,6 +71,9 @@ export function useDuplicates(scanId: number | null): UseDuplicates {
   const [actionError, setActionError] = useState<ActionError | null>(null);
   const [savedTo, setSavedTo] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  // Flag-only is the default (AC-23) and the honest starting point: the app has
+  // no opinion until a person expresses one.
+  const [policy, setPolicy] = useState<ResolutionPolicy>("flag-only");
 
   // The running check's job id, for Stop. A ref rather than state: nothing
   // renders it, and a re-render between starting the job and the user pressing
@@ -86,7 +97,7 @@ export function useDuplicates(scanId: number | null): UseDuplicates {
       setErrorCode(null);
       setErrorDetail(null);
       try {
-        const result = await commands.dupesReview(scanId);
+        const result = await commands.dupesReview(scanId, policy);
         if (cancelled) return;
         if (result.status === "ok") {
           setReview(result.data);
@@ -106,7 +117,7 @@ export function useDuplicates(scanId: number | null): UseDuplicates {
     return () => {
       cancelled = true;
     };
-  }, [scanId, nonce]);
+  }, [scanId, nonce, policy]);
 
   // Job events. Listeners are set up once and filter by the job id this hook
   // started, so another job's completion never moves this screen.
@@ -211,6 +222,8 @@ export function useDuplicates(scanId: number | null): UseDuplicates {
 
   return {
     review,
+    policy,
+    setPolicy,
     status,
     errorCode,
     errorDetail,

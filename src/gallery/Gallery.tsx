@@ -13,6 +13,7 @@ import { LibrarySkeleton } from "@/components/library/LibrarySkeleton";
 import { ShelfSection } from "@/components/library/ShelfSection";
 import { SpineCluster } from "@/components/library/SpineCluster";
 import { DuplicateCard } from "@/components/duplicates/DuplicateCard";
+import { PolicySelector } from "@/components/duplicates/PolicySelector";
 import { ConfirmInline } from "@/components/review/ConfirmInline";
 import { FileDetails } from "@/components/review/FileDetails";
 import { GroupCard } from "@/components/review/GroupCard";
@@ -334,6 +335,17 @@ function Specimens() {
         title="Duplicates"
         blurb="One group is one book with N copies (FD-08). The three states are the ones a decision actually passes through: unchecked, checked, decided."
       >
+        <Specimen
+          name="PolicySelector"
+          state="flag-only"
+          wide
+          note="says out loud that it usually changes nothing, because on exact groups it cannot"
+        >
+          <PolicySelector value="flag-only" onChange={fx.noop} />
+        </Specimen>
+        <Specimen name="PolicySelector" state="keep-larger" wide>
+          <PolicySelector value="keep-larger" onChange={fx.noop} />
+        </Specimen>
         <Specimen name="DuplicateCard" state="not checked" wide note="keeping a copy here routes through the AC-13 two-step">
           <ul className="m-0 list-none p-0">
             <DuplicateCard group={fx.DUPES_UNCHECKED} onConfirm={fx.noop} onClear={fx.noop} />

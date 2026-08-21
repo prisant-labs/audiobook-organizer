@@ -365,6 +365,19 @@ export const STRINGS = {
     estimate: (size: string) => `${size} across the copies`,
     // Said plainly rather than dressed up: on identical copies nothing
     // distinguishes them, and that is the common case rather than a rare one.
+    // The policy selector (AC-28). Named for what it decides rather than for the
+    // engine's word: a person is choosing which copy to suggest keeping, not
+    // selecting a "resolution policy".
+    suggestLabel: "Suggest keeping",
+    policyFlagOnly: "Whichever comes first",
+    policyKeepLarger: "The biggest copy",
+    policyKeepM4b: "A single m4b file",
+    // Said out loud because it is the COMMON outcome, not a rare one: exact
+    // duplicates are found by matching name AND size, so there is usually
+    // nothing for a size rule to choose between. A screen that stayed quiet here
+    // would imply the choice did more than it did.
+    policyNote:
+      "This only changes which copy is suggested. Identical copies often leave nothing to choose between, and you decide either way.",
     verified: "Copies compared and identical",
     notVerified: "Copies not compared yet",
     decided: "You chose what to keep. The change appears in your next plan.",

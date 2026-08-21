@@ -3,6 +3,7 @@ import { ERROR_COPY } from "@/lib/errorCopy";
 import { formatBytes } from "@/lib/format";
 import { useDuplicates } from "@/hooks/useDuplicates";
 import { DuplicateCard } from "@/components/duplicates/DuplicateCard";
+import { PolicySelector } from "@/components/duplicates/PolicySelector";
 import { EmptyState } from "@/components/states/EmptyState";
 import { ErrorCallout } from "@/components/states/ErrorCallout";
 import { ScanProgress } from "@/components/ScanProgress";
@@ -31,6 +32,8 @@ export interface DuplicatesProps {
 export function Duplicates({ scanId }: DuplicatesProps) {
   const {
     review,
+    policy,
+    setPolicy,
     status,
     errorCode,
     errorDetail,
@@ -134,6 +137,10 @@ export function Duplicates({ scanId }: DuplicatesProps) {
               {S.save}
             </button>
             {savedTo && <span className="text-meta break-all text-ink-3">{S.saved(savedTo)}</span>}
+          </div>
+
+          <div className="mt-4">
+            <PolicySelector value={policy} onChange={setPolicy} />
           </div>
 
           <ul className="mt-6 flex flex-col gap-3">

@@ -368,12 +368,18 @@ export const commands = {
 	/**
 	 *  The duplicates surface's read model for one scan (F-905, AC-17 to AC-19).
 	 * 
+	 *  `policy` selects which copy each group SUGGESTS keeping (AC-28) and changes
+	 *  nothing else: no policy grants permission to act (AC-26), and confirming is
+	 *  still subject to AC-12's gate. Expect it to change nothing on most groups,
+	 *  which is a property of the data rather than a bug: exact groups tie under
+	 *  keep-larger by construction, being keyed on size.
+	 * 
 	 *  Cheap and filesystem-free: it re-detects from the snapshot and lays whatever
 	 *  has been hashed over the result. Safe to call before anything has ever been
 	 *  verified, which is the ordinary first visit: every copy simply reads "not
 	 *  checked yet", which is true.
 	 */
-	dupesReview: (scanId: number) => typedError<DuplicatesReviewView, AppError>(__TAURI_INVOKE("dupes_review", { scanId })),
+	dupesReview: (scanId: number, policy: ResolutionPolicy) => typedError<DuplicatesReviewView, AppError>(__TAURI_INVOKE("dupes_review", { scanId, policy })),
 	/**
 	 *  Write the F-703 duplicates CSV into the Reports folder (AC-20) and return
 	 *  where it landed.
@@ -1989,6 +1995,22 @@ export type ReconcileResult = {
 	 */
 	done_count: number,
 };
+
+/**
+ *  The three `F-704` policies (`AC-23`). `keep-higher-bitrate` was cut as
+ *  `F-1108`: file size is a free proxy for it that cannot be missing, and it has
+ *  no defined value for a book split across N files.
+ *  Crosses IPC so the surface can offer the choice (`AC-28`), deriving the same
+ *  way [`crate::exec::ApplyMode`] does rather than growing a parallel wire enum
+ *  that could drift from this one.
+ */
+export type ResolutionPolicy = 
+/**  The default (`AC-23`). Suggests a keeper and emits nothing (`AC-26`). */
+"flag-only" | 
+/**  Keep the copy with the most bytes. */
+"keep-larger" | 
+/**  Prefer the `.m4b`; against books, prefer the copy that is fewer files. */
+"keep-m4b";
 
 /**
  *  The result of preparing an undo (v0.5.0 Phase 5, F-604), returned by the
