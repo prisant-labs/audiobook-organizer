@@ -329,6 +329,41 @@ pub enum AppError {
     #[error("the copies could not be checked: {detail}")]
     DuplicateVerifyFailed { detail: String },
 
+    /// Writing the duplicates export into the Reports folder failed. `detail` is
+    /// the developer-facing cause (usually a filesystem error: no space, or the
+    /// Reports folder not writable).
+    ///
+    /// Its own variant rather than folding into
+    /// [`DuplicateVerifyFailed`](AppError::DuplicateVerifyFailed), because the
+    /// two need opposite reassurances: a failed check means nothing was decided,
+    /// while a failed export means everything on screen is still correct and only
+    /// the file did not get written. One message cannot say both.
+    #[error("the duplicates export could not be written: {detail}")]
+    DuplicateExportFailed { detail: String },
+
+    /// A decision about a duplicate group could not be recorded or withdrawn.
+    /// `detail` is the developer-facing cause (a database failure).
+    ///
+    /// Separate from [`DuplicateVerifyFailed`](AppError::DuplicateVerifyFailed)
+    /// because the reassurance differs: a failed CHECK means nothing is known
+    /// about the copies, while a failed DECISION means the copies are fine and
+    /// the answer simply did not stick. Telling someone to "run the check again"
+    /// after a failed write would send them to fix the wrong thing.
+    #[error("the decision could not be recorded: {detail}")]
+    DuplicateConfirmFailed { detail: String },
+
+    /// A resolution was confirmed for a group whose copies have NOT been proven
+    /// identical, without the explicit override (`AC-12`).
+    ///
+    /// THIS IS THE GATE, AND IT LIVES HERE ON PURPOSE. `AC-12` permits archiving
+    /// only when every copy carries a matching hash, or when the user supplies an
+    /// explicit override. A gate enforced only by the screen that happens to call
+    /// this is a convention, not a mechanism: any other caller, or a later
+    /// screen, would silently not have it. The refusal is the backend's, so the
+    /// guarantee holds regardless of who calls.
+    #[error("the copies in {group_key} have not been checked, and no override was given")]
+    DuplicateNotVerified { group_key: String },
+
     // ---- Post-apply check family (v0.5.0 Phase 6: F-604 after-the-fact check) ----
     /// A previous tidy-up's after-the-fact check found a difference between what
     /// was planned and what is on disk, and that difference has not been
@@ -440,6 +475,9 @@ impl AppError {
             AppError::RollbackSelectionNotContiguous => "rollback-selection-not-contiguous",
             AppError::RollbackPrepareFailed { .. } => "rollback-prepare-failed",
             AppError::DuplicateVerifyFailed { .. } => "duplicate-verify-failed",
+            AppError::DuplicateExportFailed { .. } => "duplicate-export-failed",
+            AppError::DuplicateConfirmFailed { .. } => "duplicate-confirm-failed",
+            AppError::DuplicateNotVerified { .. } => "duplicate-not-verified",
             // Post-apply check family
             AppError::TidyingBlocked => "tidying-blocked",
             AppError::InterruptionUnresolved => "interruption-unresolved",
@@ -633,6 +671,20 @@ impl AppError {
                 "The check on your duplicate copies could not finish, so nothing was decided \
                  about them. Your books are untouched. You can run the check again."
             }
+            AppError::DuplicateExportFailed { .. } => {
+                "The list of duplicate copies could not be saved to a file. What you see on \
+                 screen is still correct and your books are untouched. Check there is room on \
+                 the drive, then try saving it again."
+            }
+            AppError::DuplicateConfirmFailed { .. } => {
+                "Your choice about these copies could not be saved. The copies themselves are \
+                 fine and nothing has moved. Make the choice again."
+            }
+            AppError::DuplicateNotVerified { .. } => {
+                "These copies have not been checked yet, so the app cannot tell whether they \
+                 really are the same book. Check them first, or say plainly that you want to \
+                 archive them without checking."
+            }
             // Post-apply check family
             AppError::TidyingBlocked => {
                 "The last run's after-the-fact check found a difference that needs a look \
@@ -683,6 +735,15 @@ mod tests {
             // is not one of each is worse than no helper: callers trust the name.
             AppError::DuplicateVerifyFailed {
                 detail: "boom".into(),
+            },
+            AppError::DuplicateExportFailed {
+                detail: "boom".into(),
+            },
+            AppError::DuplicateConfirmFailed {
+                detail: "boom".into(),
+            },
+            AppError::DuplicateNotVerified {
+                group_key: "Dune.m4b|900".into(),
             },
             AppError::HistoryUnavailable {
                 detail: "boom".into(),
