@@ -335,7 +335,11 @@ Suggested Owner: LLM (Sonnet) - mechanical, table/serde-driven.
 
 **`AC-13` is wired.** `UnverifiedArchiveConfirm` was built on 2026-08-15 and connected to nothing; a verified group now confirms directly, and an unverified one routes through the two-step override. The card chooses the affordance and never decides whether the rule applies, because `confirm_resolution_gated` refuses regardless of what a screen believes.
 
-**Still owed for `P5`:** `AC-29`'s nav badge already reads the group count from `LibraryOverview` and needs a look once a real scan has duplicates in it, and neither `AC-28`'s policy selector (`F-704`'s four policies) nor a headed walkthrough of the whole flow has been done. Those are the remainder rather than the phase.
+**`AC-28`'s policy selector landed 2026-08-21.** Three policies, and the selector SAYS OUT LOUD that it usually changes nothing, which is the part that needed care rather than the wiring: exact groups tie under keep-larger by construction (they are keyed on size), and fingerprint book groups tie under keep-m4b because `AC-51` already requires an agreeing audio count. A person who switched it and saw nothing move would otherwise think the app was broken. Tests pin that a policy never changes whether a group may be ACTED on, since `AC-12`'s gate is a fact about content rather than a preference about keeping.
+
+**A second lesson about tests, from the same commit.** The selector's first version hardcoded the radios' `name`, so two instances formed one native radio group and the browser drew both unselected. The obvious regression test PASSED WITH THE BUG IN, because React sets `checked` as a controlled property and jsdom never applies native radio grouping. The test now asserts the mechanism (distinct `name` per instance), which is observable and does fail when the fix is removed. **Assert the fix, not the symptom, when the symptom is only visible in a real browser.**
+
+**Still owed for `P5`:** `AC-29`'s nav badge already reads the group count from `LibraryOverview` and needs a look once a real scan has duplicates in it, and a headed walkthrough of the whole flow. Those are the remainder rather than the phase.
 
 ### Scale proposal, 2026-08-19: ordered BEFORE P5, and why that is a measurement rather than a preference
 
@@ -357,7 +361,7 @@ Suggested Owner: LLM (Sonnet) - mechanical, table/serde-driven.
 
 Steps:
 1. Build the duplicates route under `src/` using generated bindings only (no raw `invoke`), TanStack Query for the groups list, Zustand for selection state.
-2. Render group-by-group review with the FD-13 "Show file details" disclosure for copy locations; policy selector for the four F-704 policies (AC-28, AC-30).
+2. Render group-by-group review with the FD-13 "Show file details" disclosure for copy locations; policy selector for the THREE F-704 policies (AC-28, AC-30). **Corrected 2026-08-21: this step said four.** `keep-higher-bitrate` was cut as `F-1108` and the core has read "the three F-704 policies" since `P3`; the fourth was stale wording rather than a missing feature.
 3. Nav badge shows the GROUP count, updated on `job:completed` (event-driven, no polling) (AC-29).
 4. Implement the F-702 override as an explicit warning-confirm using the FD-09 danger token pair (AC-30, AC-13). **The CONTROL is already built (2026-08-15): `src/components/review/UnverifiedArchiveConfirm.tsx`, with its copy, its two-step guarantee, component tests, an axe smoke on both steps, and a gallery specimen in both themes. What remains here is WIRING it to a resolve action, which does not exist until Phase 3.** Note the mechanism: spec AC-12 says "warning dialog", design-system Section 7 says confirming is never a modal, and AC-13 asks for consistency with the design system, so it is the canonical inline two-step strip (Section 4.14) rather than a modal.
 5. Wire FD-04 empty ("no duplicates found") and loading ("checking copies") states (AC-31).
