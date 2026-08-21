@@ -45,11 +45,6 @@ pub use job::{
     verify_scan_duplicates, PersistedDuplicates,
 };
 
-pub use job::{
-    confirm_resolution_gated, ensure_duplicate_groups, review_for_scan, review_view_for_scan,
-    verify_scan_duplicates, PersistedDuplicates,
-};
-
 pub use detect::{
     detect_duplicates, detect_exact_duplicates, detect_version_candidates,
     dupe_entries_from_plan_nodes, DupeEntry, DuplicateGroup, DuplicateMember, METHOD_EXACT,
