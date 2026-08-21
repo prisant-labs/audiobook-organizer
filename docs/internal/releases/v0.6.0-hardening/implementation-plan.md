@@ -59,7 +59,7 @@ recorded in the P1 status note.
 | **P2b** | **Book-level duplicate comparison (F-1110)** | **AC-51..AC-55** | **LLM (Opus)** | **MERGED 2026-08-15 (PR #29).** All five criteria, engine-only, no IPC change. Descope path not taken |
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | **Steps 1-2 MERGED 2026-08-15 (PR #34)**; **steps 3-4 done 2026-08-16**: confirmed resolutions emit ordinary Archive ops (`AC-25`) and the round-trip is proven byte-identical (`AC-27`). Scoped to FILE losers; see the note below. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | **Engine done 2026-08-16** (`dupes/review.rs`): the group-first review model and the `AC-20` CSV. IPC payloads and writing the file into the Reports folder are **deliberately `P5`'s**; see the note below |
-| P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | **BACKEND COMPLETE 2026-08-19** on `feat/p5-duplicate-write-path`: `dupes_hash_verify` (the caller `P2`'s engine never had), the review and CSV commands, confirmations reaching the plan, and `AC-12`'s gate moved into the backend. **The React surface is NOT built**; see the note below Phase 4 |
+| P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | **COMPLETE 2026-08-19/20**, in three open PRs: #41 (backend), #42 (the scale it is built on), #43 (the surface). `dupes_hash_verify` is the caller `P2`'s engine never had; the screen replaces the "coming soon" panel; `AC-13`'s control is wired at last. See the two notes below Phase 4 |
 | P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | Not started |
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
 | P8 | Long-path battle testing + release gate | AC-40, AC-41 | LLM (Opus) + Fable | Not started |
@@ -323,6 +323,19 @@ Suggested Owner: LLM (Sonnet) - mechanical, table/serde-driven.
 - **`FD-20` snapshot retention will need to delete confirmations deliberately.** `entries.id` is a plain rowid and SQLite reuses rowids after deletion; the confirmation's foreign key currently refuses to let an entry be deleted out from under it, which is the guard retention will collide with.
 
 **Known and accepted:** nothing stops a verification job running during an apply. The apply's single-writer lock counts `kind = 'apply'` only. The failure mode is mild (a file moved mid-hash records a read failure, which is never auto-retried) and the snapshot is stale after an apply regardless, so this is recorded rather than fixed.
+
+### P5 surface note, 2026-08-20: the scale paid for itself immediately
+
+**The whole screen added ZERO arbitrary values.** A route, a card component, a hook, four gallery specimens and two accessibility smokes, and the ratchet did not move: still 285 uses of 71 distinct, now across 74 files rather than 71. That is the measured answer to why the scale was ordered before `P5`. Built a week earlier, this surface would have added a dozen more inline sizes and pushed the baseline up, and the ratchet fails in both directions precisely so that could not be banked.
+
+**Two defects found by rendering the gallery and reading it**, neither of which any test would have caught:
+
+1. **The new fixture paths used single backslashes**, so `\B` and `\F` were consumed as escape sequences and every path rendered as `E:Books - AudioFrank HerbertDune`. The existing fixtures had it right.
+2. **The file name cannot tell two copies apart.** An exact duplicate group is KEYED on basename and size, so every copy in one is called the same thing by construction. The first version rendered two identical rows of `Dune.m4b` and asked a person to choose between them. Copies now show the last three path components, with the full path in the `FD-13` disclosure.
+
+**`AC-13` is wired.** `UnverifiedArchiveConfirm` was built on 2026-08-15 and connected to nothing; a verified group now confirms directly, and an unverified one routes through the two-step override. The card chooses the affordance and never decides whether the rule applies, because `confirm_resolution_gated` refuses regardless of what a screen believes.
+
+**Still owed for `P5`:** `AC-29`'s nav badge already reads the group count from `LibraryOverview` and needs a look once a real scan has duplicates in it, and neither `AC-28`'s policy selector (`F-704`'s four policies) nor a headed walkthrough of the whole flow has been done. Those are the remainder rather than the phase.
 
 ### Scale proposal, 2026-08-19: ordered BEFORE P5, and why that is a measurement rather than a preference
 
