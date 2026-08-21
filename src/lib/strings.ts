@@ -329,6 +329,60 @@ export const STRINGS = {
       "This was a rehearsal - no books were actually moved. Everything looks good. Run it for real from the Organize screen whenever you're ready.",
   },
 
+  // The duplicates screen (F-905, v0.6.0 P5, AC-28 to AC-31).
+  //
+  // The GROUP is the unit everywhere here (FD-08): one group is one book with N
+  // copies, and the headline counts books rather than copies. "14 copies" and
+  // "6 duplicated books" answer different questions, and a past release shipped
+  // the first while meaning the second.
+  //
+  // "Duplicates" is the screen; "copies" are the members inside one group
+  // (FD-46 kept "copies" deliberately: "this book has four copies, and they are
+  // duplicates of each other" is how a person says it). Archiving is what
+  // happens to the copies not kept (FD-42), and it is never called deleting,
+  // because nothing here deletes anything.
+  duplicates: {
+    heading: "Duplicates",
+    lede: "Books that appear more than once. Nothing here changes until you choose what to keep.",
+    loading: "Looking for books that appear more than once...",
+    checking: "Checking copies...",
+    checkingNote: "Reading each copy end to end. This takes as long as the drive needs.",
+    emptyHeading: "No duplicates found",
+    emptyBody: "Every book in your library appears once. Nothing to decide.",
+    noScanHeading: "Scan your library first",
+    noScanBody: "There is nothing to compare until your library has been scanned.",
+    check: "Check the copies",
+    checkAgain: "Check the rest",
+    stop: "Stop",
+    save: "Save the list",
+    saved: (path: string) => `Saved to ${path}`,
+    keepThis: "Keep this one",
+    kept: "Keeping this one",
+    undo: "Change my mind",
+    // The count line under a group headline. Groups, then copies, in that order.
+    groupCount: (n: number) => (n === 1 ? "1 duplicated book" : `${n} duplicated books`),
+    copyCount: (n: number) => (n === 1 ? "1 copy" : `${n} copies`),
+    estimate: (size: string) => `${size} across the copies`,
+    // Said plainly rather than dressed up: on identical copies nothing
+    // distinguishes them, and that is the common case rather than a rare one.
+    // The policy selector (AC-28). Named for what it decides rather than for the
+    // engine's word: a person is choosing which copy to suggest keeping, not
+    // selecting a "resolution policy".
+    suggestLabel: "Suggest keeping",
+    policyFlagOnly: "Whichever comes first",
+    policyKeepLarger: "The biggest copy",
+    policyKeepM4b: "A single m4b file",
+    // Said out loud because it is the COMMON outcome, not a rare one: exact
+    // duplicates are found by matching name AND size, so there is usually
+    // nothing for a size rule to choose between. A screen that stayed quiet here
+    // would imply the choice did more than it did.
+    policyNote:
+      "This only changes which copy is suggested. Identical copies often leave nothing to choose between, and you decide either way.",
+    verified: "Copies compared and identical",
+    notVerified: "Copies not compared yet",
+    decided: "You chose what to keep. The change appears in your next plan.",
+  },
+
   // Error / empty / loading states (F-908, v0.4.0 Phase 7, design-system
   // Section 5). The per-AppError family sentences and next steps live in the
   // centralized error-copy module (src/lib/errorCopy.ts, still one module per

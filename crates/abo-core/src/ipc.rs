@@ -53,6 +53,11 @@ pub use crate::classify::{ClassMetric, FolderClass, HealthMetrics, MetricUnit, P
 /// dry-run vs Real distinction (F-607).
 pub use crate::exec::ApplyMode;
 
+/// Re-exported so the duplicates surface's policy selector (`AC-28`) can name
+/// the choice under `abo_core::ipc` (AC-4). Defined in [`crate::dupes::policy`],
+/// where the ranking rules live.
+pub use crate::dupes::policy::ResolutionPolicy;
+
 /// The category of a [`ScanWarning`].
 ///
 /// The two per-entry kinds ([`JunctionSkipped`](ScanWarningKind::JunctionSkipped)
@@ -991,5 +996,6 @@ mod contract {
         assert_ipc_ready::<DuplicateGroupCard>();
         assert_ipc_ready::<DuplicatesReviewView>();
         assert_ipc_ready::<ExportedFile>();
+        assert_ipc_ready::<ResolutionPolicy>();
     }
 }

@@ -35,7 +35,10 @@ pub use books::{book_folders_from_plan_nodes, match_tier, BookFolder, BookMatch}
 
 pub use policy::{propose, ConfirmedResolution, KeeperReason, Resolution, ResolutionPolicy};
 
-pub use review::{build_review, CopyCheck, DuplicateCopy, DuplicateGroupView, DuplicatesReview};
+pub use review::{
+    build_review, build_review_with_policy, CopyCheck, DuplicateCopy, DuplicateGroupView,
+    DuplicatesReview,
+};
 
 pub use job::{
     confirm_resolution_gated, ensure_duplicate_groups, review_for_scan, review_view_for_scan,

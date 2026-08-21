@@ -62,7 +62,13 @@ use super::detect::DuplicateGroup;
 /// The three `F-704` policies (`AC-23`). `keep-higher-bitrate` was cut as
 /// `F-1108`: file size is a free proxy for it that cannot be missing, and it has
 /// no defined value for a book split across N files.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Crosses IPC so the surface can offer the choice (`AC-28`), deriving the same
+/// way [`crate::exec::ApplyMode`] does rather than growing a parallel wire enum
+/// that could drift from this one.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, specta::Type,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum ResolutionPolicy {
     /// The default (`AC-23`). Suggests a keeper and emits nothing (`AC-26`).
     #[default]
