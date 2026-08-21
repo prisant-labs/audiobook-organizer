@@ -34,7 +34,7 @@ use sqlx::SqlitePool;
 use crate::db::dupes::{insert_duplicate_groups, member_verifications_for_scan};
 use crate::dupes::detect::DuplicateGroup;
 use crate::dupes::hash::ContentSource;
-use crate::dupes::review::{build_review, DuplicatesReview};
+use crate::dupes::review::{build_review_with_policy, DuplicatesReview};
 use crate::dupes::verify::{verify_book_group, verify_groups, VerifyOutcome};
 use crate::dupes::BookFolder;
 use crate::error::AppError;
@@ -156,12 +156,19 @@ pub async fn review_for_scan(
     pool: &SqlitePool,
     scan_id: i64,
     sep: char,
+    policy: crate::dupes::ResolutionPolicy,
 ) -> Result<DuplicatesReview, AppError> {
     let (groups, books) = crate::plan::query::detected_duplicates_for_scan(pool, scan_id).await?;
     let verifications = member_verifications_for_scan(pool, scan_id)
         .await
         .map_err(db_error)?;
-    Ok(build_review(&groups, &books, &verifications, sep))
+    Ok(build_review_with_policy(
+        &groups,
+        &books,
+        &verifications,
+        sep,
+        policy,
+    ))
 }
 
 /// Record a confirmed resolution, refusing it unless `AC-12` is satisfied.
@@ -236,12 +243,13 @@ pub async fn review_view_for_scan(
     pool: &SqlitePool,
     scan_id: i64,
     sep: char,
+    policy: crate::dupes::ResolutionPolicy,
 ) -> Result<crate::ipc::DuplicatesReviewView, AppError> {
     use crate::db::dupes::confirmations_for_scan;
     use crate::dupes::review::{keeper_reason_label, CopyCheck};
     use crate::ipc::{CopyCheckState, DuplicateCopyView, DuplicateGroupCard, DuplicatesReviewView};
 
-    let review = review_for_scan(pool, scan_id, sep).await?;
+    let review = review_for_scan(pool, scan_id, sep, policy).await?;
 
     // Confirmations for THIS scan only, which the query guarantees. Keyed by
     // (method, group_key) to match a group's identity rather than by a persisted
@@ -308,7 +316,7 @@ mod tests {
     use super::*;
     use crate::db::open_db;
     use crate::dupes::review::CopyCheck;
-    use crate::dupes::ConfirmedResolution;
+    use crate::dupes::{ConfirmedResolution, ResolutionPolicy};
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -431,7 +439,9 @@ mod tests {
         let (pool, _) = open_db(dir.path()).await.unwrap();
         let scan_id = seed_two_copies(&pool).await;
 
-        let review = review_for_scan(&pool, scan_id, '\\').await.unwrap();
+        let review = review_for_scan(&pool, scan_id, '\\', ResolutionPolicy::FlagOnly)
+            .await
+            .unwrap();
         assert_eq!(review.group_count(), 1);
         assert!(review.groups[0]
             .copies
@@ -461,7 +471,9 @@ mod tests {
         assert_eq!(outcome.failed, 0);
         assert!(!outcome.cancelled);
 
-        let review = review_for_scan(&pool, scan_id, '\\').await.unwrap();
+        let review = review_for_scan(&pool, scan_id, '\\', ResolutionPolicy::FlagOnly)
+            .await
+            .unwrap();
         assert!(review.groups[0]
             .copies
             .iter()

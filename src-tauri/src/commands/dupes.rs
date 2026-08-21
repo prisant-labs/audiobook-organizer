@@ -20,7 +20,7 @@ use abo_core::dupes::{
     confirm_resolution_gated, review_for_scan, review_view_for_scan, verify_scan_duplicates,
     ConfirmedResolution, FsContentSource,
 };
-use abo_core::ipc::{AppError, DuplicatesReviewView, ExportedFile, JobStarted};
+use abo_core::ipc::{AppError, DuplicatesReviewView, ExportedFile, JobStarted, ResolutionPolicy};
 use abo_core::job::{CancelFlag, JobContext, ProgressUpdate};
 use abo_core::paths::app_data_dir;
 use abo_core::reports::{duplicates_export_dir, write_duplicates_csv};
@@ -120,6 +120,12 @@ pub async fn dupes_hash_verify(
 
 /// The duplicates surface's read model for one scan (F-905, AC-17 to AC-19).
 ///
+/// `policy` selects which copy each group SUGGESTS keeping (AC-28) and changes
+/// nothing else: no policy grants permission to act (AC-26), and confirming is
+/// still subject to AC-12's gate. Expect it to change nothing on most groups,
+/// which is a property of the data rather than a bug: exact groups tie under
+/// keep-larger by construction, being keyed on size.
+///
 /// Cheap and filesystem-free: it re-detects from the snapshot and lays whatever
 /// has been hashed over the result. Safe to call before anything has ever been
 /// verified, which is the ordinary first visit: every copy simply reads "not
@@ -129,8 +135,9 @@ pub async fn dupes_hash_verify(
 pub async fn dupes_review(
     state: tauri::State<'_, AppState>,
     scan_id: i64,
+    policy: ResolutionPolicy,
 ) -> Result<DuplicatesReviewView, AppError> {
-    review_view_for_scan(&state.pool, scan_id, std::path::MAIN_SEPARATOR).await
+    review_view_for_scan(&state.pool, scan_id, std::path::MAIN_SEPARATOR, policy).await
 }
 
 /// Write the F-703 duplicates CSV into the Reports folder (AC-20) and return
@@ -149,7 +156,16 @@ pub async fn dupes_export_csv(
     state: tauri::State<'_, AppState>,
     scan_id: i64,
 ) -> Result<ExportedFile, AppError> {
-    let review = review_for_scan(&state.pool, scan_id, std::path::MAIN_SEPARATOR).await?;
+    // Flag-only for the export: the CSV records what was FOUND, and a keeper
+    // column that shifted with whatever the screen last had selected would make
+    // two exports of one scan disagree.
+    let review = review_for_scan(
+        &state.pool,
+        scan_id,
+        std::path::MAIN_SEPARATOR,
+        ResolutionPolicy::FlagOnly,
+    )
+    .await?;
     // The scan's OWN timestamp, never the wall clock at export time. Reading the
     // clock here would contradict this function's own promise and grow a new
     // folder on every export, which is the behaviour `plan_export_dir`'s contract

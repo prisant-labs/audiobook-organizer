@@ -281,12 +281,41 @@ pub fn build_review(
     verifications: &HashMap<i64, MemberVerification>,
     sep: char,
 ) -> DuplicatesReview {
+    build_review_with_policy(
+        groups,
+        books,
+        verifications,
+        sep,
+        ResolutionPolicy::FlagOnly,
+    )
+}
+
+/// [`build_review`] under an explicitly chosen policy (`AC-28`).
+///
+/// `policy` decides which copy each group SUGGESTS keeping and changes nothing
+/// else: no policy grants permission to act, which is `AC-26`, and confirming is
+/// subject to `AC-12`'s gate whichever one is selected.
+///
+/// EXPECT IT TO CHANGE NOTHING, most of the time, and say so on the surface
+/// rather than implying otherwise. Exact groups are keyed on basename and size,
+/// so their copies tie under keep-larger by construction; fingerprint book groups
+/// tie under keep-m4b because `AC-51` requires an agreeing audio count. Where a
+/// policy genuinely discriminates is title-only groups, which `AC-55` never
+/// auto-resolves anyway.
+pub fn build_review_with_policy(
+    groups: &[DuplicateGroup],
+    books: &[BookFolder],
+    verifications: &HashMap<i64, MemberVerification>,
+    sep: char,
+    policy: ResolutionPolicy,
+) -> DuplicatesReview {
     let mut out = Vec::new();
 
     for g in groups.iter().filter(|g| g.is_duplicate_candidate()) {
-        // The default suggestion is flag-only's, which AC-26 defines as a
-        // recorded keeper SUGGESTION carrying no permission to act.
-        let suggestion = propose(ResolutionPolicy::FlagOnly, g, books);
+        // A SUGGESTION under the chosen policy, carrying no permission to act
+        // (AC-26). Flag-only still proposes one: AC-26 requires the group and its
+        // suggestion to be recorded for review, it simply must not be acted on.
+        let suggestion = propose(policy, g, books);
         let keeper = suggestion.as_ref().map(|r| r.keeper);
 
         let copies = g
@@ -455,6 +484,89 @@ mod tests {
     fn a_group_carries_the_detector_that_found_it() {
         let review = build_review(&[two_copy_group()], &[], &HashMap::new(), '\\');
         assert_eq!(review.groups[0].method, METHOD_EXACT);
+    }
+
+    /// `AC-28`: the policy changes which copy is SUGGESTED, and only that.
+    #[test]
+    fn a_policy_moves_the_suggestion_where_the_copies_actually_differ() {
+        // A version-candidate group, which is where a policy can discriminate:
+        // the copies are the same book at different sizes.
+        //
+        // The match TIER is load-bearing on this fixture and was got wrong once:
+        // `is_duplicate_candidate` admits a folder group only when it reaches at
+        // least the `AC-51` fingerprint, so a version group with no tier is not a
+        // candidate at all and the review is empty rather than merely unmoved.
+        let mut uneven = group(
+            METHOD_VERSION,
+            "dune",
+            vec![
+                member(1, "E:\\lib\\A\\Dune.m4b", 900),
+                member(2, "E:\\lib\\B\\Dune.m4b", 1_400),
+            ],
+        );
+        uneven.book_match = Some(crate::dupes::books::BookMatch::Fingerprint);
+
+        let larger = build_review_with_policy(
+            &[uneven.clone()],
+            &[],
+            &HashMap::new(),
+            '\\',
+            ResolutionPolicy::KeepLarger,
+        );
+        let suggested = larger.groups[0]
+            .copies
+            .iter()
+            .find(|c| c.suggested_keeper)
+            .expect("a suggestion");
+        assert_eq!(suggested.entry_id, 2, "keep-larger keeps the bigger copy");
+        assert_eq!(
+            larger.groups[0].keeper_reason,
+            Some(KeeperReason::LargerCopy)
+        );
+    }
+
+    /// The honest case, and the COMMON one: an exact group is keyed on basename
+    /// AND SIZE, so its copies tie under keep-larger by construction. A surface
+    /// implying the policy decided something here would be overselling it.
+    #[test]
+    fn on_an_exact_group_a_size_policy_has_nothing_to_choose_between() {
+        let review = build_review_with_policy(
+            &[two_copy_group()],
+            &[],
+            &HashMap::new(),
+            '\\',
+            ResolutionPolicy::KeepLarger,
+        );
+        assert_eq!(
+            review.groups[0].keeper_reason,
+            Some(KeeperReason::Equivalent),
+            "the tie-break is the de facto policy, and it says so"
+        );
+    }
+
+    /// No policy grants permission to act (`AC-26`). Changing it must not move
+    /// the `AC-12` gate, which is a fact about the CONTENT rather than a
+    /// preference about which copy to keep.
+    #[test]
+    fn changing_the_policy_never_changes_whether_a_group_may_be_acted_on() {
+        for policy in [
+            ResolutionPolicy::FlagOnly,
+            ResolutionPolicy::KeepLarger,
+            ResolutionPolicy::KeepM4b,
+        ] {
+            let unverified =
+                build_review_with_policy(&[two_copy_group()], &[], &HashMap::new(), '\\', policy);
+            assert!(!unverified.groups[0].content_verified);
+
+            let verified = build_review_with_policy(
+                &[two_copy_group()],
+                &[],
+                &verified("aaa", "aaa"),
+                '\\',
+                policy,
+            );
+            assert!(verified.groups[0].content_verified);
+        }
     }
 
     /// AC-17 and AC-18: the headline counts GROUPS, and copies are counted
