@@ -86,6 +86,10 @@ pub struct DuplicateGroupView {
     /// Stable key from the detector, used as the CSV's group column (`AC-20`).
     /// A join key, never shown as if it were a book name.
     pub group_key: String,
+    /// The detector that found this group. Carried because a group's IDENTITY is
+    /// `(method, group_key)`, not the key alone: a confirmation is recorded
+    /// against both, and the two detectors build keys in different shapes.
+    pub method: &'static str,
     /// How the group was found, in plain language.
     pub found_by: &'static str,
     /// Copies in this group. Always at least two; a group of one is not a group.
@@ -95,6 +99,22 @@ pub struct DuplicateGroupView {
     pub candidate_bytes_estimate: u64,
     /// Why the suggested keeper was suggested, if a suggestion was possible.
     pub keeper_reason: Option<KeeperReason>,
+    /// Whether the copies are PROVEN identical: at least two of them, every one
+    /// carrying a hash, and all the hashes agreeing. This is `AC-12`'s gate, the
+    /// thing `AC-13`'s two-step override overrides.
+    ///
+    /// The three conditions reject three different situations and are the same
+    /// three [`crate::dupes::verify::group_may_auto_resolve`] applies: a group of
+    /// one is not a duplicate group, an unhashed or unreadable copy means the
+    /// tool does not know, and disagreeing hashes mean the detector was wrong
+    /// (`AC-14`, same name and size, different book).
+    ///
+    /// ALWAYS FALSE FOR A FOLDER GROUP, and honestly so. A folder has no bytes of
+    /// its own: its content tier is a multiset comparison over its files
+    /// (`AC-54`), which lives in the database rather than in this pure function.
+    /// Nothing is lost this release, because `P3` emission is scoped to FILE
+    /// losers and a folder loser cannot be archived yet regardless.
+    pub content_verified: bool,
 }
 
 impl DuplicateGroupView {
@@ -192,7 +212,7 @@ impl DuplicatesReview {
 /// in its own right. It is swept by this module's own vocabulary test, the same
 /// way `report.rs`, `error.rs`, `query.rs` and the plan builder's rationales are
 /// swept by theirs.
-fn keeper_reason_label(reason: Option<KeeperReason>) -> &'static str {
+pub fn keeper_reason_label(reason: Option<KeeperReason>) -> &'static str {
     match reason {
         Some(KeeperReason::LargerCopy) => "this copy is the biggest",
         Some(KeeperReason::PreferredFormat) => "this copy is a single m4b file",
@@ -288,14 +308,44 @@ pub fn build_review(
         out.push(DuplicateGroupView {
             book: display_name(g, sep),
             group_key: g.group_key.clone(),
+            method: g.method,
             found_by: found_by_label(g),
             copies,
             candidate_bytes_estimate: g.total_bytes,
             keeper_reason: suggestion.map(|r| r.reason),
+            content_verified: content_is_verified_identical(g, verifications),
         });
     }
 
     DuplicatesReview { groups: out }
+}
+
+/// `AC-12`'s gate, computed from what has been hashed.
+///
+/// Pure, and deliberately the same three conditions as
+/// [`crate::dupes::verify::group_may_auto_resolve`], which answers the same
+/// question from the database. Two implementations of one rule is a risk worth
+/// naming: this one exists because the review is built without persisted group
+/// ids, and the two are kept honest by asserting the same cases.
+fn content_is_verified_identical(
+    g: &DuplicateGroup,
+    verifications: &HashMap<i64, MemberVerification>,
+) -> bool {
+    if g.members.len() < 2 {
+        return false;
+    }
+    let mut hashes = g.members.iter().map(|m| {
+        match verifications.get(&(m.entry_id as i64)) {
+            Some(MemberVerification::Verified(h)) => Some(h.as_str()),
+            // Unhashed, unreadable, or a folder member that has no hash of its
+            // own. All three mean the same thing here: not proven.
+            _ => None,
+        }
+    });
+    let Some(Some(first)) = hashes.next() else {
+        return false;
+    };
+    hashes.all(|h| h == Some(first))
 }
 
 /// How the group was found, in words a reader can act on.
@@ -347,6 +397,64 @@ mod tests {
                 member(2, "E:\\lib\\B\\Dune.m4b", 900),
             ],
         )
+    }
+
+    /// Verifications for the two-copy fixture, one entry per member.
+    fn verified(a: &str, b: &str) -> HashMap<i64, MemberVerification> {
+        HashMap::from([
+            (1i64, MemberVerification::Verified(a.to_string())),
+            (2i64, MemberVerification::Verified(b.to_string())),
+        ])
+    }
+
+    /// `AC-12`: proven identical is the only state that opens the automatic path.
+    #[test]
+    fn matching_hashes_on_every_copy_are_what_verified_means() {
+        let review = build_review(&[two_copy_group()], &[], &verified("aaa", "aaa"), '\\');
+        assert!(review.groups[0].content_verified);
+    }
+
+    /// `AC-14`: same name, same size, DIFFERENT content is the case this gate
+    /// exists to catch. Auto-resolving it would archive a different book.
+    #[test]
+    fn hashes_that_disagree_are_not_verified_however_alike_the_files_looked() {
+        let review = build_review(&[two_copy_group()], &[], &verified("aaa", "bbb"), '\\');
+        assert!(!review.groups[0].content_verified);
+    }
+
+    #[test]
+    fn one_copy_left_unread_leaves_the_whole_group_unverified() {
+        let unread = HashMap::from([(1i64, MemberVerification::Verified("aaa".to_string()))]);
+        let review = build_review(&[two_copy_group()], &[], &unread, '\\');
+        assert!(!review.groups[0].content_verified);
+
+        let failed = HashMap::from([
+            (1i64, MemberVerification::Verified("aaa".to_string())),
+            (
+                2i64,
+                MemberVerification::Failed("access denied".to_string()),
+            ),
+        ]);
+        let review = build_review(&[two_copy_group()], &[], &failed, '\\');
+        assert!(
+            !review.groups[0].content_verified,
+            "a file we could not read is the case where not-knowing matters most"
+        );
+    }
+
+    #[test]
+    fn a_group_nobody_hashed_is_not_verified() {
+        let review = build_review(&[two_copy_group()], &[], &HashMap::new(), '\\');
+        assert!(!review.groups[0].content_verified);
+    }
+
+    /// The group's identity is (method, group_key), and a confirmation is
+    /// recorded against both. Carrying only the key would make an exact group and
+    /// a version group with the same key indistinguishable to the surface.
+    #[test]
+    fn a_group_carries_the_detector_that_found_it() {
+        let review = build_review(&[two_copy_group()], &[], &HashMap::new(), '\\');
+        assert_eq!(review.groups[0].method, METHOD_EXACT);
     }
 
     /// AC-17 and AC-18: the headline counts GROUPS, and copies are counted

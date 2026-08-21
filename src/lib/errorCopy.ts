@@ -291,6 +291,40 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "warn",
   },
 
+  // Saving the list failed, which is NOT the same as the check failing, and the
+  // two need opposite reassurances. A failed check means nothing is known; this
+  // means everything on screen is still correct and only the file is missing.
+  // One message covering both would have to hedge, and a hedge here reads as
+  // "something might be wrong with your books", which is never true of this.
+  "duplicate-export-failed": {
+    sentence: "The list of duplicate copies couldn't be saved to a file.",
+    nextStep:
+      "What you see on screen is still correct and your books are untouched. Check there's room on the drive, then try saving it again.",
+    retryable: true,
+    tone: "warn",
+  },
+
+  // The decision didn't stick. Distinct from a failed check for the same reason
+  // as the export: the copies are fine, and telling someone to "run the check
+  // again" would send them to fix a thing that isn't broken.
+  "duplicate-confirm-failed": {
+    sentence: "Your choice about these copies couldn't be saved.",
+    nextStep: "The copies themselves are fine and nothing has moved. Make the choice again.",
+    retryable: true,
+    tone: "warn",
+  },
+
+  // A refusal, not a failure: the app is declining to archive copies it cannot
+  // prove are the same book. Tone is warn rather than alert because nothing went
+  // wrong and there are two ordinary ways forward, both named here.
+  "duplicate-not-verified": {
+    sentence: "These copies haven't been checked yet, so we can't tell whether they're really the same book.",
+    nextStep:
+      "Check them first, or say plainly that you want to archive them without checking.",
+    retryable: false,
+    tone: "warn",
+  },
+
   // -- The record of past runs (v0.6.0 History) -------------------------------
   // A read-only failure: the record could not be SHOWN. Past runs and their
   // undo files are untouched, and an undo file is self-contained (AC-11), so it
