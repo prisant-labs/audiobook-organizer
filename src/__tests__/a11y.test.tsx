@@ -6,6 +6,8 @@ import { Review } from "@/routes/Review";
 import { Apply } from "@/routes/Apply";
 import { InterruptionNotice } from "@/components/states/InterruptionNotice";
 import { UnverifiedArchiveConfirm } from "@/components/review/UnverifiedArchiveConfirm";
+import { DuplicateCard } from "@/components/duplicates/DuplicateCard";
+import * as dupeFx from "@/gallery/fixtures";
 import { commands } from "@/lib/bindings";
 import { getCover } from "@/lib/covers";
 import { usePlanReview } from "@/hooks/usePlanReview";
@@ -299,6 +301,36 @@ describe("UnverifiedArchiveConfirm a11y (AC-13)", () => {
   it("has zero serious/critical violations at the warning step", async () => {
     const { container } = render(<UnverifiedArchiveConfirm onConfirm={vi.fn()} />);
     container.querySelector("button")?.click();
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+});
+
+// The duplicates surface's card (F-905, P5). Both states get a smoke, because
+// they differ in exactly the way Section 8 warns about: the decided state is the
+// one place this screen carries meaning in a background colour, and a reader who
+// cannot see the green has to get the same answer from the icon and the words.
+describe("DuplicateCard a11y (F-905)", () => {
+  it("has zero serious/critical violations while undecided", async () => {
+    const { container } = render(
+      <ul>
+        <DuplicateCard group={dupeFx.DUPES_UNCHECKED} onConfirm={vi.fn()} onClear={vi.fn()} />
+      </ul>,
+    );
+    const results = await axe.run(container);
+    expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
+      [],
+    );
+  });
+
+  it("has zero serious/critical violations once a copy is being kept", async () => {
+    const { container } = render(
+      <ul>
+        <DuplicateCard group={dupeFx.DUPES_DECIDED} onConfirm={vi.fn()} onClear={vi.fn()} />
+      </ul>,
+    );
     const results = await axe.run(container);
     expect(describeViolations(results), JSON.stringify(describeViolations(results), null, 2)).toEqual(
       [],

@@ -12,6 +12,7 @@ import { LibraryLede } from "@/components/library/LibraryLede";
 import { LibrarySkeleton } from "@/components/library/LibrarySkeleton";
 import { ShelfSection } from "@/components/library/ShelfSection";
 import { SpineCluster } from "@/components/library/SpineCluster";
+import { DuplicateCard } from "@/components/duplicates/DuplicateCard";
 import { ConfirmInline } from "@/components/review/ConfirmInline";
 import { FileDetails } from "@/components/review/FileDetails";
 import { GroupCard } from "@/components/review/GroupCard";
@@ -326,6 +327,32 @@ function Specimens() {
         </Specimen>
         <Specimen name="ReviewFooter" wide>
           <ReviewFooter groups={fx.GROUPS} planId={1} />
+        </Specimen>
+      </Section>
+
+      <Section
+        title="Duplicates"
+        blurb="One group is one book with N copies (FD-08). The three states are the ones a decision actually passes through: unchecked, checked, decided."
+      >
+        <Specimen name="DuplicateCard" state="not checked" wide note="keeping a copy here routes through the AC-13 two-step">
+          <ul className="m-0 list-none p-0">
+            <DuplicateCard group={fx.DUPES_UNCHECKED} onConfirm={fx.noop} onClear={fx.noop} />
+          </ul>
+        </Specimen>
+        <Specimen name="DuplicateCard" state="checked and identical" wide note="the automatic path is open">
+          <ul className="m-0 list-none p-0">
+            <DuplicateCard group={fx.DUPES_CHECKED} onConfirm={fx.noop} onClear={fx.noop} />
+          </ul>
+        </Specimen>
+        <Specimen name="DuplicateCard" state="decided" wide>
+          <ul className="m-0 list-none p-0">
+            <DuplicateCard group={fx.DUPES_DECIDED} onConfirm={fx.noop} onClear={fx.noop} />
+          </ul>
+        </Specimen>
+        <Specimen name="DuplicateCard" state="one copy could not be read" wide note="the case AC-12 cares most about: not-knowing, with a reason">
+          <ul className="m-0 list-none p-0">
+            <DuplicateCard group={fx.DUPES_UNREADABLE} onConfirm={fx.noop} onClear={fx.noop} />
+          </ul>
         </Specimen>
       </Section>
 

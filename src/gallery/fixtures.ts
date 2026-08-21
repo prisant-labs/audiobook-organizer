@@ -18,6 +18,8 @@ import type {
   PlanGroupView,
   PlanOpView,
   SeriesCluster,
+  DuplicateCopyView,
+  DuplicateGroupCard,
 } from "@/lib/bindings";
 import type { StartupInterruption } from "@/lib/interruption";
 
@@ -216,6 +218,69 @@ export const INTERRUPTION_DECISIVE: StartupInterruption = INTERRUPTION_BASE;
 export const INTERRUPTION_AMBIGUOUS: StartupInterruption = {
   ...INTERRUPTION_BASE,
   resume_offered: false,
+};
+
+// One duplicate group (F-905, P5). Three states of the same book, because the
+// three are what the card actually has to look right in: nobody has checked the
+// copies, they have been checked and match, and a decision has been made.
+const COPY_A: DuplicateCopyView = {
+  entry_id: 41,
+  path: "E:\\Books - Audio\\Frank Herbert\\Dune\\Dune.m4b",
+  size_bytes: 903_000_000,
+  check: "not-checked",
+  check_label: "not checked yet",
+  check_reason: null,
+  suggested_keeper: true,
+};
+const COPY_B: DuplicateCopyView = {
+  entry_id: 42,
+  path: "E:\\Books - Audio\\_incoming\\Dune\\Dune.m4b",
+  size_bytes: 903_000_000,
+  check: "not-checked",
+  check_label: "not checked yet",
+  check_reason: null,
+  suggested_keeper: false,
+};
+
+export const DUPES_UNCHECKED: DuplicateGroupCard = {
+  book: "Dune",
+  group_key: "Dune.m4b|903000000",
+  method: "exact-basename-size",
+  found_by: "same file name and size",
+  copies: [COPY_A, COPY_B],
+  copy_count: 2,
+  candidate_bytes_estimate: 1_806_000_000,
+  keeper_reason: "the copies were equivalent, so the first one is kept",
+  content_verified: false,
+  confirmed_keeper: null,
+};
+
+export const DUPES_CHECKED: DuplicateGroupCard = {
+  ...DUPES_UNCHECKED,
+  copies: [
+    { ...COPY_A, check: "checked", check_label: "contents checked" },
+    { ...COPY_B, check: "checked", check_label: "contents checked" },
+  ],
+  content_verified: true,
+};
+
+export const DUPES_DECIDED: DuplicateGroupCard = {
+  ...DUPES_CHECKED,
+  confirmed_keeper: 41,
+};
+
+/** A copy the app tried to read and could not: the state AC-12 cares most about. */
+export const DUPES_UNREADABLE: DuplicateGroupCard = {
+  ...DUPES_UNCHECKED,
+  copies: [
+    { ...COPY_A, check: "checked", check_label: "contents checked" },
+    {
+      ...COPY_B,
+      check: "could-not-read",
+      check_label: "could not be read",
+      check_reason: "os error 5: access is denied",
+    },
+  ],
 };
 
 /** No-op handlers. The gallery renders appearance and states, not behaviour. */

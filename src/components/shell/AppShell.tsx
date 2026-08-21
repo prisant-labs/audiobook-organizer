@@ -14,12 +14,12 @@ import { useStartupInterruption } from "@/hooks/useStartupInterruption";
 import { Titlebar } from "./Titlebar";
 import { Sidebar } from "./Sidebar";
 import { ScreenContainer } from "./ScreenContainer";
-import { ComingSoon } from "./ComingSoon";
 import { History } from "@/routes/History";
 import { Settings } from "@/routes/Settings";
 import { Library } from "@/routes/Library";
 import { Review } from "@/routes/Review";
 import { Apply } from "@/routes/Apply";
+import { Duplicates } from "@/routes/Duplicates";
 
 export interface AppShellProps {
   // The persisted settings (from useAppSettings, owned by AppRoot). AppShell
@@ -251,7 +251,7 @@ function RouteContent({
         />
       );
     case "duplicates":
-      return <ComingSoon label="Duplicates" />;
+      return <Duplicates scanId={health.overview?.scan_id ?? null} />;
     case "history":
       return <History onOpenPlan={onOpenPlan} />;
     case "settings":
