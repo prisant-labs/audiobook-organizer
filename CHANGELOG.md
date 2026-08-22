@@ -9,6 +9,31 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **A Duplicates screen.** Everything the app had learned about repeated books
+  was, until now, reachable from nothing: the comparison engine, the three ways
+  of choosing which copy to keep, and the confirm step all existed and no screen
+  called any of them. There is now a screen that does. It opens instantly and
+  says plainly that nothing has been compared yet, because comparing means
+  reading every candidate byte by byte and that is a thing you ask for rather
+  than something that happens to you. When you do ask, it shows progress and can
+  be stopped, and it keeps every comparison it finished. Copies are listed with
+  three parts of their location rather than their name, because two copies of one
+  book are called the same thing and the name is the one detail that cannot tell
+  them apart.
+- **A way to say which copy to keep, and to see what that would change.** Three
+  choices, with a note on screen saying out loud that switching between them
+  usually changes nothing. That note is deliberate: on copies that are genuinely
+  identical the choices cannot tell them apart, and the alternative was letting
+  the first person who switched conclude the app was broken.
+- Development only: **the app now has one type scale instead of eighteen
+  improvised sizes.** Seven sizes, derived from what the app already used most
+  rather than chosen from taste, each sized so that text and spacing line up on
+  the same underlying grid. Spacing deliberately got no new names, because
+  measurement showed it was already consistent and only lacked a rule about which
+  steps were allowed. Nothing a reader sees changes yet: the new scale is used by
+  the Duplicates screen only, and the rest of the app moves onto it one screen at
+  a time so that each change can be looked at.
+
 - **Duplicate copies can now be resolved into real, undoable changes** (`P3`,
   `F-704`). Three ways to choose which copy to keep are available (keep the
   bigger one, prefer a single-file copy, or just flag them and decide later,
@@ -29,8 +54,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
   old limit are read correctly rather than reported as unreadable.
 - **A confirm step for archiving copies that were never compared.** Deliberately
   two presses rather than one, and it says plainly that the copies have not been
-  compared file by file before it asks. Built and reviewable in the component
-  gallery; it is not reachable in the app until the duplicates screen arrives.
+  compared file by file before it asks. **It is now reachable in the app**, on the
+  Duplicates screen. The refusal behind it is not a matter of the screen
+  remembering to ask: the engine itself declines to record a decision about
+  copies it never compared unless that override is written down alongside it, so
+  the answer to "were these compared when this was decided?" cannot be lost.
 - Development only: the component gallery is now checked for words the product
   has retired, and so are this file and the status page. Retired wording had
   reached the gallery twice because nothing was looking.
