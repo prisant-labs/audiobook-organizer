@@ -8,7 +8,7 @@ import { Sidebar } from "../Sidebar";
 // is a GROUP count (never "copies" wording).
 describe("Sidebar", () => {
   it("renders all five destinations in order", () => {
-    render(<Sidebar active="library" onNavigate={vi.fn()} counts={{}} />);
+    render(<Sidebar active="library" onNavigate={vi.fn()} counts={{}} hasLibrary={false} />);
     const items = screen.getAllByRole("button").map((b) => b.textContent);
     expect(items[0]).toContain("Library");
     expect(items[1]).toContain("Organize");
@@ -18,7 +18,7 @@ describe("Sidebar", () => {
   });
 
   it("marks only the active route with aria-current=page", () => {
-    render(<Sidebar active="duplicates" onNavigate={vi.fn()} counts={{}} />);
+    render(<Sidebar active="duplicates" onNavigate={vi.fn()} counts={{}} hasLibrary={false} />);
 
     expect(screen.getByRole("button", { name: /Duplicates/ })).toHaveAttribute(
       "aria-current",
@@ -31,21 +31,21 @@ describe("Sidebar", () => {
   it("calls onNavigate with the clicked route id", async () => {
     const onNavigate = vi.fn();
     const user = userEvent.setup();
-    render(<Sidebar active="library" onNavigate={onNavigate} counts={{}} />);
+    render(<Sidebar active="library" onNavigate={onNavigate} counts={{}} hasLibrary={false} />);
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith("settings");
   });
 
   it("shows the Duplicates badge as a group count, not a copies count", () => {
-    render(<Sidebar active="library" onNavigate={vi.fn()} counts={{ duplicateGroups: 403 }} />);
+    render(<Sidebar active="library" onNavigate={vi.fn()} counts={{ duplicateGroups: 403 }} hasLibrary={false} />);
     const duplicates = screen.getByRole("button", { name: /Duplicates/ });
     expect(duplicates).toHaveTextContent("403");
     expect(duplicates.textContent).not.toMatch(/copies/i);
   });
 
   it("omits the badge rather than showing a fabricated 0 when the count is unknown", () => {
-    render(<Sidebar active="library" onNavigate={vi.fn()} counts={{}} />);
+    render(<Sidebar active="library" onNavigate={vi.fn()} counts={{}} hasLibrary={false} />);
     const duplicates = screen.getByRole("button", { name: /Duplicates/ });
     expect(duplicates.textContent).toBe("Duplicates");
   });

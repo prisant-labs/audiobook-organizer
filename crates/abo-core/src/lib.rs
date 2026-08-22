@@ -99,6 +99,7 @@ pub mod parse;
 pub mod paths;
 pub mod plan;
 pub mod reports;
+pub mod reveal;
 pub mod ruleset;
 pub mod scan;
 

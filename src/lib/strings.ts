@@ -23,6 +23,25 @@
 // copy register actually sanctions standalone.
 export const STRINGS = {
   appName: "Audiobook Organizer",
+  // Opening a folder in File Explorer (F-610, v0.6.0 P10).
+  //
+  // "Open" rather than "Reveal" or "Show in Explorer": the command is named
+  // reveal_in_folder because that is the OS convention, and the person clicking
+  // it is opening a folder. Engineering names do not reach a label (FD-48).
+  openFolder: {
+    open: "Open this folder",
+    // AC-50's two permanent links. They say WHICH folder, because the whole
+    // point of a permanent link is that it works when no row is selected.
+    library: "Open your library folder",
+    archive: "Open the Archive folder",
+    failed: "That folder could not be opened.",
+    // Distinct names because several of these sit inches apart, and a screen
+    // reader hearing "Open this folder" three times learns nothing.
+    openSource: "Open the folder this book is in now",
+    openTarget: "Open the folder this book would move to",
+    openCopy: "Open the folder this copy is in",
+  },
+
   sidebarFooterProvenance: "Everything stays on this computer.",
 
   // First-run / library root selection (F-909, design-system Sections 4-5:

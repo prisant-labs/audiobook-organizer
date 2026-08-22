@@ -1,5 +1,6 @@
 import type { PlanOpView } from "@/lib/bindings";
 import { STRINGS } from "@/lib/strings";
+import { OpenFolder } from "@/components/OpenFolder";
 
 export interface FileDetailsProps {
   op: PlanOpView;
@@ -17,9 +18,22 @@ export function FileDetails({ op }: FileDetailsProps) {
         {STRINGS.review.fileDetails}
       </summary>
       <div className="mt-1.5 space-y-2 rounded-md border border-border bg-surface-2 p-3">
-        <pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10.5px] leading-relaxed text-ink-2">
+        {/* AC-49: the affordance sits WHEREVER a path is displayed, and this
+            disclosure is the one sanctioned place a raw path appears on the
+            review surface (FD-13). Source and target get their own control,
+            because before a run only the source exists on disk and after one
+            only the target does; a single button would be wrong half the time. */}
+        <div className="flex items-start gap-2">
+        <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10.5px] leading-relaxed text-ink-2">
           {`${op.source_path}${op.target_path ? `\n  → ${op.target_path}` : ""}`}
         </pre>
+          <span className="flex flex-none flex-col gap-1 pt-0.5">
+            <OpenFolder path={op.source_path} label={STRINGS.openFolder.openSource} />
+            {op.target_path && (
+              <OpenFolder path={op.target_path} label={STRINGS.openFolder.openTarget} />
+            )}
+          </span>
+        </div>
         {op.matched_pattern && (
           <p className="text-ink-3">
             Matched pattern: <span className="text-ink-2">{op.matched_pattern.name}</span>{" "}
