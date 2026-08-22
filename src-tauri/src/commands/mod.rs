@@ -17,6 +17,7 @@ pub mod dupes;
 pub mod history;
 pub mod job;
 pub mod plan;
+pub mod reveal;
 pub mod rollback;
 pub mod ruleset;
 pub mod settings;

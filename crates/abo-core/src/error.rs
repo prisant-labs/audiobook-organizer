@@ -423,6 +423,27 @@ pub enum AppError {
     /// the undo file is self-contained by design (AC-11).
     #[error("could not read the record of past runs: {detail}")]
     HistoryUnavailable { detail: String },
+
+    // ---- Open-a-folder family (F-610, v0.6.0 P10) ----
+    /// The path handed to the open-a-folder command could not be PROVEN to sit
+    /// inside the library root or the Archive root, so it was refused (`AC-48`).
+    ///
+    /// One code covers two causes on purpose, because the gate gives one answer.
+    /// A path outside the sanctioned roots and a path that no longer resolves are
+    /// the same result from the gate's point of view: it cannot show that opening
+    /// this is allowed, so it does not. Failing closed is the point. Without this
+    /// refusal the command is a general "open any path on this machine"
+    /// primitive reachable from the web layer, which is exactly what `FD-29`'s
+    /// minimal-capability posture exists to prevent.
+    #[error("refused to open a path outside the library or the Archive: {path}")]
+    RevealRefused { path: String },
+
+    /// The path was allowed, and the OS file manager could not be started.
+    /// Distinct from [`RevealRefused`](AppError::RevealRefused) because the two
+    /// mean opposite things to a reader: one is the app declining, the other is
+    /// the app trying and the machine not cooperating.
+    #[error("could not open the file manager: {detail}")]
+    RevealFailed { detail: String },
 }
 
 impl AppError {
@@ -488,6 +509,8 @@ impl AppError {
             AppError::ReconcileFailed { .. } => "reconcile-failed",
             // History family
             AppError::HistoryUnavailable { .. } => "history-unavailable",
+            AppError::RevealRefused { .. } => "reveal-refused",
+            AppError::RevealFailed { .. } => "reveal-failed",
         }
     }
 
@@ -717,6 +740,12 @@ impl AppError {
             AppError::HistoryUnavailable { .. } => {
                 "The app could not read the record of your past runs. Your books and your                  undo files are untouched - only the app's own notes could not be read. Restart                  the app and try again."
             }
+            AppError::RevealRefused { .. } => {
+                "This app only opens folders inside your library or your Archive, and it                  could not confirm that this one is. It may also have been moved or renamed                  since the last scan. Scan again, then try opening it from the fresh result."
+            }
+            AppError::RevealFailed { .. } => {
+                "Windows did not open a folder window. Nothing in your library was changed.                  Try again, and if it keeps happening you can still reach the folder yourself                  in File Explorer."
+            }
         }
     }
 }
@@ -853,6 +882,15 @@ mod tests {
             // `one_of_each_really_is_one_of_each` below, which now makes a third
             // time impossible.
             AppError::InterruptionUnresolved,
+            // F-610 (P10). Added because `one_of_each_really_is_one_of_each`
+            // refused the build until they were, which is the mechanism working
+            // on its first genuinely new variants rather than on a rehearsal.
+            AppError::RevealRefused {
+                path: "E:/Elsewhere".into(),
+            },
+            AppError::RevealFailed {
+                detail: "no such binary".into(),
+            },
         ]
     }
 
