@@ -64,7 +64,33 @@ recorded in the P1 status note.
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
 | P8 | Long-path battle testing + release gate | AC-40, AC-41 | LLM (Opus) + Fable | Not started |
 | P9 | Library freshness: scan triggers + on-entry check (F-609) | AC-42..AC-46 | LLM (Sonnet) | **NEW 2026-08-05**, from the UI round 2 crit. Not started |
-| P10 | Open a folder in the OS file manager (F-610) | AC-47..AC-50 | LLM (Sonnet) | **NEW 2026-08-05**, from the UI round 2 crit. Not started |
+| P10 | Open a folder in the OS file manager (F-610) | AC-47..AC-50 | LLM (Sonnet) | **COMPLETE 2026-08-22.** All four criteria. `abo_core::reveal` owns the gate and the launch; two commands (`reveal_in_folder` by path, `reveal_root` by name); one `OpenFolder` component used on both path-bearing surfaces plus two permanent sidebar links. **The capability allowlist is unchanged** (`AC-47`): no `fs`, no `shell`, no new plugin. See the note below |
+
+
+**A note on `P10`, because two decisions in it are worth keeping.**
+
+**The gate lives in `abo_core`, not in the Tauri command.** `AC-48` requires the
+command to refuse any path outside the library or Archive roots, and that check
+is the only thing standing between a minimal-capability WebView and a general
+"open any path on this machine" primitive. Putting it in the command layer would
+make it true for exactly as long as the next caller remembered it, which is the
+shape `AC-12` was found in and the shape precondition 3 is still in. It is
+enforced in `abo_core::reveal::resolve_revealable`, which canonicalizes both
+sides and compares them component-wise, and it FAILS CLOSED: a path that cannot
+be resolved at all is refused for the same reason one outside the roots is.
+
+**The sidebar links send a root NAME, not a path.** The Archive root is usually
+absent from settings because the plan builder derives it, so a quick link that
+passed a path would have to reconstruct that derivation in TypeScript and would
+drift from the builder the first time it changed. `reveal_root(RevealRoot)` keeps
+the rule in one place and means no path crosses the IPC boundary for those two
+links at all.
+
+**Three security tests were each proved against the specific defect they guard**,
+by reintroducing it and watching only that test fail: a textual prefix check in
+place of a component-wise one (which every other test survives, which is exactly
+why the sibling-prefix case needed its own test), canonicalization removed from
+both sides, and canonicalization removed from the target alone.
 
 **Two phases added 2026-08-05** from jp's crit of the UI round 2 prototypes, both P1 and both descopable.
 

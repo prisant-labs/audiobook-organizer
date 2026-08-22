@@ -180,7 +180,12 @@ export function AppShell({ settings, onUpdate }: AppShellProps) {
     <div className="flex h-full min-h-0 flex-col">
       <Titlebar theme={theme} onThemeChange={onThemeChange} />
       <div className="grid min-h-0 flex-1 grid-cols-[212px_1fr]">
-        <Sidebar active={route} onNavigate={navigate} counts={counts} />
+        <Sidebar
+          active={route}
+          onNavigate={navigate}
+          counts={counts}
+          hasLibrary={Boolean(settings.library_root)}
+        />
         <ScreenContainer>
           {interruption.interruption ? (
             <InterruptionNotice

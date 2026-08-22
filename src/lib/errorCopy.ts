@@ -337,6 +337,32 @@ export const ERROR_COPY: Record<AppErrorCode, ErrorCopy> = {
     tone: "danger",
   },
 
+  // -- Opening a folder (v0.6.0 F-610) ---------------------------------------
+  // Two codes because they mean opposite things to a reader: the first is the
+  // app declining, the second is the app trying and Windows not cooperating.
+  // Neither is ever alarming, because opening a folder changes nothing: the
+  // copy says so rather than leaving the reader to infer it.
+  //
+  // "reveal-refused" covers both a path outside the sanctioned roots and a path
+  // that no longer resolves, because the backend gate gives one answer to both
+  // (it fails closed; see abo_core::reveal). The sentence therefore names the
+  // cause a person can actually act on - the folder moved - and the next step
+  // covers the other without accusing them of anything.
+  "reveal-refused": {
+    sentence: "That folder couldn't be opened.",
+    nextStep:
+      "It may have been moved or renamed since the last scan, and the app only opens folders inside your library or your Archive. Scan again, then try from the fresh result.",
+    retryable: false,
+    tone: "warn",
+  },
+  "reveal-failed": {
+    sentence: "Windows didn't open a folder window.",
+    nextStep:
+      "Nothing in your library was changed. Try again, and if it keeps happening you can still reach the folder yourself in File Explorer.",
+    retryable: true,
+    tone: "warn",
+  },
+
   // -- Picking up after an interruption (v0.6.0 F-606) ------------------------
   // The startup pass only READS your library to work out how far an interrupted
   // run got; it never moves anything. So the copy can promise, without

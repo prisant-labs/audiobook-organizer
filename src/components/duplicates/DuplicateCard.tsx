@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, CircleAlert, CircleCheck } from "lucide-react";
 import type { DuplicateGroupCard } from "@/lib/bindings";
 import { STRINGS } from "@/lib/strings";
+import { OpenFolder } from "@/components/OpenFolder";
 import { formatBytes } from "@/lib/format";
 import { UnverifiedArchiveConfirm } from "@/components/review/UnverifiedArchiveConfirm";
 
@@ -110,7 +111,13 @@ export function DuplicateCard({ group, onConfirm, onClear }: DuplicateCardProps)
                 <summary className="inline-flex cursor-pointer list-none items-center text-link">
                   {STRINGS.states.showFileDetails}
                 </summary>
-                <p className="mt-1 break-all font-mono text-meta text-ink-2">{copy.path}</p>
+                {/* AC-49. Per COPY rather than per group: the point of looking
+                    is to tell two copies of one book apart, and a single control
+                    on the group could only ever open one of them. */}
+                <p className="mt-1 flex items-start gap-2 break-all font-mono text-meta text-ink-2">
+                  <span className="min-w-0 flex-1">{copy.path}</span>
+                  <OpenFolder path={copy.path} label={STRINGS.openFolder.openCopy} />
+                </p>
               </details>
 
               <div className="mt-2">

@@ -160,6 +160,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::dupes::dupes_export_csv,
             commands::dupes::dupes_confirm,
             commands::dupes::dupes_clear_confirmation,
+            commands::reveal::reveal_in_folder,
+            commands::reveal::reveal_root,
             commands::job::job_status,
             commands::job::acknowledge_check,
             commands::job::job_pause,
