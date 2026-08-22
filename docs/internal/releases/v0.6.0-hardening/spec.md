@@ -226,7 +226,7 @@ Descope triggers for this release (pre-committed, from release plan Section 5):
 | F-703 (duplicate review + report) | P1 | breakdown E-07 F-703 | FD-08 (group canon), FD-10 (guarantee copy), FD-27 (sample data) |
 | F-704 (resolution policies) | P1 | breakdown E-07 F-704 | FD-08 (group canon), D-09 (quarantine-only) |
 | F-905 (duplicates surface) | P1 | breakdown E-09 F-905 | FD-04 (states), FD-08, FD-09 (danger token), FD-13 (disclosure) |
-| F-802 (ruleset import/export) | P1 | breakdown E-08 F-802 | D-01 (locked stack); OQ-2 (schema-version mismatch, model-inference) |
+| F-802 (ruleset import/export) | P1 | breakdown E-08 F-802 | D-01 (locked stack); ~~OQ-2~~ **answered as FD-50, no longer blocking** |
 | F-501 (everything view) | P1 | breakdown E-05 F-501 (redefined); release plan Section 4/5 | D-16 (cards + report primary), FD-06 (F-501 redefinition), FD-13 (tier-1 disclosure) |
 | Long-path battle testing | gate | release plan Section 4 v0.6.0 | FD-19 (Windows path reality) |
 
@@ -245,4 +245,4 @@ Descope triggers for this release (pre-committed, from release plan Section 5):
 ## Open Questions
 
 - OQ-1 **CLOSED 2026-08-06, moot.** Was: keep-higher-bitrate needs bitrate available per copy. Cutting the policy as F-1108 removed the question entirely; `keep-larger` captures the same preference using a number that cannot be missing. No longer blocks F-704. [F-1108]
-- OQ-2 Ruleset schema-version mismatch on import: additive-migrate vs reject-with-remediation. The 0.x additive-only-after-v1 policy (S2 versioning) suggests migrate-forward; confirm the pre-v1 posture allows a documented reset. [model-inference]
+- ~~OQ-2 Ruleset schema-version mismatch on import~~ **ANSWERED 2026-08-22 as `FD-50`: reject with a remediation message naming both versions; no automatic migration before v1.** Two corrections to the question as it was posed. The "additive-only after v1" rule it cited governs the SQLite schema, not the ruleset JSON, so that analogy was doing unearned work. And half of it was never a choice: a file NEWER than the app must always be rejected, or `AC-33` (never silently misparsed) and `AC-35` (a round-tripped ruleset reproduces a byte-identical plan) both break silently. The live question was only what to do with an OLDER file, and the answer is reject that too, because export does not exist yet so **no ruleset files exist to migrate**, and speculative conversion code that changes how books get organized would sit unexercised until the day it mattered. Migrate-forward is a v1 commitment; the check is written as a `match` so an arm slots in without restructuring. **`P6` is unblocked.** See the decision ledger.

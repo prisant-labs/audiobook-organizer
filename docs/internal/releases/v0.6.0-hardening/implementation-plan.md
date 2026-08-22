@@ -60,7 +60,7 @@ recorded in the P1 status note.
 | P3 | Resolution policies + dedupe as a campaign group | AC-23..AC-27 | LLM (Opus) | **Steps 1-2 MERGED 2026-08-15 (PR #34)**; **steps 3-4 done 2026-08-16**: confirmed resolutions emit ordinary Archive ops (`AC-25`) and the round-trip is proven byte-identical (`AC-27`). Scoped to FILE losers; see the note below. **Policies written against BOOKS, not files** (FD-44). `keep-higher-bitrate` cut per F-1108 |
 | P4 | Duplicate review + report (data + CSV, group canon) | AC-17..AC-22 | LLM (Sonnet) | **Engine done 2026-08-16** (`dupes/review.rs`): the group-first review model and the `AC-20` CSV. IPC payloads and writing the file into the Reports folder are **deliberately `P5`'s**; see the note below |
 | P5 | Duplicates surface (F-905) | AC-28..AC-31 | LLM (Sonnet) | **COMPLETE 2026-08-19/20**, in three open PRs: #41 (backend), #42 (the scale it is built on), #43 (the surface). `dupes_hash_verify` is the caller `P2`'s engine never had; the screen replaces the "coming soon" panel; `AC-13`'s control is wired at last. See the two notes below Phase 4 |
-| P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | Not started |
+| P6 | Ruleset import/export (F-802) | AC-32..AC-35 | LLM (Sonnet) | **UNBLOCKED 2026-08-22** (`OQ-2` answered as `FD-50`: reject a version mismatch with remediation, no migration before v1). Not started |
 | P7 | Everything view (F-501 redefined) | AC-36..AC-39 | LLM (Sonnet) | Not started |
 | P8 | Long-path battle testing + release gate | AC-40, AC-41 | LLM (Opus) + Fable | Not started |
 | P9 | Library freshness: scan triggers + on-entry check (F-609) | AC-42..AC-46 | LLM (Sonnet) | **NEW 2026-08-05**, from the UI round 2 crit. Not started |

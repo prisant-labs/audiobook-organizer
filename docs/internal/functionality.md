@@ -205,7 +205,7 @@ Every feature ID from the PRD registry (docs/internal/product-requirements.md Se
 | F-602 (journal + undo manifest) | Append-only journal; reversible manifest per apply job | v0.5.0 | BUILT | Journal-before-act; JSON manifest export so recovery survives a sick DB |
 | F-603 (rollback) | Full or partial undo from a manifest | v0.5.0 | BUILT | Rollback is just another plan through the same pipeline |
 | F-604 (post-apply verification) | Verify moved trees; refresh snapshot; report | v0.5.0 | BUILT | Discrepancies block further groups until acknowledged |
-| F-605 (set-aside / quarantine) | Move-not-delete holding area with provenance | v0.5.0 | BUILT | Named "Set Aside" on disk; "quarantine" stays internal-only vocabulary |
+| F-605 (set-aside / quarantine) | Move-not-delete holding area with provenance | v0.5.0 | BUILT | Named "Audiobook Archive" on disk (`FD-42`); "Archive" is the user-facing word and "quarantine" stays internal-only vocabulary |
 | F-606 (interruption safety + resume) | Crash/cancel mid-apply leaves a resumable state | v0.6.0 | SPEC-READY | At most one change in doubt, auto-reconciled on restart |
 | F-607 (dry-run harness) | Execute a plan against a virtual filesystem only | v0.5.0 | BUILT | Same executor code path against `MemFs` instead of `RealFs` |
 | F-608 (pause and resume apply) NEW | Pause an apply job between changes; resume | v0.5.0 | BUILT | Pause takes effect between operations only; journal unaffected |
