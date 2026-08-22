@@ -51,7 +51,7 @@ export interface UseDuplicates {
   savedTo: string | null;
   reload: () => void;
   check: () => Promise<void>;
-  stopCheck: () => void;
+  stopCheck: () => Promise<void>;
   confirm: (
     group: { group_key: string; method: string },
     keeperEntryId: number,
@@ -79,6 +79,17 @@ export function useDuplicates(scanId: number | null): UseDuplicates {
   // renders it, and a re-render between starting the job and the user pressing
   // Stop would be a needless hazard.
   const jobId = useRef<number | null>(null);
+
+  // `stopCheck` sets state after awaiting the cancel command, so it needs to
+  // know whether the screen is still there. Same guard `Library` keeps for the
+  // same reason on the same code path.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
   const dismissActionError = useCallback(() => setActionError(null), []);
@@ -176,12 +187,36 @@ export function useDuplicates(scanId: number | null): UseDuplicates {
     }
   }, [scanId]);
 
-  const stopCheck = useCallback(() => {
-    if (jobId.current === null) return;
+  // Stop, and then transition this screen's own state, because NOTHING ELSE
+  // WILL. `dupes_hash_verify` passes an empty `on_cancelled` to
+  // `run_job_to_terminal`, exactly as `scan_start` does, so a cancelled job
+  // marks its `jobs` row and emits no `job:completed` or `job:failed`. Without
+  // the three lines below, the progress bar and its Stop button stay on screen
+  // for a job that already stopped, and `check`'s own `jobId.current !== null`
+  // guard then refuses to start another one for the life of the mounted screen.
+  //
+  // `Library`'s `stopScan` carries this rule already: "the backend never emits a
+  // job:completed/failed event for a cancelled job, so this is the one place
+  // that transitions local state to the honest stopped outcome." That rule is a
+  // property of the shared job wrapper rather than of the scan, so it binds
+  // every caller of it, and this one was not honouring it.
+  const stopCheck = useCallback(async () => {
+    const id = jobId.current;
+    if (id === null) return;
     // The same cooperative Stop the scan uses: the flag registry is keyed by job
     // id and ids are unique across kinds, so one control serves both.
-    void commands.scanCancel(jobId.current);
-  }, []);
+    const stopped = await commands.scanCancel(id);
+    if (!mounted.current) return;
+    // `false` means there was no running job to signal, which means it already
+    // reached a terminal state and its own event has already done this work.
+    if (!stopped) return;
+    jobId.current = null;
+    setProgress(null);
+    // A cancelled pass KEEPS every hash it finished, which is why the job
+    // reports Cancelled rather than Failed. Those hashes only become visible on
+    // a re-read, so a Stop that skipped this would hide completed work.
+    reload();
+  }, [reload]);
 
   const confirm = useCallback<UseDuplicates["confirm"]>(
     async (group, keeperEntryId, loserEntryIds, unverifiedOverride) => {

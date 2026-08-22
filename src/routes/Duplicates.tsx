@@ -100,7 +100,7 @@ export function Duplicates({ scanId }: DuplicatesProps) {
           <ScanProgress
             done={progress.total === null ? undefined : progress.done}
             total={progress.total ?? undefined}
-            onStop={stopCheck}
+            onStop={() => void stopCheck()}
           />
           <p className="mt-2 text-meta text-ink-3">{S.checkingNote}</p>
         </div>
