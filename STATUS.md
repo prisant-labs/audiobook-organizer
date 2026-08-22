@@ -70,11 +70,21 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 
 ## In flight right now
 
-`main` is at `a49bdf5`, CI green. Seventeen pull requests have landed across 2026-08-15 to 2026-08-20 in four authorised batches: six, then four (`#31` to `#34`), then two (`#35`, `#36`), then five (`#40` to `#43` plus `#39`). The last three batches are recorded below, newest first.
+`main` is at `a1a73fc` plus this page's own merge commit, CI green, **zero open pull requests** (verified at the moment this sentence was written, 2026-08-21 evening, with the other four of its batch already landed). The page cannot name the commit that merges it, so it names the one it was written against and says so, rather than printing a number that is wrong by one the instant it lands. Twenty-two pull requests have landed across 2026-08-15 to 2026-08-21 in five authorised batches: six, then four (`#31` to `#34`), then two (`#35`, `#36`), then five (`#40` to `#43` plus `#39`), then five (`#44`, `#45`, `#47`, `#48` and this page). The last four batches are recorded below, newest first.
 
-**FIVE pull requests are open right now, all green, none merged.** Two are Dependabot's (`#44` lofty 0.25.0 to 0.25.1, `#45` a four-update JavaScript group), opened 2026-08-21. Three were authored on 2026-08-21 and are described in the section below: `#46` this page's own refresh, `#47` the nav-badge count divergence, `#48` a fix for Stop leaving the duplicates screen stuck. **None of them may be merged by an agent** (`EXECUTION.md` Section 6.2), and the 2026-08-20 authorisation does not reach them.
+### Merged 2026-08-21, fifth batch
 
-*(Corrected before this page was even merged. The paragraph above originally read "zero open pull requests", which was false when it was written: Dependabot had opened two an hour earlier. That is the same defect this very change was written to diagnose, committed by the change itself, and it is left visible here rather than quietly amended. The lesson holds harder for having recurred: **check the state at the moment you write the claim, not the moment you started the work.**)*
+Authorised by "merge green PRs". Verified before merging rather than after: all five were confirmed siblings of `a49bdf5` rather than stacked, checked for overlapping files (there were none), and then **merged together into a throwaway branch and put through the whole gate set** before any of them touched `main`. That simulation is the house rule, and it is what makes "all four checks green on each" mean something once they are combined: 723 Rust tests, 349 JS tests, clippy, fmt, the dash check, the ratchet and the vocabulary gate, all on the merged result with the bumped dependencies installed.
+
+| PR | What |
+|---|---|
+| [#44](https://github.com/prisant-labs/audiobook-organizer/pull/44) | Dependabot: lofty 0.25.0 to 0.25.1 |
+| [#45](https://github.com/prisant-labs/audiobook-organizer/pull/45) | Dependabot: a four-update JavaScript group, including vite 8.0.16 to 8.2.1 and vitest 4.1.9 to 4.1.11 |
+| [#47](https://github.com/prisant-labs/audiobook-organizer/pull/47) | **The nav badge counts something the Duplicates screen does not show.** Three tests pin it; the fix is deliberately not made, because which number is right is your call. Audit: [2026-08-21_nav-badge-count-divergence.md](docs/internal/audits/2026-08-21_nav-badge-count-divergence.md) |
+| [#48](https://github.com/prisant-labs/audiobook-organizer/pull/48) | **Stop on the duplicates screen left it stuck.** A real, reachable bug, fixed, with the nine hook tests the surface shipped without. Audit of the wider review: [2026-08-21_merged-prs-review.md](docs/internal/audits/2026-08-21_merged-prs-review.md) |
+| [#46](https://github.com/prisant-labs/audiobook-organizer/pull/46) | This page, merged last on purpose, so its state claims could be written after the other four landed rather than before |
+
+**Why this page was merged last, which is the whole lesson of the batch.** An earlier draft of the paragraph above said "zero open pull requests" while Dependabot had two open, and a later draft said "five pull requests are open right now", which the merge itself would have falsified. This page has now been wrong six times, and the cause is always the same shape: **a state claim written from the state at the moment work started, merged at a moment when that state had moved.** Both drafts are recorded here rather than quietly amended. The rule that follows is short: check the state at the moment you write the claim, and merge a documentation change after the code changes it describes, never before.
 
 ### Merged 2026-08-20, fourth batch
 
