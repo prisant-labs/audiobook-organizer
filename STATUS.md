@@ -70,7 +70,11 @@ Licence is now MIT (ratified with FD-38); the previous LICENSE file carried a "n
 
 ## In flight right now
 
-`main` is at `a49bdf5`, CI green, **zero open pull requests and zero local branches**. Seventeen have landed across 2026-08-15 to 2026-08-20 in four authorised batches: six, then four (`#31` to `#34`), then two (`#35`, `#36`), then five (`#40` to `#43` plus `#39`). The last three batches are recorded below, newest first.
+`main` is at `a49bdf5`, CI green. Seventeen pull requests have landed across 2026-08-15 to 2026-08-20 in four authorised batches: six, then four (`#31` to `#34`), then two (`#35`, `#36`), then five (`#40` to `#43` plus `#39`). The last three batches are recorded below, newest first.
+
+**FIVE pull requests are open right now, all green, none merged.** Two are Dependabot's (`#44` lofty 0.25.0 to 0.25.1, `#45` a four-update JavaScript group), opened 2026-08-21. Three were authored on 2026-08-21 and are described in the section below: `#46` this page's own refresh, `#47` the nav-badge count divergence, `#48` a fix for Stop leaving the duplicates screen stuck. **None of them may be merged by an agent** (`EXECUTION.md` Section 6.2), and the 2026-08-20 authorisation does not reach them.
+
+*(Corrected before this page was even merged. The paragraph above originally read "zero open pull requests", which was false when it was written: Dependabot had opened two an hour earlier. That is the same defect this very change was written to diagnose, committed by the change itself, and it is left visible here rather than quietly amended. The lesson holds harder for having recurred: **check the state at the moment you write the claim, not the moment you started the work.**)*
 
 ### Merged 2026-08-20, fourth batch
 
