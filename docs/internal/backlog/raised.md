@@ -78,10 +78,48 @@ See [`README.md`](README.md) for what belongs here.
   backticks are not double quotes, so a backticked token name trips it. Confirmed
   the hard way: a sentence written this session explaining that gap tripped the
   gate on the token name it cited as an example.
-- **Proposed shape:** sweep the five living documents only, in one reviewable
-  pass, roughly 59 instances. Leave the ledger and the shipped-release specs
-  alone, and say so in a line at the top of each so the next reader does not
-  re-raise it.
+- **The file-level classification above was too coarse, corrected 2026-08-21
+  after reading all 59.** "Sweep these five files" is still wrong, because the
+  instances inside a living document fall into six classes and only one of them
+  should move:
+  - **Defect against a ratified decision.** Two found, and both are FIXED rather
+    than left for the sweep, because they are wrong rather than merely dated. The
+    PRD's glossary row declared *"Set aside" is the user-facing term*, which
+    `FD-42` retired on 2026-08-05 in favour of **Archive**; a normative document
+    that teaches a retired word is quotable and does damage. And
+    `functionality.md` said the holding area is *named "Set Aside" on disk*, when
+    `QUARANTINE_DIRNAME` at `plan/builder.rs:145` is `"Audiobook Archive"`.
+  - **Engineering identifiers. DO NOT SWEEP.** `set-aside root` names the real
+    IPC field `AppSettings::set_aside_root`; the database column is
+    `quarantine_root`; `F-605 (set-aside / quarantine)` is a feature id. Renaming
+    these in prose would make the document WRONG about the code, which is worse
+    than dated.
+  - **Historical records. DO NOT SWEEP.** All three instances in
+    `executive-summary.md` sit under a dated banner that says outright "the text
+    below is preserved as a record of the pre-go state".
+  - **Quoted mentions of the retired term.** `architecture.md` line 271 reads
+    `FD-42, superseding FD-31's "Set Aside"`, which needs the old word to record
+    what was superseded.
+  - **The shelf metaphor and component.** Already out of scope by `FD-47`'s own
+    carve-out, exactly as in `design-system.md`: the shelf row, its rail, and the
+    bookshelf-edge visual are components, not the word for where books live.
+  - **Plain description of current behaviour, no identifier involved.** THIS is
+    the real sweepable set, and it is roughly 15 to 20 instances rather than 59.
+    Examples: "Non-audio clutter, set aside by default", "losers set aside, never
+    deleted", "the Stop control on both scan and tidy progress screens".
+- **Proposed shape, revised:** one reviewable pass over that last class only,
+  leaving the other five alone, plus a short note at the top of each touched file
+  recording the policy so the next reader does not re-raise it and cannot mistake
+  a deliberate non-edit for a miss. **Not started**: it is style conformance
+  across normative documents, which wants jp's eye rather than an agent's
+  judgement about his product vocabulary.
+- **One measurement discrepancy noticed in passing, not resolved.** The PRD
+  records the real library's exact duplicates as "403 groups (~10.08 GB)";
+  measuring the same scan on 2026-08-21 gave **406** groups. `STATUS.md`
+  separately records 293 candidates and 14.96 GB from the `FD-49` throughput
+  work, and 293 does match today's post-subsumption exact-group count exactly.
+  Three numbers, at least two of which describe different things without saying
+  which. Worth one pass to label each.
 
 ---
 
