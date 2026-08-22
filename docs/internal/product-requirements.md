@@ -106,7 +106,7 @@ Duplicates canonical unit (FD-08): the GROUP is one book with N identical copies
 | Plan | An immutable, versioned set of proposed changes from one scan plus one ruleset. |
 | Journal | Append-only record written during apply, one entry per executed change, flushed before the next change. |
 | Undo manifest | The completed journal in reverse-executable form; the rollback contract. |
-| Set aside (quarantine) | Move-not-delete holding area outside the library root. Nothing in v1 deletes audio. "Set aside" is the user-facing term; "quarantine" is internal only (a standing rule of the suite). |
+| Archive (quarantine) | Move-not-delete holding area outside the library root. Nothing in v1 deletes audio. **"Archive" is the user-facing term** (`FD-42`, 2026-08-05, which retired "Set Aside"); the folder on disk is named "Audiobook Archive"; "quarantine" is internal only (a standing rule of the suite), and the engineering identifiers it names (`set_aside_root`, `quarantine_root`, `QUARANTINE_DIRNAME`) deliberately did not move, because renaming those is a migration rather than a copy change. |
 | Ruleset | A named, persisted bundle of naming templates, structural policies, and cleanup toggles. |
 
 ## 5. Feature inventory (registry of record)
