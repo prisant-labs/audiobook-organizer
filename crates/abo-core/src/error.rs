@@ -847,7 +847,90 @@ mod tests {
             AppError::ReconcileFailed {
                 detail: "database is locked".into(),
             },
+            // Added 2026-08-21. It had been missing since the variant was
+            // introduced, which is the SECOND time this list has silently
+            // narrowed every test that iterates it. See
+            // `one_of_each_really_is_one_of_each` below, which now makes a third
+            // time impossible.
+            AppError::InterruptionUnresolved,
         ]
+    }
+
+    /// Every `AppError` variant appears in [`one_of_each`], proved from the
+    /// source rather than from memory.
+    ///
+    /// # Why this test exists rather than another comment asking for care
+    ///
+    /// `one_of_each` is a hand-maintained list, and five tests iterate it: the
+    /// code-shape check, the serde tag lock, the serde round trip, the
+    /// non-empty-remediation check, and the retired-vocabulary sweep over text a
+    /// user reads. A variant missing from the list is therefore not "one test
+    /// slightly weaker", it is five guarantees quietly not applying to that
+    /// variant, with every test still green.
+    ///
+    /// This has now happened twice. An adversarial review caught
+    /// `DuplicateVerifyFailed` missing; the response was to add it and write a
+    /// comment saying to keep the list in sync. `InterruptionUnresolved` was
+    /// missing anyway, found on 2026-08-21. **The fix was the instance, not the
+    /// class**, and a comment is not a mechanism: it asks the next author to
+    /// remember something the compiler is perfectly capable of noticing.
+    ///
+    /// So this reads the file's own source. `code()` is an exhaustive match with
+    /// no wildcard arm, which means the COMPILER already forces it to name every
+    /// variant: adding one without touching `code()` will not build. That makes
+    /// `code()` a trustworthy census of the enum, and comparing it against
+    /// `one_of_each` closes the gap for good. A source-reading test is an unusual
+    /// shape and is justified here by there being no reflection over enum
+    /// variants in Rust, and by the alternative having already failed twice.
+    #[test]
+    fn one_of_each_really_is_one_of_each() {
+        /// Variant names mentioned inside `src`, between the first occurrence of
+        /// `start` and the block terminator that follows it.
+        fn variants_in(src: &str, start: &str) -> std::collections::BTreeSet<String> {
+            let from = src.find(start).expect("anchor present in source");
+            let body = &src[from..];
+            let to = body
+                .find(
+                    "
+    }",
+                )
+                .expect("block terminator present");
+            let mut out = std::collections::BTreeSet::new();
+            let mut rest = &body[..to];
+            while let Some(i) = rest.find("AppError::") {
+                rest = &rest[i + "AppError::".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if !name.is_empty() {
+                    out.insert(name);
+                }
+            }
+            out
+        }
+
+        let src = include_str!("error.rs");
+        let declared = variants_in(src, "pub fn code(&self) -> &'static str {");
+        let listed = variants_in(src, "fn one_of_each() -> Vec<AppError> {");
+
+        assert!(
+            declared.len() > 40,
+            "sanity: the parse found only {} variants in code(), so the anchors moved              and this test is measuring nothing",
+            declared.len()
+        );
+
+        let missing: Vec<&String> = declared.difference(&listed).collect();
+        assert!(
+            missing.is_empty(),
+            "one_of_each() is missing {missing:?}. Five tests iterate that list, so each              missing variant is five guarantees silently not applying to it: the code shape              check, the serde tag lock, the serde round trip, non-empty remediation, and the              retired-vocabulary sweep over text a user reads. Add it to one_of_each()."
+        );
+
+        let unknown: Vec<&String> = listed.difference(&declared).collect();
+        assert!(
+            unknown.is_empty(),
+            "one_of_each() names {unknown:?}, which code() does not. Either the variant was              removed and this list was not, or the anchors this test parses have moved."
+        );
     }
 
     #[test]
