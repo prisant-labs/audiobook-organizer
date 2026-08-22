@@ -1,13 +1,87 @@
 ---
 title: "Backlog: raised, not yet scoped"
 type: backlog
-updated: 2026-08-05
+updated: 2026-08-21
 ---
 
 # Raised, not yet scoped
 
 Surfaced in review but nobody has decided anything about it. Newest first.
 See [`README.md`](README.md) for what belongs here.
+
+---
+
+## The single-writer lock does not know about verification jobs
+
+- **Raised:** 2026-08-21, reviewing the pull requests merged on 2026-08-20.
+- **The gap:** `F-601`'s single-writer lock counts `kind = 'apply'` only
+  (`crates/abo-core/src/exec/lock.rs:91`, `SELECT COUNT(*) FROM jobs WHERE kind =
+  'apply' AND state = 'running'`). That narrowness is deliberate and documented:
+  it stops a stranded scan job being mistaken for an apply lock. The side effect
+  is that **a duplicate verification job and an apply can run at the same time**,
+  over the same files, while the apply is moving them.
+- **What actually happens today:** probably nothing bad. The verification job
+  reads; a file moved out from under it produces a read error, which the job
+  already records as `hash_error` on that member rather than failing the pass.
+  The worst realistic outcome is a hash recorded against a path that no longer
+  holds that file, which a re-scan invalidates anyway because hashes hang off
+  per-scan member rows.
+- **Why it is still worth deciding:** "probably nothing bad" is an argument from
+  the current shape of two subsystems, and it is exactly the kind of argument
+  that stops being true when one of them changes. This is also the only remaining
+  concurrency question in a product whose whole promise is that it does not touch
+  a file it cannot put back.
+- **Three postures, and this is the decision:**
+  1. **Verification blocks and is blocked** - widen the lock to count both kinds.
+     Simplest, and it makes the invariant say what a reader assumes it says.
+     Costs: opening the duplicates screen during an apply would refuse rather
+     than degrade, and the reclaim path would need to learn the second kind.
+  2. **Apply cancels a running verification** - the apply is the operation the
+     user is waiting on, and a cancelled pass keeps every hash it finished, so
+     the cost of cancelling is genuinely low. More moving parts.
+  3. **Leave it, and write down why** - record the read-only argument above as
+     the reason, so the next reader does not rediscover it as a defect.
+- **Recommendation: 1**, on the grounds that a safety invariant should be
+  mechanical rather than a chain of reasoning about what two subsystems currently
+  do. It is also the smallest change of the three.
+- **Not started.** No code was written for this; the last session recorded it as
+  "mild, recorded rather than fixed" and that judgement is not being reversed
+  here without jp.
+
+---
+
+## The documentation vocabulary sweep is 375 instances, and mostly must NOT be swept
+
+- **Raised:** 2026-08-21, measuring the sweep that has been carried in session
+  logs as "~72 instances, mechanical, unblocked".
+- **The measurement:** **375** instances of the retired words
+  (`shel(f|ves|ved|ving)`, `tid(y|ies|ied|ying)`, `set...aside`) across **36
+  files** in `docs/internal/`. The "~72" figure is exactly the count in
+  `decision-ledger.md` alone.
+- **It is not mechanical, and a blind sweep would do damage.** Three classes:
+  - **PRESERVE, as historical record.** `decision-ledger.md` (72) and the specs
+    of shipped releases. `FD-02` records a decision about "scan and tidy" and
+    `FD-34` about "per-tidy-up provenance"; rewriting those falsifies the record
+    of what was decided when. A ledger that has been edited to use today's words
+    can no longer show that the words changed.
+  - **SKIP, as engineering identifiers.** Out of scope by `FD-48`'s own carve-out,
+    the same rule that spared `ensure_forward_tidying_allowed`.
+  - **SWEEP, as living description of the current product.** The candidates:
+    `functionality.md` (25), `product-requirements.md` (22), `architecture.md`
+    (6), `program-roadmap.md` (3), `executive-summary.md` (3).
+- **`design-system.md` (23) is already done and is not a candidate.** PR `#39`
+  swept its 34 vocabulary instances on 2026-08-20 and the remainder are the
+  legitimate ones: CSS token and class names, and the bookshelf-edge visual
+  metaphor. Verified independently 2026-08-21 rather than taken on trust.
+- **The CI gate cannot be extended to cover these** for the same reason `#39`
+  recorded: it strips double-quoted spans to tell a mention from a use, and
+  backticks are not double quotes, so a backticked token name trips it. Confirmed
+  the hard way: a sentence written this session explaining that gap tripped the
+  gate on the token name it cited as an example.
+- **Proposed shape:** sweep the five living documents only, in one reviewable
+  pass, roughly 59 instances. Leave the ledger and the shipped-release specs
+  alone, and say so in a line at the top of each so the next reader does not
+  re-raise it.
 
 ---
 
