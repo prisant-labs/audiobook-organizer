@@ -2,11 +2,11 @@
 title: "Review: the five pull requests merged on 2026-08-20, which nobody had read"
 type: audit
 date: 2026-08-21
-status: partial
+status: complete
 scope: "0c09c05..a49bdf5 (PRs #40, #41, #42, #43, #39): 33 files, 3,784 insertions"
 trigger: "Standing gap recorded in STATUS.md and every recent session log: five pull requests merged on instruction plus CI, and CI is not a review"
 owner: jprisant
-verdict: "One reachable UI defect, fixed in PR #48. One count divergence, recorded in PR #47. Four designs that looked dangerous and are correct. Coverage is PARTIAL and the unread list below is part of the finding."
+verdict: "Second pass closed the unread list. Total: two reachable defects fixed, one count divergence recorded for a decision, one design-conformance slip fixed, five designs that looked dangerous and are correct."
 ---
 
 # Review: the merged-but-unread pull requests
@@ -99,7 +99,89 @@ would both pass it. Currently prevented by the button being conditionally
 rendered on `!progress`, which is set synchronously before the await. Correct
 today, fragile: the guarantee lives in the JSX rather than in the guard.
 
-## Coverage: what was read, and what was NOT
+## Second pass, 2026-08-21 late evening: the unread list closed
+
+The first pass stopped two thirds of the way through and said so. This section
+is the rest of it. The list below was the unread list; it is now empty.
+
+### 3. `one_of_each()` was not one of each, for the second time (FIXED)
+
+`crates/abo-core/src/error.rs` keeps a hand-maintained `one_of_each()` helper,
+and **five tests iterate it**: the code-shape check, the serde tag lock, the
+serde round trip, the non-empty-remediation check, and the retired-vocabulary
+sweep over text a user reads. A variant missing from that list is not one test
+slightly weaker. It is five guarantees quietly not applying to that variant,
+with every test still green.
+
+**`AppError::InterruptionUnresolved` was missing.** It is declared at line 389,
+has a `code()` arm and a `remediation()` arm, and appeared nowhere in
+`one_of_each()`. Its remediation text is read by a user on the interruption
+recovery surface and nothing had ever swept it for retired vocabulary. The text
+is in fact clean, so this was a latent gap rather than a live copy defect, but
+the gap was total.
+
+**This is the second occurrence, and the first fix is why.** The helper carries a
+comment recording that an adversarial review once found `DuplicateVerifyFailed`
+missing, and warning that "a helper named 'one of each' that is not one of each
+is worse than no helper: callers trust the name." The response then was to add
+the missing variant and write that comment. **The fix was the instance, not the
+class**, and a comment is not a mechanism: it asks the next author to remember
+something a machine can check.
+
+The fix here adds the variant AND closes the class.
+`one_of_each_really_is_one_of_each` reads the file's own source, extracts the
+variant names from `code()` and from `one_of_each()`, and asserts the two sets
+match. `code()` is an exhaustive match with no wildcard arm, so the compiler
+already forces it to name every variant, which makes it a trustworthy census of
+the enum. A source-reading test is an unusual shape; it is justified by Rust
+having no reflection over enum variants, and by the alternative having failed
+twice.
+
+**Proved in both directions.** With the variant removed again, the new test fails
+with a message naming it, and **the other five tests all still pass**. That is
+the whole point: the gap was invisible precisely because nothing went red.
+
+### 4. Two ratified line boxes were overridden (FIXED)
+
+`design-system.md` 3.1a pairs every type step with a line box on the 4px grid,
+"so type and spacing compose". Two places set a step and then overrode its line
+box with `leading-relaxed`:
+
+| Where | Step | Ratified | Rendered |
+|---|---|---|---|
+| `PolicySelector.tsx:67` | `text-meta` 11px | 16px | 17.875px (`+1.875`) |
+| `Duplicates.tsx:170` | `text-lead` 15px | 24px | 24.375px (`+0.375`) |
+
+Those were the **only two** such overrides in the entire app, and both were in the
+three files that adopted the scale. The arbitrary-value ratchet cannot see this,
+because `leading-relaxed` is a standard utility rather than an arbitrary value;
+`design-system.md` 3.1b already notes that which standard step a component picks
+"is not yet enforced mechanically", and this is that gap showing up on the first
+three files to use the scale.
+
+Fixed by deleting both overrides, since the step already supplies the line box.
+**This changes rendered output**, though barely: the policy note's lines close up
+by 1.875px each, and the screen lede by 0.375px, which is invisible.
+
+### 5. The frontend already has the mechanism the Rust side lacked (no action)
+
+Worth recording as the contrast that makes finding 3 concrete rather than
+theoretical. `ERROR_COPY` is typed `Record<AppErrorCode, ErrorCopy>`, so a
+missing code is a **compile error**, and `errorCopy.test.ts` additionally asserts
+a three-way equality between the bindings union, `ALL_ERROR_CODES` and the table
+keys. All three new duplicate codes are present. The same completeness problem,
+solved by the type system on one side of the IPC boundary and by a comment
+asking for care on the other.
+
+### 6. The rest of the surface: read, nothing found
+
+`PolicySelector.tsx` in full (correct `useId()` group naming, which is the fix
+for a real bug a previous session caught by rendering the gallery),
+`Duplicates.tsx` in full, the new `strings.ts` and `errorCopy.ts` entries (plain
+register throughout, no jargon and no retired words), the three new `AppError`
+variants and their remediation text, `ipc.rs`, and `gallery/fixtures.ts`.
+
+## First pass coverage: what was read, and what was NOT
 
 **Read closely:** `migrations/0009`, `dupes/job.rs`, `db/dupes.rs` (the
 confirmation write and read paths), `commands/dupes.rs`, `hooks/useDuplicates.ts`,
@@ -108,7 +190,8 @@ confirmation write and read paths), `commands/dupes.rs`, `hooks/useDuplicates.ts
 `found_by_label`), `dupes/detect.rs`, `classify/metrics.rs`, `db/mod.rs` pool
 configuration, `DuplicateCard.tsx`'s two-step routing.
 
-**NOT read, and therefore NOT reviewed:**
+**NOT read in the first pass** (all of it has since been read in the second pass
+above, and this list is kept as the record of what partial coverage looked like):
 
 - `dupes/review.rs`'s remaining surface: the policy proposal path (`propose`),
   `display_name`, and the module's own test block.

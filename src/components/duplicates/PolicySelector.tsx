@@ -64,7 +64,7 @@ export function PolicySelector({ value, onChange }: PolicySelectorProps) {
           </label>
         ))}
       </div>
-      <p className="mt-2 max-w-prose text-meta leading-relaxed text-ink-3">{S.policyNote}</p>
+      <p className="mt-2 max-w-prose text-meta text-ink-3">{S.policyNote}</p>
     </fieldset>
   );
 }
