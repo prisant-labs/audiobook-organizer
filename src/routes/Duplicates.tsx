@@ -167,7 +167,7 @@ function Heading() {
       <h1 className="font-serif text-hero font-medium tracking-display text-ink text-balance">
         {S.heading}
       </h1>
-      <p className="mt-2 max-w-prose text-lead leading-relaxed text-ink-2 text-pretty">{S.lede}</p>
+      <p className="mt-2 max-w-prose text-lead text-ink-2 text-pretty">{S.lede}</p>
     </header>
   );
 }
