@@ -100,13 +100,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - `docs/internal/backlog/`: deferred, raised, and answered, with a README stating that
   nothing leaves the backlog by being forgotten. Created because "I will add it to the
   backlog" had been said when there was nowhere to add it.
-- `F-609` (library freshness): the age of the current scan on the library screen, five
-  explicit scan triggers, and a cheap change check when entering the Organize flow that
-  summarises what moved before the plan is built. Event-triggered by design; the app
-  never watches the filesystem.
-- `F-610` (open a folder in the OS file manager): a backend command that opens Explorer
-  at a path and refuses anything outside the library or archive roots. The web layer
-  still has no filesystem or shell access.
+- **You can open any folder the app shows you, in Windows Explorer.** Wherever the app
+  names a location - beside a book you are reviewing, beside a copy on the Duplicates
+  screen - there is now a way to open it, and two permanent links in the sidebar go
+  straight to your library and your Archive. The app opens folders in those two places
+  and nowhere else: a location it cannot prove belongs to one of them is refused,
+  including one that has stopped existing. That refusal lives in the engine rather than
+  in the button, so it holds no matter which part of the app asks next, and nothing
+  about what the app is allowed to reach on your machine had to change to make any of
+  this work.
 - The duplicates approach audit (`docs/internal/audits/`), which re-derives P2 through
   P5 against the shipped code and finds the specs sound for single-file books and
   silently narrow for multi-file ones.
@@ -156,6 +158,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Stopping a comparison left the screen stuck.** Pressing Stop while copies were being
+  checked did stop the work, and then left a progress bar and a Stop button on screen for
+  something that had already finished stopping. It also would not start another
+  comparison until you navigated away and came back. The cause: a job that is cancelled
+  records that it stopped without announcing it, so the screen sat waiting for a message
+  that was never coming. Stop now clears the screen and re-reads what finished, which
+  matters on its own, because a stopped comparison keeps every copy it had already
+  checked and that work used to stay invisible until something else caused a reload.
 - **The duplicate count no longer inflates for a book split across many files.**
   Two identical copies of a twelve-part book carry twelve identically named,
   identically sized parts, so each part was counted as its own set of copies: a
