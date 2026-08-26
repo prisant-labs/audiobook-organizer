@@ -49,7 +49,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::classify::{classify, health_metrics, inputs_from_snapshot, HealthMetrics, MetricUnit};
+use crate::classify::{
+    classify, inputs_from_snapshot, HealthMetrics, MetricUnit, DUPLICATE_CANDIDATE_GROUPS,
+};
 use crate::db::plans::PlanOpRow;
 use crate::error::AppError;
 use crate::scan::{get_scan_entries, run_scan};
@@ -504,7 +506,12 @@ async fn metrics_for_scan(pool: &SqlitePool, scan_id: i64) -> Result<HealthMetri
     let rows = get_scan_entries(pool, scan_id).await?;
     let inputs = inputs_from_snapshot(&rows);
     let classes = classify(&inputs);
-    Ok(health_metrics(&inputs, &classes))
+    // The book-aware variant, for the same reason `classify_overview` uses it:
+    // this report's "possible duplicate copies" line is read by the same person
+    // who read the nav badge, and two user-facing surfaces counting duplicates
+    // differently is the defect the badge fix exists to close, not a licence to
+    // reopen it somewhere quieter.
+    crate::classify::health_metrics_for_scan(pool, scan_id, &inputs, &classes).await
 }
 
 // ---- The after-the-fact check report artifact (F-1002) ---------------------
@@ -556,7 +563,7 @@ fn problem_label(id: &str) -> &str {
         "loose-root-books" => "loose books at the top level",
         "noisy-names" => "messy folder names",
         "deep-nesting" => "deeply nested folders",
-        "duplicate-candidate-groups" => "possible duplicate copies",
+        DUPLICATE_CANDIDATE_GROUPS => "possible duplicate copies",
         "empty-folders" => "empty folders",
         other => other,
     }

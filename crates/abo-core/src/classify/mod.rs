@@ -34,10 +34,13 @@ pub mod overview;
 pub mod run;
 
 pub use engine::{classify, ClassifyInput, Evidence, FolderClass, FolderClassification};
-pub use metrics::{health_metrics, ClassMetric, HealthMetrics, MetricUnit, ProblemMetric};
+pub use metrics::{
+    health_metrics, ClassMetric, HealthMetrics, MetricUnit, ProblemMetric,
+    DUPLICATE_CANDIDATE_GROUPS,
+};
 pub use multibook::{detect_multibook, BookFile, MultiBookVerdict};
 pub use overview::build_overview;
-pub use run::run_classify;
+pub use run::{health_metrics_for_scan, run_classify};
 
 use std::path::Path;
 

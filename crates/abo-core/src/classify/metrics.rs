@@ -88,6 +88,18 @@ pub struct ClassMetric {
     pub byte_total: u64,
 }
 
+/// The problem id for duplicate candidates, named once because two modules now
+/// have to agree on it.
+///
+/// [`health_metrics`] emits this metric from a cheap file-level bucketing, and
+/// [`crate::classify::health_metrics_for_scan`] REPLACES it with the count the
+/// Duplicates screen actually shows (books, not tracks). A string literal
+/// repeated at the producer and the replacer is a splice that silently stops
+/// happening the day either side is retyped, so both reach the id through this
+/// const and `the_duplicate_metric_is_emitted_under_the_shared_id` pins that
+/// [`health_metrics`] really does emit exactly one metric under it.
+pub const DUPLICATE_CANDIDATE_GROUPS: &str = "duplicate-candidate-groups";
+
 /// A per-problem metric, carrying its own explicit unit (FD-08). `count` is in
 /// the stated `unit`; `byte_total` is always bytes (0 where a size is not
 /// meaningful for the problem, e.g. deep nesting).
@@ -249,6 +261,15 @@ pub fn health_metrics(
 
     // Duplicate candidate groups: files sharing (basename, size), >= 2 members
     // (the Codex basename+size method; candidates only, FD-08 GROUP unit).
+    //
+    // This is a FILE-LEVEL count and it is NOT what any surface renders. It
+    // knows nothing about books, so a duplicated twelve-track audiobook counts
+    // twelve here where the Duplicates screen shows one card. Every user-facing
+    // caller goes through `health_metrics_for_scan`, which overwrites this
+    // metric with the real detector's book-aware count (see the audit at
+    // docs/internal/audits/2026-08-21_nav-badge-count-divergence.md). It stays
+    // computed here so this function remains pure and total over a snapshot
+    // alone, and so the fallback is a defensible over-count rather than a zero.
     let mut groups: HashMap<(String, u64), Vec<u64>> = HashMap::new();
     for e in entries {
         if e.kind == NodeKind::File {
@@ -288,7 +309,7 @@ pub fn health_metrics(
             byte_total: 0,
         },
         ProblemMetric {
-            problem: "duplicate-candidate-groups".to_string(),
+            problem: DUPLICATE_CANDIDATE_GROUPS.to_string(),
             unit: MetricUnit::Groups,
             count: dup_groups,
             byte_total: dup_bytes,
@@ -404,6 +425,30 @@ mod tests {
             );
         }
         assert_eq!(m.total_bytes, 315_000);
+    }
+
+    /// The splice in [`crate::classify::health_metrics_for_scan`] finds the
+    /// duplicate metric by [`DUPLICATE_CANDIDATE_GROUPS`] and replaces it. That
+    /// only works while this function emits EXACTLY ONE metric under that id, so
+    /// pin it here rather than trusting the two sides to stay spelled alike.
+    ///
+    /// Zero matches would make the splice a silent no-op, serving the file-level
+    /// track count the fix exists to remove. Two would make it order-dependent.
+    #[test]
+    fn the_duplicate_metric_is_emitted_under_the_shared_id() {
+        let entries = vec![folder(0, None, "Some Author - Some Book")];
+        let cs = classify(&entries);
+        let m = health_metrics(&entries, &cs);
+        let matches = m
+            .problems
+            .iter()
+            .filter(|p| p.problem == DUPLICATE_CANDIDATE_GROUPS)
+            .count();
+        assert_eq!(
+            matches, 1,
+            "health_metrics must emit exactly one {DUPLICATE_CANDIDATE_GROUPS} metric, \
+             or health_metrics_for_scan's replacement silently does nothing"
+        );
     }
 
     /// FD-08: every problem metric declares a unit, and byte totals are only
