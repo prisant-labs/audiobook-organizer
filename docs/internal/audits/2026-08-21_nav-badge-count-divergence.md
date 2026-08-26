@@ -213,6 +213,17 @@ before/after line for every problem metric, duplicates included, into a report a
 user opens. Fixing only the badge would have left that report quoting the track
 count, which is the same defect moved somewhere quieter.
 
+**Checked rather than asserted.** The claim that every user-facing duplicate
+count goes through the seam is only worth as much as the search behind it:
+
+```
+grep -rn "health_metrics(" crates/ src-tauri/ --include=*.rs | grep -v for_scan
+```
+
+returns the definition, one production call (inside `health_metrics_for_scan`
+itself), and nothing else outside `#[test]` modules and the integration tests.
+There is no production caller of the bare function left to drift.
+
 **Deliberately left alone:** `classify::overview::duplicate_copies_by_book_folder`,
 which answers "how many copies of THIS book" for the per-book chip on the Library
 home. It is a different question from "how many groups", it is already scoped to
