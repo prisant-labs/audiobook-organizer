@@ -158,6 +158,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Two series with the same name confused the library home.** A real library can
+  hold the same series in two places, and this one does. The home told itself
+  those two were one thing, which is the sort of mix-up that shows as a row
+  quietly missing or drawn twice after a re-scan. Each series is now tracked by
+  where it lives rather than by what it is called. Found by opening the app and
+  reading what it complained about, not by a test.
 - **The number beside Duplicates promised more books than the screen would show.**
   The badge counted duplicate files while the screen counts duplicate books, so a
   library with one twelve-part audiobook present twice offered twelve and then

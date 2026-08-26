@@ -6,6 +6,7 @@ import type { SeriesCluster } from "@/lib/bindings";
 afterEach(cleanup);
 
 const DRESDEN: SeriesCluster = {
+  entry_id: 30,
   name: "The Dresden Files",
   author: "Jim Butcher",
   book_count: 20,

@@ -42,7 +42,7 @@ export const OVERVIEW: LibraryOverview = {
       reason: { kind: "alert", text: "2 copies" },
     },
   ],
-  series: [{ name: "The Dresden Files", author: "Jim Butcher", book_count: 20 }],
+  series: [{ entry_id: 30, name: "The Dresden Files", author: "Jim Butcher", book_count: 20 }],
   good_news: {
     already_tidy_books: 582,
     series_shelved: 34,
@@ -62,6 +62,7 @@ export const OVERVIEW_TIDY: LibraryOverview = {
 export const GOOD_NEWS: GoodNews = OVERVIEW.good_news;
 
 export const SERIES: SeriesCluster = {
+  entry_id: 30,
   name: "The Dresden Files",
   author: "Jim Butcher",
   book_count: 20,
@@ -69,6 +70,7 @@ export const SERIES: SeriesCluster = {
 
 /** More books than MAX_SPINES_SHOWN (14), so the "not shown" caption renders. */
 export const SERIES_LONG: SeriesCluster = {
+  entry_id: 31,
   name: "Discworld",
   author: "Terry Pratchett",
   book_count: 41,

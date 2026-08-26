@@ -2166,8 +2166,21 @@ export type RulesetSummary = {
  *  never disappears from the shelf for want of a label); `book_count` is the
  *  number of book-like children the classifier folded into this container
  *  (`Evidence::book_children`).
+ * 
+ *  `entry_id` is the identity, and `name` is NOT: two different folders can
+ *  parse to the same series name, which is not a defect but an ordinary thing
+ *  a real library does. On jp's library two folders both parse to "Dune", and
+ *  because this struct used to carry no id the home keyed its list on `name`
+ *  and React logged "two children with the same key" five times per render,
+ *  where a duplicate key may omit or double a row. `BookExample` above already
+ *  carries `entry_id` for the same reason; this is the field it was missing.
  */
 export type SeriesCluster = {
+	/**
+	 *  The container folder's `entries.id`. Unique per cluster; the stable key
+	 *  for any list rendering these.
+	 */
+	entry_id: number,
 	name: string,
 	author: string | null,
 	book_count: number,

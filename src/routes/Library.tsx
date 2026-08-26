@@ -260,7 +260,7 @@ export function Library({ onNavigate, health, onRepickRoot }: LibraryProps) {
           subline={STRINGS.library.seriesSubline}
         >
           {overview.series.map((series) => (
-            <SpineCluster key={series.name} series={series} />
+            <SpineCluster key={series.entry_id} series={series} />
           ))}
         </ShelfSection>
       )}

@@ -52,7 +52,7 @@ const OVERVIEW: LibraryOverview = {
       reason: { kind: "warn", text: "loose file" },
     },
   ],
-  series: [{ name: "The Dresden Files", author: "Jim Butcher", book_count: 20 }],
+  series: [{ entry_id: 30, name: "The Dresden Files", author: "Jim Butcher", book_count: 20 }],
   good_news: {
     already_tidy_books: 582,
     series_shelved: 34,
@@ -129,6 +129,51 @@ describe("Library", () => {
 
     await user.click(screen.getByRole("button", { name: "Start organizing" }));
     expect(onNavigate).toHaveBeenCalledWith("organize");
+  });
+
+  // The defect this guards was found by running the app against jp's real
+  // library, not by a test: React logged "Encountered two children with the
+  // same key, `Dune`" five times per render, because two folders there parse
+  // to the same series name and the list was keyed on that name.
+  //
+  // WHAT THIS TEST ASSERTS, AND WHY IT IS THE CONSOLE AND NOT THE SCREEN.
+  // A first draft asserted the two clusters render. That draft PASSED with the
+  // key reverted to `series.name`, because React renders both children of a
+  // duplicate-keyed static list perfectly well: the key is a reconciliation
+  // identity, so the hazard is what happens across an UPDATE (a re-scan
+  // reordering the list, a cluster removed), not what paints on first mount.
+  // Asserting the render therefore proved nothing, and keeping it would have
+  // been a test that cannot fail dressed as a guard.
+  //
+  // So this asserts the thing actually observed in the running app: React
+  // saying, in its own words, that the behaviour is unsupported. The render
+  // assertions stay underneath as the promise the key exists to protect.
+  it("keys series on identity, not name, so two same-named series do not collide", () => {
+    const errors: unknown[][] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      errors.push(args);
+    });
+
+    const overview: LibraryOverview = {
+      ...OVERVIEW,
+      series: [
+        { entry_id: 40, name: "Dune", author: "Frank Herbert", book_count: 6 },
+        { entry_id: 41, name: "Dune", author: "Frank Herbert", book_count: 3 },
+      ],
+      good_news: { ...OVERVIEW.good_news, series_shelved: 2 },
+    };
+    render(<Library onNavigate={vi.fn()} health={health(overview)} />);
+    spy.mockRestore();
+
+    const duplicateKeyWarnings = errors.filter((args) =>
+      args.some((a) => typeof a === "string" && a.includes("same key")),
+    );
+    expect(duplicateKeyWarnings).toHaveLength(0);
+
+    // And the population is intact: the differing book counts prove both
+    // clusters rendered with their own data.
+    expect(screen.getByText(/6 books/)).toBeTruthy();
+    expect(screen.getByText(/3 books/)).toBeTruthy();
   });
 
   it("surfaces a retry control when the overview failed to load, and retry calls reload()", async () => {
