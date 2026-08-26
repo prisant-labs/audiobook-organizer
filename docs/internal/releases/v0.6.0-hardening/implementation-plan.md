@@ -365,7 +365,9 @@ Suggested Owner: LLM (Sonnet) - mechanical, table/serde-driven.
 
 **A second lesson about tests, from the same commit.** The selector's first version hardcoded the radios' `name`, so two instances formed one native radio group and the browser drew both unselected. The obvious regression test PASSED WITH THE BUG IN, because React sets `checked` as a controlled property and jsdom never applies native radio grouping. The test now asserts the mechanism (distinct `name` per instance), which is observable and does fail when the fix is removed. **Assert the fix, not the symptom, when the symptom is only visible in a real browser.**
 
-**Still owed for `P5`:** `AC-29`'s nav badge already reads the group count from `LibraryOverview` and needs a look once a real scan has duplicates in it, and a headed walkthrough of the whole flow. Those are the remainder rather than the phase.
+**Still owed for `P5`:** `AC-29`'s nav badge reads the group count from `LibraryOverview` and needs a look once a real scan has duplicates in it, and a headed walkthrough of the whole flow. Those are the remainder rather than the phase.
+
+**`AC-29` correction, 2026-08-25.** The sentence above said the badge "already reads the group count", and it did not: it read a FILE-level count that had never been checked against the screen. An audit measured 406 against 300 on the real library; `classify::health_metrics_for_scan` now makes the badge, the Library home and the after-the-fact check report quote `dupes::detect` rather than each paraphrasing it. The repair deliberately did NOT follow the audit's own recommendation of teaching the health-metrics path the book extraction, because that builds a SECOND book-aware counter and one rule with two implementations is the defect being fixed. Detail: [nav badge audit](../../audits/2026-08-21_nav-badge-count-divergence.md).
 
 ### Scale proposal, 2026-08-19: ordered BEFORE P5, and why that is a measurement rather than a preference
 

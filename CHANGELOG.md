@@ -158,6 +158,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **The number beside Duplicates promised more books than the screen would show.**
+  The badge counted duplicate files while the screen counts duplicate books, so a
+  library with one twelve-part audiobook present twice offered twelve and then
+  listed one. On a real library of 14,080 files in 719 folders the badge read 406
+  beside a screen listing 300. The badge, the library home's own duplicate line, and the
+  after-the-fact check report now all read the same count from the same place, so
+  the number you click is the number you get. The third of those was going to keep
+  printing the old figure into a report you can open, which is why the repair was
+  not simply a change to the badge.
 - **Stopping a comparison left the screen stuck.** Pressing Stop while copies were being
   checked did stop the work, and then left a progress bar and a Stop button on screen for
   something that had already finished stopping. It also would not start another

@@ -272,7 +272,17 @@ pub async fn classify_overview(
     let rows = abo_core::scan::get_scan_entries(&state.pool, scan_id).await?;
     let inputs = abo_core::classify::inputs_from_snapshot(&rows);
     let classifications = abo_core::classify::run_classify(&state.pool, &inputs).await?;
-    let metrics = abo_core::classify::health_metrics(&inputs, &classifications);
+    // `health_metrics_for_scan`, never bare `health_metrics`: the bare one counts
+    // duplicate TRACKS, and this payload feeds both the Duplicates nav badge and
+    // the Library home's own duplicate line, which must promise what the
+    // Duplicates screen lists (AC-18, AC-29, FD-08).
+    let metrics = abo_core::classify::health_metrics_for_scan(
+        &state.pool,
+        scan_id,
+        &inputs,
+        &classifications,
+    )
+    .await?;
     Ok(Some(abo_core::classify::build_overview(
         scan_id,
         &inputs,

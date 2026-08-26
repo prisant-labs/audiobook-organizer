@@ -22,6 +22,7 @@
 use sqlx::SqlitePool;
 
 use crate::classify::engine::{classify, ClassifyInput, FolderClassification};
+use crate::classify::metrics::{health_metrics, HealthMetrics, DUPLICATE_CANDIDATE_GROUPS};
 use crate::db::activity::{append_activity, json_object, ActivityOutcome};
 use crate::error::AppError;
 
@@ -38,6 +39,78 @@ pub async fn run_classify(
     append_activity(pool, "classify", &params, &outcome).await;
 
     result
+}
+
+/// The F-202 health metrics for one persisted scan, counting duplicates the way
+/// the Duplicates screen counts them (`AC-18`, `AC-29`, `FD-08`).
+///
+/// # Why this exists rather than a book-aware `health_metrics`
+///
+/// [`health_metrics`] answers "how many duplicate groups" by bucketing files on
+/// `(basename, size)`. `dupes::detect` answers the same question by ALSO
+/// grouping duplicated book folders and then marking the per-track groups those
+/// folders already cover as subsumed. On jp's library the first says 406 and the
+/// second says 300, so the nav badge promised 406 things and the screen listed
+/// 300 (the audit at
+/// `docs/internal/audits/2026-08-21_nav-badge-count-divergence.md`).
+///
+/// The audit proposed teaching [`health_metrics`] the book extraction. That
+/// would have produced a SECOND book-aware duplicate counter, which is the
+/// disease rather than the cure: this repository has now been bitten three times
+/// by one rule with two implementations checked against each other instead of
+/// against the world (`AC-12`'s gate as a convention, `P2`'s engine reachable
+/// from nothing, and this). `detected_duplicates_for_scan`'s own doc comment
+/// already says a second copy of the pipeline "is the shape that has already
+/// drifted twice in this repository."
+///
+/// So there is exactly one implementation of "a duplicate group is a book", it
+/// lives in `dupes::detect`, and this function makes the health metrics quote it
+/// instead of paraphrasing it. Everything user-facing that carries a duplicate
+/// count comes through here: the Duplicates nav badge and the Library home (via
+/// `classify_overview` and [`crate::classify::build_overview`], which reads the
+/// spliced metric), and the after-the-fact check report's before/after delta
+/// (via `exec::verify`).
+///
+/// # Cost
+///
+/// One extra snapshot read and one detection pass per call, on a surface whose
+/// own contract is that it re-derives on every call and never caches. Measured
+/// scale is 14,799 entries, and the same detection already runs on demand for
+/// the screen. The freshness guarantee (`AC-7`: every count read at render time)
+/// is worth more than the read.
+pub async fn health_metrics_for_scan(
+    pool: &SqlitePool,
+    scan_id: i64,
+    entries: &[ClassifyInput],
+    classifications: &[FolderClassification],
+) -> Result<HealthMetrics, AppError> {
+    let mut metrics = health_metrics(entries, classifications);
+
+    let (groups, _books) = crate::plan::query::detected_duplicates_for_scan(pool, scan_id).await?;
+    let (count, byte_total) = groups
+        .iter()
+        .filter(|g| g.is_duplicate_candidate())
+        .fold((0u64, 0u64), |(n, b), g| (n + 1, b + g.total_bytes));
+
+    // `health_metrics` always emits this metric, and a test pins that, so a
+    // miss here means the id was retyped on one side. Fail loudly in debug
+    // rather than quietly serving the file-level count the splice was meant to
+    // replace: a silent no-op would restore the exact defect being fixed.
+    let replaced = metrics
+        .problems
+        .iter_mut()
+        .filter(|p| p.problem == DUPLICATE_CANDIDATE_GROUPS)
+        .map(|p| {
+            p.count = count;
+            p.byte_total = byte_total;
+        })
+        .count();
+    debug_assert_eq!(
+        replaced, 1,
+        "expected exactly one {DUPLICATE_CANDIDATE_GROUPS} metric to replace, found {replaced}"
+    );
+
+    Ok(metrics)
 }
 
 #[cfg(test)]

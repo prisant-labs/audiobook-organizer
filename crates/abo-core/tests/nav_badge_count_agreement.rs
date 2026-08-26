@@ -1,214 +1,225 @@
 //! Does the Duplicates nav badge count the same thing the Duplicates screen shows?
 //!
-//! It does not, and this file is the proof.
+//! It does now, and this file is the proof. It used to be the proof of the
+//! opposite.
 //!
-//! # Why anyone should care
+//! # What was wrong
 //!
 //! `AC-29` (v0.6.0 hardening) puts a count on the Duplicates nav item. A person
 //! reads that number, clicks it, and expects to find that many things. Two
-//! separate implementations of "a duplicate group" feed the two halves of that
-//! sentence, and they are not the same implementation:
+//! separate implementations of "a duplicate group" fed the two halves of that
+//! sentence:
 //!
-//!   * **The badge** reads `health_metrics`'s `duplicate-candidate-groups`
-//!     (`classify/metrics.rs`), which buckets FILES by `(basename, size)` and
-//!     counts every bucket holding two or more. It knows nothing about books.
-//!   * **The screen** reads `dupes::review`, built on `detect_duplicates`
-//!     (`dupes/detect.rs`), which additionally groups duplicated BOOK FOLDERS
-//!     and then marks the per-track file groups those folders already cover as
-//!     `subsumed_by_book_group`. A subsumed group is not a candidate, and the
-//!     review drops it.
+//!   * **The badge** read `health_metrics`'s duplicate metric
+//!     (`classify/metrics.rs`), which buckets FILES by `(basename, size)`. It
+//!     knows nothing about books.
+//!   * **The screen** reads `dupes::review`, built on `detect_duplicates`, which
+//!     ALSO groups duplicated BOOK FOLDERS and then marks the per-track groups
+//!     those folders already cover as `subsumed_by_book_group`.
 //!
-//! So the moment a whole book is duplicated, the badge counts one group per
-//! TRACK while the screen shows one card per BOOK. A twelve-file audiobook that
-//! exists twice is `12` to the badge and `1` to the screen.
+//! So a twelve-file audiobook present twice was `12` to the badge and `1` to the
+//! screen. On jp's real library that was 406 against 300, measured and
+//! reconciled exactly in
+//! `docs/internal/audits/2026-08-21_nav-badge-count-divergence.md`.
 //!
-//! # Why this is not just a rounding difference
+//! # What the fix was, and what it deliberately was NOT
 //!
-//! `review.rs` already carries a test named
-//! `a_subsumed_group_is_excluded_just_as_the_copies_card_excludes_it`, whose own
-//! comment says: "The review must count the same population the Copies card
-//! counts, or the export and the screen disagree, which is exactly what `AC-20`
-//! forbids." That rule was enforced between the review, the export and the
-//! Copies card. The nav badge is a FOURTH counter that arrived later, from a
-//! different module, and nothing checked it against that rule.
+//! The audit offered making `health_metrics` book-aware. That would have built a
+//! SECOND book-aware duplicate counter, which is the disease and not the cure:
+//! the divergence existed because one rule had two implementations checked
+//! against each other rather than against the world.
 //!
-//! `useNavCounts.ts` documents a guarantee it really does provide: the badge and
-//! the Library home cannot disagree, because `AppShell` makes one
-//! `useHealthMetrics()` call and feeds both. That guarantee is about the badge
-//! versus the HOME. It says nothing about the badge versus the DUPLICATES
-//! SCREEN, and the two are computed from different code.
+//! Instead there is still exactly ONE implementation of "a duplicate group is a
+//! book", in `dupes::detect`, and `classify::health_metrics_for_scan` makes the
+//! health metrics QUOTE it rather than paraphrase it. `health_metrics` itself is
+//! unchanged and still counts tracks, which
+//! `the_pure_metric_still_counts_tracks_which_is_what_makes_the_seam_the_fix`
+//! below asserts on purpose: it proves the agreement comes from the seam, so
+//! nobody can "simplify" a caller back onto the bare function and quietly
+//! restore the defect.
 //!
-//! # Status
+//! # Why these tests go through the real entry points
 //!
-//! Recorded, NOT fixed. The fix is a product decision rather than a bug with one
-//! obvious repair, because the two numbers are each defensible for their own
-//! surface, and picking one changes what a user sees:
-//!
-//!   * Make the badge book-aware, so it matches the screen. Costs the badge the
-//!     book-folder extraction that `detect_duplicates` needs, on a path whose
-//!     comment advertises that it "re-derives on every call".
-//!   * Leave the badge as a cheap file-level heuristic and change what it is
-//!     called, so it stops implying "things you will find on that screen".
-//!
-//! These tests therefore assert the CURRENT behaviour and are written to FAIL
-//! loudly if anyone changes it, so the divergence cannot be closed by accident
-//! or widened in silence. See `docs/internal/audits/` for the write-up.
+//! Both sides are read the way the product reads them - the badge through
+//! `health_metrics_for_scan` (what `classify_overview` serves to `navCountsFrom`)
+//! and the screen through `review_for_scan(..).group_count()` (`AC-18`'s headline
+//! number). A test that re-implemented either side would be a fifth counter, and
+//! counting a thing a fifth way is how this started.
 
-use abo_core::classify::classify;
-use abo_core::classify::health_metrics;
-use abo_core::dupes::book_folders_from_plan_nodes;
-use abo_core::dupes::detect::{detect_duplicates, dupe_entries_from_plan_nodes};
-use abo_core::parse::extract::{extract, EntryInput, NodeKind};
-use abo_core::plan::builder::{classify_inputs_from_plan_nodes, PlanNode};
-use abo_core::scan::typing::classify_path;
-
-/// One audiobook folder holding `track_count` numbered mp3s, rooted at `path`.
-///
-/// Both copies of a duplicated book get identical track names AND identical
-/// track sizes, which is what makes them duplicates under the `(basename, size)`
-/// key both pipelines start from.
-fn book(nodes: &mut Vec<PlanNode>, next_id: &mut usize, path: &str, name: &str, tracks: usize) {
-    let folder_id = *next_id;
-    *next_id += 1;
-    nodes.push(PlanNode {
-        id: folder_id,
-        parent: None,
-        name: name.to_string(),
-        path: format!("{path}/{name}"),
-        kind: NodeKind::Folder,
-        file_class: None,
-        size: 0,
-    });
-
-    for t in 1..=tracks {
-        let track_name = format!("{t:02}.mp3");
-        let id = *next_id;
-        *next_id += 1;
-        nodes.push(PlanNode {
-            id,
-            parent: Some(folder_id),
-            name: track_name.clone(),
-            // Deterministic per-track size, identical across both copies.
-            size: 1_000_000 + (t as u64) * 1_000,
-            path: format!("{path}/{name}/{track_name}"),
-            file_class: Some(classify_path(std::path::Path::new(&track_name))),
-            kind: NodeKind::File,
-        });
-    }
-}
+use abo_core::classify::{
+    classify, health_metrics, health_metrics_for_scan, inputs_from_snapshot,
+    DUPLICATE_CANDIDATE_GROUPS,
+};
+use abo_core::db::open_db;
+use abo_core::dupes::{review_for_scan, ResolutionPolicy};
+use abo_core::scan::{get_scan_entries, run_scan};
+use sqlx::SqlitePool;
+use tempfile::TempDir;
 
 /// A library holding exactly ONE book, present twice, with `tracks` files each.
-fn library_with_one_duplicated_book(tracks: usize) -> Vec<PlanNode> {
-    let mut nodes = Vec::new();
-    let mut next_id = 0usize;
-    book(
-        &mut nodes,
-        &mut next_id,
-        "library/Andy Weir",
-        "Project Hail Mary",
-        tracks,
-    );
-    book(
-        &mut nodes,
-        &mut next_id,
-        "library/_incoming",
-        "Project Hail Mary",
-        tracks,
-    );
-    nodes
+///
+/// Both copies get identical track names AND identical track sizes, which is
+/// what makes them duplicates under the `(basename, size)` key both pipelines
+/// start from. Sizes stay small deliberately: detection keys on the size value,
+/// never on it being large, so a kilobyte proves the same thing a megabyte would
+/// and does not make the 40-track case write 80 MB.
+fn library_with_one_duplicated_book(tracks: usize) -> TempDir {
+    let lib = TempDir::new().expect("library tempdir");
+    for shelf in ["Andy Weir", "_incoming"] {
+        let dir = lib.path().join(shelf).join("Project Hail Mary");
+        std::fs::create_dir_all(&dir).expect("create book folder");
+        for t in 1..=tracks {
+            // Deterministic per-track size, identical across both copies.
+            let body = vec![b'x'; 1_024 + t * 16];
+            std::fs::write(dir.join(format!("{t:02}.mp3")), &body).expect("write track");
+        }
+    }
+    lib
 }
 
-/// What the nav badge would render: `health_metrics`'s group count.
-fn badge_count(nodes: &[PlanNode]) -> u64 {
-    let inputs = classify_inputs_from_plan_nodes(nodes);
+async fn scan_of(lib: &TempDir) -> (TempDir, SqlitePool, i64) {
+    let db = TempDir::new().expect("db tempdir");
+    let (pool, _) = open_db(db.path()).await.expect("open_db");
+    let summary = run_scan(&pool, lib.path()).await.expect("scan the library");
+    (db, pool, summary.scan_id)
+}
+
+/// What the nav badge renders: the duplicate metric out of the SAME payload
+/// `classify_overview` hands `navCountsFrom` (and the Library home).
+async fn badge_count(pool: &SqlitePool, scan_id: i64) -> u64 {
+    let rows = get_scan_entries(pool, scan_id).await.expect("snapshot");
+    let inputs = inputs_from_snapshot(&rows);
     let cs = classify(&inputs);
-    let m = health_metrics(&inputs, &cs);
+    let m = health_metrics_for_scan(pool, scan_id, &inputs, &cs)
+        .await
+        .expect("health metrics for the scan");
     m.problems
         .iter()
-        .find(|p| p.problem == "duplicate-candidate-groups")
-        .expect("the duplicate-candidate-groups metric is always emitted")
+        .find(|p| p.problem == DUPLICATE_CANDIDATE_GROUPS)
+        .expect("the duplicate metric is always emitted")
         .count
 }
 
-/// What the Duplicates screen would list: candidate groups after subsumption.
-fn screen_count(nodes: &[PlanNode]) -> usize {
-    let entry_inputs: Vec<EntryInput> = nodes
-        .iter()
-        .map(|n| EntryInput {
-            id: n.id,
-            parent: n.parent,
-            name: n.name.clone(),
-            kind: n.kind,
-        })
-        .collect();
-    let merged = extract(&entry_inputs);
-    let dupe_entries = dupe_entries_from_plan_nodes(nodes, &merged);
-    let books = book_folders_from_plan_nodes(nodes, &merged);
-    detect_duplicates(&dupe_entries, &books)
-        .iter()
-        .filter(|g| g.is_duplicate_candidate())
-        .count()
+/// What the Duplicates screen lists: `AC-18`'s headline group count, read
+/// through the same function the surface calls.
+async fn screen_count(pool: &SqlitePool, scan_id: i64) -> usize {
+    review_for_scan(
+        pool,
+        scan_id,
+        std::path::MAIN_SEPARATOR,
+        ResolutionPolicy::FlagOnly,
+    )
+    .await
+    .expect("the duplicates review")
+    .group_count()
 }
 
-/// The headline. One duplicated twelve-track book: the badge says twelve, the
-/// screen shows one.
-#[test]
-fn the_badge_counts_tracks_where_the_screen_counts_books() {
-    let nodes = library_with_one_duplicated_book(12);
+/// The headline, inverted from what it used to assert. One duplicated
+/// twelve-track book is ONE duplicated book on both surfaces.
+#[tokio::test]
+async fn the_badge_counts_books_just_as_the_screen_does() {
+    let lib = library_with_one_duplicated_book(12);
+    let (_db, pool, scan_id) = scan_of(&lib).await;
 
-    let badge = badge_count(&nodes);
-    let screen = screen_count(&nodes);
+    let badge = badge_count(&pool, scan_id).await;
+    let screen = screen_count(&pool, scan_id).await;
 
-    assert_eq!(
-        badge, 12,
-        "the badge buckets by (basename, size), so each duplicated track is its own group"
-    );
     assert_eq!(
         screen, 1,
-        "the screen collapses those tracks into the one duplicated book that covers them"
+        "the screen collapses twelve duplicated tracks into the one duplicated book"
     );
-    assert_ne!(
+    assert_eq!(
         badge as usize, screen,
-        "RECORDED DIVERGENCE: if this now passes as equal, the two counters were \
-         reconciled and this file should be deleted rather than repaired"
+        "AC-29: the number beside Duplicates is a promise about the Duplicates screen"
     );
 }
 
-/// The gap grows linearly with track count, so it is worst on exactly the books
-/// most likely to be duplicated: long, many-file, unabridged rips.
-#[test]
-fn the_gap_widens_with_every_extra_track() {
+/// The old divergence grew linearly with track count, so it was worst on exactly
+/// the books most likely to be duplicated: long, many-file, unabridged rips.
+/// Checked at the same four widths the divergence was checked at.
+#[tokio::test]
+async fn the_count_no_longer_widens_with_every_extra_track() {
     for tracks in [2usize, 5, 12, 40] {
-        let nodes = library_with_one_duplicated_book(tracks);
+        let lib = library_with_one_duplicated_book(tracks);
+        let (_db, pool, scan_id) = scan_of(&lib).await;
+
+        let badge = badge_count(&pool, scan_id).await;
+        let screen = screen_count(&pool, scan_id).await;
+
         assert_eq!(
-            badge_count(&nodes) as usize,
-            tracks,
-            "badge counts one group per duplicated track ({tracks} tracks)"
+            screen, 1,
+            "still the single duplicated book at {tracks} tracks"
         );
         assert_eq!(
-            screen_count(&nodes),
-            1,
-            "the screen still shows the single duplicated book ({tracks} tracks)"
+            badge as usize, screen,
+            "the badge must not grow with track count ({tracks} tracks)"
         );
     }
 }
 
-/// The control case, which is what makes the divergence attributable to
-/// subsumption rather than to the two pipelines simply disagreeing everywhere.
+/// The control, kept from the divergence file because it is what makes the
+/// agreement attributable.
 ///
 /// Two SINGLE-FILE books that duplicate each other have no book-level group to
-/// subsume them, so both counters land on the same number. The badge is not
-/// wrong in general; it is wrong exactly where a book spans more than one file.
-#[test]
-fn single_file_duplicates_agree_which_isolates_the_cause() {
-    let mut nodes = Vec::new();
-    let mut next_id = 0usize;
-    book(&mut nodes, &mut next_id, "library/Andy Weir", "Artemis", 1);
-    book(&mut nodes, &mut next_id, "library/_incoming", "Artemis", 1);
+/// subsume them, so both counters landed on the same number even before the fix.
+/// It must still agree afterwards: a "fix" that moved this one would have
+/// changed what a duplicate IS rather than how it is counted. Both sides are 1,
+/// never 0, so this cannot pass by both counters finding nothing.
+#[tokio::test]
+async fn single_file_duplicates_still_agree_which_isolates_the_cause() {
+    let lib = TempDir::new().expect("library tempdir");
+    for shelf in ["Andy Weir", "_incoming"] {
+        let dir = lib.path().join(shelf);
+        std::fs::create_dir_all(&dir).expect("create shelf");
+        std::fs::write(dir.join("Artemis.m4b"), vec![b'x'; 2_048]).expect("write book");
+    }
+    let (_db, pool, scan_id) = scan_of(&lib).await;
+
+    let badge = badge_count(&pool, scan_id).await;
+    let screen = screen_count(&pool, scan_id).await;
+
+    assert_eq!(screen, 1, "one duplicated single-file book");
+    assert_eq!(
+        badge as usize, screen,
+        "with one file per book there is nothing to subsume, so the counters agree"
+    );
+}
+
+/// The seam is what does the work, and this is the assertion that says so.
+///
+/// `health_metrics` is UNCHANGED and still counts one group per duplicated
+/// track. The badge agrees with the screen only because every user-facing caller
+/// goes through `health_metrics_for_scan`. If someone "simplifies" a caller back
+/// onto the bare function, the badge silently returns to counting tracks, and
+/// the three tests above would catch it only because of what this one pins:
+/// that the two functions genuinely differ, so choosing between them matters.
+///
+/// The day the pure function is itself made book-aware, this test fails and
+/// should be read carefully rather than deleted - a second book-aware
+/// implementation is the shape the whole fix exists to avoid.
+#[tokio::test]
+async fn the_pure_metric_still_counts_tracks_which_is_what_makes_the_seam_the_fix() {
+    let lib = library_with_one_duplicated_book(12);
+    let (_db, pool, scan_id) = scan_of(&lib).await;
+
+    let rows = get_scan_entries(&pool, scan_id).await.expect("snapshot");
+    let inputs = inputs_from_snapshot(&rows);
+    let cs = classify(&inputs);
+
+    let pure = health_metrics(&inputs, &cs)
+        .problems
+        .iter()
+        .find(|p| p.problem == DUPLICATE_CANDIDATE_GROUPS)
+        .expect("the duplicate metric is always emitted")
+        .count;
 
     assert_eq!(
-        badge_count(&nodes) as usize,
-        screen_count(&nodes),
-        "with one file per book there is nothing to subsume, so the counters agree"
+        pure, 12,
+        "health_metrics still buckets by (basename, size): twelve tracks, twelve groups"
+    );
+    assert_eq!(
+        badge_count(&pool, scan_id).await,
+        1,
+        "and the seam is what turns those twelve into the one book the screen shows"
     );
 }
