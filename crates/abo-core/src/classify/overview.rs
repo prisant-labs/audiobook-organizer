@@ -204,6 +204,9 @@ pub fn build_overview(
         .filter_map(|c| {
             let entry = entry_by_id.get(&c.id)?;
             Some(SeriesCluster {
+                // The container's own id, so two folders parsing to one series
+                // name stay two distinct clusters to any consumer.
+                entry_id: c.id as i64,
                 name: c
                     .evidence
                     .own_series
@@ -542,6 +545,56 @@ mod tests {
         assert_eq!(ov.good_news.series_shelved, 1);
         assert_eq!(ov.series[0].author.as_deref(), Some("Jim Butcher"));
         assert_eq!(ov.series[0].book_count, 2);
+    }
+
+    /// Two different folders can parse to the SAME series name, and each is
+    /// still its own cluster with its own id.
+    ///
+    /// This is not a hypothetical. jp's library holds two folders that both
+    /// parse to "Dune", and because `SeriesCluster` carried no id the home
+    /// keyed its list on `name`: React logged "Encountered two children with
+    /// the same key, `Dune`" five times per render of the real library, and a
+    /// duplicate key may omit or double a row. So the count the engine reports
+    /// in `series_shelved` and the rows a person can actually see were free to
+    /// disagree, which is the same shape as the nav badge divergence: one rule,
+    /// two answers, never checked against each other.
+    ///
+    /// The name is deliberately NOT asserted unique. Two "Dune" clusters is an
+    /// ordinary thing a real library does, not a defect to normalise away;
+    /// whether they should be MERGED is a product question nobody has been
+    /// asked. What must hold is that the identity is unique.
+    #[test]
+    fn two_series_containers_sharing_a_name_keep_distinct_ids() {
+        let entries = vec![
+            folder(0, None, "Frank Herbert - Dune"),
+            folder(1, Some(0), "Frank Herbert - Dune Messiah"),
+            audio(2, Some(1), "Dune Messiah.m4b", 150_000),
+            folder(3, Some(0), "Frank Herbert - Children of Dune"),
+            audio(4, Some(3), "Children of Dune.m4b", 150_000),
+            // A second copy of the same series, under a different parent, as an
+            // unfinished import sitting beside the organised one.
+            folder(5, None, "Frank Herbert - Dune"),
+            folder(6, Some(5), "Frank Herbert - Dune Messiah"),
+            audio(7, Some(6), "Dune Messiah.m4b", 150_000),
+            folder(8, Some(5), "Frank Herbert - Children of Dune"),
+            audio(9, Some(8), "Children of Dune.m4b", 150_000),
+        ];
+        let ov = overview_for(&entries);
+
+        assert_eq!(ov.series.len(), 2, "two containers, two clusters");
+        assert_eq!(
+            ov.series[0].name, ov.series[1].name,
+            "the premise: both parse to one name, which is allowed"
+        );
+        assert_ne!(
+            ov.series[0].entry_id, ov.series[1].entry_id,
+            "but the identity must differ, or a list keyed on it collides"
+        );
+        assert_eq!(
+            ov.good_news.series_shelved as usize,
+            ov.series.len(),
+            "the counted number and the rendered population are the same set"
+        );
     }
 
     /// Empty folders and duplicate bytes flow straight from the same

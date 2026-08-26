@@ -71,7 +71,7 @@ const OVERVIEW: LibraryOverview = {
     { entry_id: 1, title: "Sapiens", author: "Y. N. Harari", reason: { kind: "warn", text: "loose file" } },
     { entry_id: 2, title: "Dune", author: "Frank Herbert", reason: { kind: "alert", text: "2 copies" } },
   ],
-  series: [{ name: "The Dresden Files", author: "Jim Butcher", book_count: 20 }],
+  series: [{ entry_id: 30, name: "The Dresden Files", author: "Jim Butcher", book_count: 20 }],
   good_news: {
     already_tidy_books: 582,
     series_shelved: 34,
