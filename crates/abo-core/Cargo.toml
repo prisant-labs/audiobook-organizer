@@ -142,7 +142,7 @@ lofty = "=0.25.1"
 #
 # EXACT-pinned per the workspace convention, so a silent bump cannot change what
 # a persisted hash means.
-blake3 = "=1.8.6"
+blake3 = "=1.8.7"
 
 # v0.2.0 Phase 2 (FD-19 LongPathsEnabled detection): read the registry value
 # HKLM SYSTEM\CurrentControlSet\Control\FileSystem LongPathsEnabled to decide
