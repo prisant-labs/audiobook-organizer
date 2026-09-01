@@ -1,7 +1,7 @@
 import { STRINGS } from "@/lib/strings";
 import { ERROR_COPY } from "@/lib/errorCopy";
 import { formatBytes } from "@/lib/format";
-import { useDuplicates } from "@/hooks/useDuplicates";
+import { useDuplicates, type UseDuplicates } from "@/hooks/useDuplicates";
 import { DuplicateCard } from "@/components/duplicates/DuplicateCard";
 import { PolicySelector } from "@/components/duplicates/PolicySelector";
 import { EmptyState } from "@/components/states/EmptyState";
@@ -30,6 +30,21 @@ export interface DuplicatesProps {
 // screen is free and honest ("not checked yet"); reading the bytes is a thing a
 // person asks for, and can stop.
 export function Duplicates({ scanId }: DuplicatesProps) {
+  const data = useDuplicates(scanId);
+  return <DuplicatesView scanId={scanId} data={data} />;
+}
+
+export interface DuplicatesViewProps {
+  scanId: number | null;
+  /** The screen's data and actions, exactly as `useDuplicates` returns them.
+   *  Injected rather than fetched so the dev-only gallery can render this whole
+   *  screen from fixtures in a plain browser, where the hook's IPC does not
+   *  exist. The app always goes through `Duplicates` above, which wires the
+   *  real hook; this split changes nothing it renders. */
+  data: UseDuplicates;
+}
+
+export function DuplicatesView({ scanId, data }: DuplicatesViewProps) {
   const {
     review,
     policy,
@@ -46,7 +61,7 @@ export function Duplicates({ scanId }: DuplicatesProps) {
     confirm,
     clearConfirmation,
     save,
-  } = useDuplicates(scanId);
+  } = data;
 
   if (status === "loading") {
     return (

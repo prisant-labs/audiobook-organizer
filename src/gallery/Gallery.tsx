@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_PLAN_FILTER, type PlanFilterState } from "@/lib/planFilter";
 import { ERROR_COPY } from "@/lib/errorCopy";
 import type { Theme } from "@/lib/theme";
+
+import { Library } from "@/routes/Library";
+import { DuplicatesView } from "@/routes/Duplicates";
 
 import { Cover } from "@/components/Cover";
 import { FallbackTile } from "@/components/FallbackTile";
@@ -163,6 +166,32 @@ function Pane() {
 function Specimens() {
   return (
     <>
+      <Section
+        title="Screens"
+        blurb="Whole screens on fixture data, rendered from the real routes. Library still wears the legacy inline text sizes; Duplicates wears the ratified scale (design-system 3.1a). This pair is the A/B for adopting the scale everywhere."
+      >
+        <Specimen
+          name="Library"
+          state="legacy type, before the scale"
+          wide
+          note="fixture health data; its scan-event listeners reach for the Tauri bridge and are inert here"
+        >
+          <ScreenFrame>
+            <Library onNavigate={fx.noop} health={fx.HEALTH_READY} />
+          </ScreenFrame>
+        </Specimen>
+        <Specimen
+          name="Duplicates"
+          state="ratified scale"
+          wide
+          note="DuplicatesView on fixture data: four books, one per card state"
+        >
+          <ScreenFrame>
+            <DuplicatesView scanId={fx.DUPES_REVIEW.scan_id} data={fx.DUPES_DATA} />
+          </ScreenFrame>
+        </Specimen>
+      </Section>
+
       <Section
         title="Shell"
         blurb="The window frame and navigation. Present on every screen, so any inconsistency here is inconsistency everywhere."
@@ -450,6 +479,23 @@ function Specimens() {
         </Specimen>
       </Section>
     </>
+  );
+}
+
+/**
+ * The app's content region at its default 900x600 window: 900px minus the 212px
+ * sidebar, with ScreenContainer's own padding. A plain div rather than
+ * ScreenContainer itself because that component is the app's single `<main>`
+ * landmark and this page would otherwise render two. Inline style, not a
+ * Tailwind arbitrary value, so the ratchet stays a measure of the app rather
+ * than of gallery scaffolding (same precedent as the iframe height above).
+ * maxWidth lets it shrink when the themed pane is narrower than the app window.
+ */
+function ScreenFrame({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-11 pb-10 pt-8" style={{ width: 688, maxWidth: "100%" }}>
+      {children}
+    </div>
   );
 }
 
