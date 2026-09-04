@@ -76,7 +76,7 @@ tracing = "0.1.44"
 # frontend does not log through the plugin (this phase's brief item 3). This
 # crate is a `log::Log` implementation; it captures the `log` facade, which is
 # how abo-core's tracing events (via tracing's `log` feature) reach the log file.
-tauri-plugin-log = "=2.9.0"
+tauri-plugin-log = "=2.9.1"
 
 # tauri-plugin-single-instance (v0.5.0 P3, AC-8 single-writer): makes the app a
 # single desktop instance so a second launch focuses the existing window and exits,
@@ -86,7 +86,7 @@ tauri-plugin-log = "=2.9.0"
 # pinned EXACT (= prefix) per AC-17. `default-features = false`: the optional
 # `deep-link`/`semver` features stay OFF, so the plugin has NO JS guest package and
 # adds NO capability/permission (the capability baseline stays at exactly 7).
-tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }
+tauri-plugin-single-instance = { version = "=2.4.4", default-features = false }
 
 # tauri-plugin-dialog (F-909, FD-29): the OS folder picker used at first-run and
 # in Settings to choose the library root. Tauri-family crate, so pinned EXACT
@@ -96,7 +96,7 @@ tauri-plugin-single-instance = { version = "=2.4.3", default-features = false }
 # is added to package.json at the same pinned 2.7.1 so the Rust plugin and the JS
 # `open()` binding agree. Backend-mediated: the picked path is handed to the
 # backend via settings_set; the WebView never gains a standing filesystem scope.
-tauri-plugin-dialog = "=2.7.2"
+tauri-plugin-dialog = "=2.7.3"
 
 # Per-push CI / default release profile (FD-24). Tuned for a small bundle but
 # with THIN LTO and parallel codegen so per-push CI builds stay fast (the
