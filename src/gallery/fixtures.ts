@@ -20,8 +20,11 @@ import type {
   SeriesCluster,
   DuplicateCopyView,
   DuplicateGroupCard,
+  DuplicatesReviewView,
 } from "@/lib/bindings";
 import type { StartupInterruption } from "@/lib/interruption";
+import type { UseDuplicates } from "@/hooks/useDuplicates";
+import type { UseHealthMetrics } from "@/hooks/useHealthMetrics";
 
 export const OVERVIEW: LibraryOverview = {
   scan_id: 9,
@@ -288,3 +291,154 @@ export const DUPES_UNREADABLE: DuplicateGroupCard = {
 /** No-op handlers. The gallery renders appearance and states, not behaviour. */
 export const noop = () => {};
 export const noopAsync = async () => {};
+
+// -- whole screens ------------------------------------------------------------
+//
+// The screen specimens render the real route components, so they need the shapes
+// those routes are handed by the shell (Library's `health`) or by their own hook
+// (DuplicatesView's `data`). Same rule as every fixture above: the types come
+// from the bindings and the hooks, so `pnpm typecheck` fails here the moment the
+// app's shapes move.
+
+/** What `useHealthMetrics` returns once the overview has loaded. */
+export const HEALTH_READY: UseHealthMetrics = {
+  overview: OVERVIEW,
+  status: "ready",
+  error: null,
+  errorCode: null,
+  reload: noop,
+};
+
+// Four DISTINCT books, one per card state. Distinct on purpose: the screen keys
+// its cards on `method:group_key`, and four states of the same book would
+// collide on one key, which is the exact defect PR #55 fixed in the app.
+function screenCopy(
+  entryId: number,
+  path: string,
+  sizeBytes: number,
+  overrides: Partial<DuplicateCopyView> = {},
+): DuplicateCopyView {
+  return {
+    entry_id: entryId,
+    path,
+    size_bytes: sizeBytes,
+    check: "not-checked",
+    check_label: "not checked yet",
+    check_reason: null,
+    suggested_keeper: false,
+    ...overrides,
+  };
+}
+
+const SCREEN_DUPES_CHECKED: DuplicateGroupCard = {
+  book: "Project Hail Mary",
+  group_key: "Project Hail Mary.m4b|611244032",
+  method: "exact-basename-size",
+  found_by: "same file name and size",
+  copies: [
+    screenCopy(51, "E:\\Books - Audio\\Andy Weir\\Project Hail Mary\\Project Hail Mary.m4b", 611_244_032, {
+      check: "checked",
+      check_label: "contents checked",
+      suggested_keeper: true,
+    }),
+    screenCopy(52, "E:\\Books - Audio\\_incoming\\Project Hail Mary.m4b", 611_244_032, {
+      check: "checked",
+      check_label: "contents checked",
+    }),
+  ],
+  copy_count: 2,
+  candidate_bytes_estimate: 1_222_488_064,
+  keeper_reason: "the copies were equivalent, so the first one is kept",
+  content_verified: true,
+  confirmed_keeper: null,
+};
+
+const SCREEN_DUPES_DECIDED: DuplicateGroupCard = {
+  book: "The Hobbit",
+  group_key: "The Hobbit.m4b|388190208",
+  method: "exact-basename-size",
+  found_by: "same file name and size",
+  copies: [
+    screenCopy(61, "E:\\Books - Audio\\J. R. R. Tolkien\\The Hobbit\\The Hobbit.m4b", 388_190_208, {
+      check: "checked",
+      check_label: "contents checked",
+      suggested_keeper: true,
+    }),
+    screenCopy(62, "E:\\Books - Audio\\downloads\\The Hobbit\\The Hobbit.m4b", 388_190_208, {
+      check: "checked",
+      check_label: "contents checked",
+    }),
+    screenCopy(63, "E:\\Books - Audio\\_incoming\\hobbit\\The Hobbit.m4b", 388_190_208, {
+      check: "checked",
+      check_label: "contents checked",
+    }),
+  ],
+  copy_count: 3,
+  candidate_bytes_estimate: 1_164_570_624,
+  keeper_reason: "the copies were equivalent, so the first one is kept",
+  content_verified: true,
+  confirmed_keeper: 61,
+};
+
+const SCREEN_DUPES_UNREADABLE: DuplicateGroupCard = {
+  book: "Educated",
+  group_key: "Educated.m4b|297540101",
+  method: "exact-basename-size",
+  found_by: "same file name and size",
+  copies: [
+    screenCopy(71, "E:\\Books - Audio\\Tara Westover\\Educated\\Educated.m4b", 297_540_101, {
+      check: "checked",
+      check_label: "contents checked",
+      suggested_keeper: true,
+    }),
+    screenCopy(72, "E:\\Books - Audio\\_incoming\\Educated\\Educated.m4b", 297_540_101, {
+      check: "could-not-read",
+      check_label: "could not be read",
+      check_reason: "os error 5: access is denied",
+    }),
+  ],
+  copy_count: 2,
+  candidate_bytes_estimate: 595_080_202,
+  keeper_reason: "the copies were equivalent, so the first one is kept",
+  content_verified: false,
+  confirmed_keeper: null,
+};
+
+/** The whole-screen review. Counts are DERIVED from the cards, never restated
+ *  by hand: the count that disagrees with what is listed under it is this
+ *  project's recurring defect (the nav badge, PR #54), and a fixture is not
+ *  exempt. */
+const SCREEN_DUPES_GROUPS: DuplicateGroupCard[] = [
+  DUPES_UNCHECKED,
+  SCREEN_DUPES_CHECKED,
+  SCREEN_DUPES_DECIDED,
+  SCREEN_DUPES_UNREADABLE,
+];
+
+export const DUPES_REVIEW: DuplicatesReviewView = {
+  scan_id: OVERVIEW.scan_id,
+  groups: SCREEN_DUPES_GROUPS,
+  group_count: SCREEN_DUPES_GROUPS.length,
+  copy_count: SCREEN_DUPES_GROUPS.reduce((n, g) => n + g.copy_count, 0),
+  candidate_bytes_estimate: SCREEN_DUPES_GROUPS.reduce((n, g) => n + g.candidate_bytes_estimate, 0),
+};
+
+/** What `useDuplicates` returns with the review loaded and nothing running. */
+export const DUPES_DATA: UseDuplicates = {
+  review: DUPES_REVIEW,
+  policy: "flag-only",
+  setPolicy: noop,
+  status: "ready",
+  errorCode: null,
+  errorDetail: null,
+  progress: null,
+  actionError: null,
+  dismissActionError: noop,
+  savedTo: null,
+  reload: noop,
+  check: noopAsync,
+  stopCheck: noopAsync,
+  confirm: noopAsync,
+  clearConfirmation: noopAsync,
+  save: noopAsync,
+};

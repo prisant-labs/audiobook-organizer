@@ -37,16 +37,37 @@ import "../styles/tokens.css";
 // depending on real data is visible rather than silent.
 declare global {
   interface Window {
-    __TAURI_INTERNALS__?: { invoke: (command: string, args?: unknown) => Promise<unknown> };
+    __TAURI_INTERNALS__?: {
+      invoke: (command: string, args?: unknown) => Promise<unknown>;
+      transformCallback: (callback?: (response: unknown) => void, once?: boolean) => number;
+    };
+    // `__TAURI_EVENT_PLUGIN_INTERNALS__` needs no declaration here: the Tauri
+    // event plugin's own types already declare it on Window.
   }
 }
 
 if (!window.__TAURI_INTERNALS__) {
+  let nextCallbackId = 0;
   window.__TAURI_INTERNALS__ = {
     invoke: async (command: string) => {
       console.info(`[gallery] IPC stub answered "${command}" with null`);
       return null;
     },
+    // `events.*.listen` registers its handler through this before invoking
+    // `plugin:event|listen` (the Library screen's scan listeners reach it). The
+    // real bridge returns a callback id the backend uses to fire the handler;
+    // here no backend exists so no event ever fires, and an id that is never
+    // called is exactly the honest behaviour. Without this the listen call
+    // throws before reaching the `invoke` stub above.
+    transformCallback: () => {
+      nextCallbackId += 1;
+      return nextCallbackId;
+    },
+  };
+  // The matching teardown half: `unlisten` goes through this second global, and
+  // React StrictMode's double-mount exercises every listener's cleanup.
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: () => {},
   };
 }
 
