@@ -16,13 +16,13 @@ The repository is at two maturity levels at once. The read-and-rehearse path is 
 - **Rehearsal.** Runs the whole plan through the *same* executor a real change would use, against an in-memory filesystem. This is what makes the preview faithful rather than a guess.
 - **History and undo preparation.** Every past run is listed with what it did and the one honest action available for it. Preparing an undo builds a real reverse plan you review before anything moves.
 - **Settings, first run, and the rule editor.**
+- **Duplicates.** The Duplicates screen compares copies byte by byte when you ask, and lets you choose which copy to keep. Like every other change, setting a copy aside runs only as a rehearsal.
 
 ### Not yet, despite what the engine can do
 
 - **Real changes are not reachable from the app.** The UI pins every run to rehearsal. The engine can execute against the real filesystem and is extensively tested, but there is deliberately no button that reaches it, and there will not be one until the items below are closed. Treat the app as a rehearsal tool.
 - **Cross-volume moves verify by size, not content.** Moving between drives copies, compares byte length, then deletes the source. Equal length is not equal content. Content hashing before source removal is required work, not a nice-to-have, and until it lands a real cross-volume move is not safe to offer.
 - **Power-loss durability is an open decision.** The journal is written before each action, which survives a process kill and is what interruption recovery is built on. It is not proven to survive a power cut between the write and the action. The threat model needs to be stated and, for real changes, probably strengthened.
-- **The Duplicates screen is not built.** Duplicate detection exists in the engine; the screen is a placeholder.
 - **There are no releases, tags, or installers.** Nothing has been packaged. You build it from source.
 - **macOS builds compile but are not safe for real changes.** The no-overwrite guarantee that makes moves safe is enforced with a Windows-specific API. The macOS path has a known race. Do not use a macOS build for anything but compilation checks.
 
